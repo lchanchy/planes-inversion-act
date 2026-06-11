@@ -3551,10 +3551,10 @@ async function exportConsolidatedExcel(matrix: ConsolidatedMatrix, needs: Approv
       row.total
     ]);
   }
-  styleWorksheetHeader(consolidated);
-  consolidated.getColumn(1).width = 42;
+  stylePlainWorksheetHeader(consolidated);
+  consolidated.getColumn(1).width = 61;
   for (let index = 2; index <= matrix.families.length + 2; index += 1) {
-    consolidated.getColumn(index).width = index === matrix.families.length + 2 ? 16 : 20;
+    consolidated.getColumn(index).width = index === matrix.families.length + 2 ? 13 : 16;
   }
 
   const base = workbook.addWorksheet("Base");
@@ -3586,7 +3586,7 @@ async function exportConsolidatedExcel(matrix: ConsolidatedMatrix, needs: Approv
       need.totalValue
     ]);
   }
-  styleWorksheetHeader(base);
+  stylePlainWorksheetHeader(base);
   [1, 2, 3, 5, 6, 7].forEach((column) => {
     base.getColumn(column).width = column === 7 ? 42 : 24;
   });
@@ -3672,30 +3672,84 @@ async function exportIndicatorsExcel(rows: IndicatorRow[], consolidatedRows: Ind
   workbook.creator = "Restauracion Admin";
   workbook.created = new Date();
 
-  const detail = workbook.addWorksheet("Detalle");
-  detail.addRow([
-    "Codigo predio/familia",
-    "Familia",
-    "Municipio",
-    "Vereda",
-    "Hectareas del predio",
-    "Actividad o indicador",
-    "Material/insumo",
-    "Unidad",
-    "Meta",
-    "Cantidad entregada",
-    "Cantidad implementada/sembrada",
-    "Avance porcentual",
-    "Estado",
-    "Observaciones"
-  ]);
+  const cover = workbook.addWorksheet("HERRAMIENTA_SEGUIMIENTO");
+  cover.mergeCells("A9:L9");
+  cover.mergeCells("A10:L10");
+  cover.getCell("A9").value = "PROYECTO DE RESTAURACION ECOLOGICA, REHABILITACION Y RECUPERACION DE ECOSISTEMAS DEGRADADOS";
+  cover.getCell("A10").value = "HERRAMIENTA DE SEGUIMIENTO PROCESOS DE IMPLEMENTACION";
+  cover.getCell("A9").font = { bold: true, size: 13 };
+  cover.getCell("A10").font = { bold: true, size: 13 };
+  cover.getCell("A9").alignment = { horizontal: "center" };
+  cover.getCell("A10").alignment = { horizontal: "center" };
+  for (let column = 1; column <= 12; column += 1) cover.getColumn(column).width = 13;
+
+  const detail = workbook.addWorksheet("T4_2025");
+  detail.getCell("C2").value = "Indicadores de avances de implementaciones";
+  detail.getCell("C2").font = { bold: true, size: 13 };
+  const indicatorGroups = buildIndicatorExcelGroups(rows);
+  const fixedHeaders = ["Codigo Predio", "Familia", "Municipio", "Vereda", "Hectareas del predio"];
+  fixedHeaders.forEach((header, index) => {
+    const cell = detail.getCell(5, index + 1);
+    cell.value = header;
+    detail.mergeCells(5, index + 1, 6, index + 1);
+  });
+  let startColumn = 6;
+  for (const group of indicatorGroups) {
+    detail.getCell(5, startColumn).value = group.name;
+    detail.mergeCells(5, startColumn, 5, startColumn + 2);
+    detail.getCell(6, startColumn).value = "Meta";
+    detail.getCell(6, startColumn + 1).value = "Entregados";
+    detail.getCell(6, startColumn + 2).value = "Sembrados";
+    startColumn += 3;
+  }
+  const familyRows = buildIndicatorFamilyRows(rows);
+  let rowNumber = 7;
+  for (const familyRow of familyRows) {
+    detail.getCell(rowNumber, 1).value = familyRow.familyCode;
+    detail.getCell(rowNumber, 2).value = familyRow.familyName;
+    detail.getCell(rowNumber, 3).value = familyRow.municipalityName;
+    detail.getCell(rowNumber, 4).value = familyRow.villageName;
+    detail.getCell(rowNumber, 5).value = familyRow.hectares;
+    startColumn = 6;
+    for (const group of indicatorGroups) {
+      const value = familyRow.groups[group.key] ?? { target: 0, delivered: 0, implemented: 0 };
+      detail.getCell(rowNumber, startColumn).value = value.target;
+      detail.getCell(rowNumber, startColumn + 1).value = value.delivered;
+      detail.getCell(rowNumber, startColumn + 2).value = value.implemented;
+      startColumn += 3;
+    }
+    rowNumber += 1;
+  }
+  styleIndicatorDetailSheet(detail, indicatorGroups.length);
+
+  const consolidated = workbook.addWorksheet("Consolidado");
+  startColumn = 1;
+  for (const group of indicatorGroups) {
+    consolidated.getCell(1, startColumn).value = group.name;
+    consolidated.mergeCells(1, startColumn, 1, startColumn + 2);
+    consolidated.getCell(2, startColumn).value = "Meta";
+    consolidated.getCell(2, startColumn + 1).value = "Entregados";
+    consolidated.getCell(2, startColumn + 2).value = "Sembrados";
+    const totals = group.rows.reduce((acc, row) => ({
+      target: acc.target + row.targetQuantity,
+      delivered: acc.delivered + row.deliveredQuantity,
+      implemented: acc.implemented + row.implementedQuantity
+    }), { target: 0, delivered: 0, implemented: 0 });
+    consolidated.getCell(3, startColumn).value = totals.target;
+    consolidated.getCell(3, startColumn + 1).value = totals.delivered;
+    consolidated.getCell(3, startColumn + 2).value = totals.implemented;
+    startColumn += 3;
+  }
+  styleIndicatorSummarySheet(consolidated, indicatorGroups.length);
+
+  const base = workbook.addWorksheet("Base");
+  base.addRow(["Codigo familia", "Familia", "Municipio", "Vereda", "Actividad/indicador", "Material/insumo", "Unidad", "Meta", "Entregado", "Implementado", "Avance", "Estado", "Observaciones"]);
   for (const row of rows) {
-    detail.addRow([
+    base.addRow([
       row.familyCode,
       row.familyName,
       row.municipalityName,
       row.villageName,
-      row.hectares,
       row.activityName,
       row.materialName,
       row.unit,
@@ -3707,33 +3761,93 @@ async function exportIndicatorsExcel(rows: IndicatorRow[], consolidatedRows: Ind
       row.observations
     ]);
   }
-  styleWorksheetHeader(detail);
-  detail.getColumn(6).width = 34;
-  detail.getColumn(7).width = 34;
-  detail.getColumn(12).numFmt = "0.00%";
-
-  const consolidated = workbook.addWorksheet("Consolidado");
-  consolidated.addRow(["Municipio", "Vereda", "Actividad/indicador", "Estado", "Meta", "Entregado", "Implementado", "Avance"]);
-  for (const row of consolidatedRows) {
-    consolidated.addRow([
-      row.municipalityName,
-      row.villageName,
-      row.activityName,
-      implementationStatusLabel(row.status),
-      row.targetQuantity,
-      row.deliveredQuantity,
-      row.implementedQuantity,
-      row.progressPercentage / 100
-    ]);
-  }
-  styleWorksheetHeader(consolidated);
-  consolidated.getColumn(3).width = 34;
-  consolidated.getColumn(8).numFmt = "0.00%";
+  stylePlainWorksheetHeader(base);
+  base.getColumn(11).numFmt = "0.00%";
 
   const buffer = await workbook.xlsx.writeBuffer();
   saveBlob(new Blob([buffer], {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
   }), "herramienta-indicadores.xlsx");
+}
+
+function buildIndicatorExcelGroups(rows: IndicatorRow[]) {
+  const groups = new Map<string, { key: string; name: string; rows: IndicatorRow[] }>();
+  for (const row of rows) {
+    const name = row.materialName || row.activityName;
+    const key = `${row.activityName}-${name}`;
+    const current = groups.get(key) ?? { key, name, rows: [] };
+    current.rows.push(row);
+    groups.set(key, current);
+  }
+  return Array.from(groups.values()).sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function buildIndicatorFamilyRows(rows: IndicatorRow[]) {
+  const families = new Map<string, {
+    familyCode: string;
+    familyName: string;
+    municipalityName: string;
+    villageName: string;
+    hectares: string;
+    groups: Record<string, { target: number; delivered: number; implemented: number }>;
+  }>();
+  for (const row of rows) {
+    const groupKey = `${row.activityName}-${row.materialName || row.activityName}`;
+    const current = families.get(row.family_id) ?? {
+      familyCode: row.familyCode,
+      familyName: row.familyName,
+      municipalityName: row.municipalityName,
+      villageName: row.villageName,
+      hectares: row.hectares,
+      groups: {}
+    };
+    const value = current.groups[groupKey] ?? { target: 0, delivered: 0, implemented: 0 };
+    value.target += row.targetQuantity;
+    value.delivered += row.deliveredQuantity;
+    value.implemented += row.implementedQuantity;
+    current.groups[groupKey] = value;
+    families.set(row.family_id, current);
+  }
+  return Array.from(families.values()).sort((left, right) => left.familyName.localeCompare(right.familyName));
+}
+
+function stylePlainWorksheetHeader(worksheet: import("exceljs").Worksheet) {
+  const header = worksheet.getRow(1);
+  header.font = { bold: true };
+  header.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+  worksheet.views = [{ state: "frozen", ySplit: 1 }];
+  worksheet.columns.forEach((column) => {
+    column.width = Math.max(column.width ?? 13, 13);
+  });
+}
+
+function styleIndicatorDetailSheet(worksheet: import("exceljs").Worksheet, groupCount: number) {
+  const lastColumn = 5 + groupCount * 3;
+  [5, 6].forEach((rowNumber) => {
+    const row = worksheet.getRow(rowNumber);
+    row.font = { bold: true };
+    row.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+  });
+  worksheet.views = [{ state: "frozen", xSplit: 5, ySplit: 6 }];
+  [10.6, 26.5, 10.75, 33.6, 15.25].forEach((width, index) => {
+    worksheet.getColumn(index + 1).width = width;
+  });
+  for (let column = 6; column <= lastColumn; column += 1) {
+    worksheet.getColumn(column).width = column % 3 === 0 ? 7.75 : 13;
+  }
+}
+
+function styleIndicatorSummarySheet(worksheet: import("exceljs").Worksheet, groupCount: number) {
+  const lastColumn = groupCount * 3;
+  [1, 2].forEach((rowNumber) => {
+    const row = worksheet.getRow(rowNumber);
+    row.font = { bold: true };
+    row.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+  });
+  worksheet.views = [{ state: "frozen", ySplit: 2 }];
+  for (let column = 1; column <= lastColumn; column += 1) {
+    worksheet.getColumn(column).width = 13;
+  }
 }
 
 function styleWorksheetHeader(worksheet: import("exceljs").Worksheet) {
