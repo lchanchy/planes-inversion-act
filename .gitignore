@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Web build and local state
+.next/
+*.tsbuildinfo
+next-dev*.log
+.env.local
+.env.*.local
+.env.local.txt
+
+# Android build and local IDE state
+.gradle/
+.kotlin/
+build/
+**/build/
+local.properties
+.idea/
+
+# Temporary QA artifacts
+.tmp_*/
+*.tmp
+
+# OS/editor noise
+Thumbs.db
+.DS_Store
