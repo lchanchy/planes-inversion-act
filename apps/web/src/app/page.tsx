@@ -2563,8 +2563,37 @@ function ProcurementDeliveriesActs({
   const [deliveryObservation, setDeliveryObservation] = useState("");
   const [adminOverride, setAdminOverride] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [approvedNeedsFromDb, setApprovedNeedsFromDb] = useState<ApprovedMaterialNeed[] | null>(null);
+  const [loadingApprovedNeeds, setLoadingApprovedNeeds] = useState(false);
 
-  const approvedNeeds = useMemo(() => buildApprovedMaterialNeeds({
+  useEffect(() => {
+    let active = true;
+    async function loadApprovedMaterialNeeds() {
+      setLoadingApprovedNeeds(true);
+      try {
+        const needs = await fetchApprovedMaterialNeeds({
+          projects,
+          families,
+          municipalities,
+          villages,
+          activities,
+          materials,
+          provisionalMaterials
+        });
+        if (active) setApprovedNeedsFromDb(needs);
+      } catch (error) {
+        if (active) setNotice({ type: "error", message: `No fue posible consultar materiales aprobados: ${getErrorMessage(error)}` });
+      } finally {
+        if (active) setLoadingApprovedNeeds(false);
+      }
+    }
+    void loadApprovedMaterialNeeds();
+    return () => {
+      active = false;
+    };
+  }, [projects, families, municipalities, villages, activities, materials, provisionalMaterials]);
+
+  const approvedNeedsFromState = useMemo(() => buildApprovedMaterialNeeds({
     projects,
     families,
     municipalities,
@@ -2577,6 +2606,7 @@ function ProcurementDeliveriesActs({
     provisionalMaterials,
     materialDeliveryItems
   }), [projects, families, municipalities, villages, activities, materials, plans, planActivities, planMaterials, provisionalMaterials, materialDeliveryItems]);
+  const approvedNeeds = approvedNeedsFromDb ?? approvedNeedsFromState;
 
   const filteredNeeds = useMemo(() => filterApprovedNeeds(approvedNeeds, filters), [approvedNeeds, filters]);
   const consolidatedNeeds = useMemo(() => consolidateMaterialNeeds(filteredNeeds), [filteredNeeds]);
@@ -2844,6 +2874,7 @@ function ProcurementDeliveriesActs({
             <Metric label="Items de compra" value={procurementBatchItems.length} />
             <Metric label="Pendientes" value={consolidatedNeeds.filter((item) => item.pendingQuantity > 0).length} />
           </div>
+          {loadingApprovedNeeds ? <div className="alert info">Consultando materiales aprobados...</div> : null}
           <div className="panel grid">
             <label className="span-4">
               Nombre del lote
@@ -3151,6 +3182,76 @@ function buildApprovedMaterialNeeds(data: {
         });
       });
     });
+}
+
+async function fetchApprovedMaterialNeeds(data: {
+  projects: Project[];
+  families: Family[];
+  municipalities: Municipality[];
+  villages: Village[];
+  activities: Activity[];
+  materials: Material[];
+  provisionalMaterials: ProvisionalMaterial[];
+}): Promise<ApprovedMaterialNeed[]> {
+  const plansResult = await supabase
+    .from("operational_plans")
+    .select("*")
+    .eq("is_deleted", false);
+  if (plansResult.error) throw plansResult.error;
+
+  const approvedPlans = ((plansResult.data ?? []) as OperationalPlan[]).filter((plan) => isApprovedPlanStatus(plan.status));
+  const planIds = approvedPlans.map((plan) => plan.id);
+  if (planIds.length === 0) {
+    return buildApprovedMaterialNeeds({
+      ...data,
+      plans: [],
+      planActivities: [],
+      planMaterials: [],
+      materialDeliveryItems: []
+    });
+  }
+
+  const activitiesResult = await supabase
+    .from("plan_activities")
+    .select("*")
+    .in("plan_id", planIds)
+    .eq("is_deleted", false);
+  if (activitiesResult.error) throw activitiesResult.error;
+
+  const planActivitiesRows = (activitiesResult.data ?? []) as PlanActivity[];
+  const activityIds = planActivitiesRows.map((activity) => activity.id);
+  const [materialsResult, deliveriesResult] = activityIds.length > 0
+    ? await Promise.all([
+        supabase
+          .from("plan_project_materials")
+          .select("*")
+          .in("plan_activity_id", activityIds)
+          .eq("is_deleted", false),
+        supabase
+          .from("material_delivery_items")
+          .select("*")
+          .in("operational_plan_id", planIds)
+          .eq("is_deleted", false)
+      ])
+    : [
+        { data: [], error: null },
+        { data: [], error: null }
+      ];
+  if (materialsResult.error) throw materialsResult.error;
+
+  const deliveryItems = deliveriesResult.error ? [] : (deliveriesResult.data ?? []) as MaterialDeliveryItem[];
+
+  return buildApprovedMaterialNeeds({
+    ...data,
+    plans: approvedPlans,
+    planActivities: planActivitiesRows,
+    planMaterials: (materialsResult.data ?? []) as PlanProjectMaterial[],
+    materialDeliveryItems: deliveryItems
+  });
+}
+
+function isApprovedPlanStatus(status: string) {
+  return status === "approved" || status === "aprobado";
 }
 
 function filterApprovedNeeds(needs: ApprovedMaterialNeed[], filters: ProcurementFilters) {
