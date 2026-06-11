@@ -205,3 +205,95 @@ export type ProvisionalMaterial = {
   resolved_material_id: string | null;
   is_deleted: boolean;
 };
+
+export type ProcurementStatus =
+  | "pendiente_compra"
+  | "en_proceso"
+  | "comprado"
+  | "entregado_parcial"
+  | "entregado_total"
+  | "cancelado";
+
+export type ProcurementBatch = {
+  id: string;
+  project_id: string;
+  batch_code: string;
+  name: string;
+  status: ProcurementStatus;
+  filter_project_id: string | null;
+  filter_municipality_id: string | null;
+  filter_village_id: string | null;
+  filter_family_id: string | null;
+  filter_activity_id: string | null;
+  filter_material_id: string | null;
+  subtotal: number;
+  observations: string | null;
+  is_deleted: boolean;
+};
+
+export type ProcurementBatchItem = {
+  id: string;
+  procurement_batch_id: string;
+  material_id: string | null;
+  provisional_material_id: string | null;
+  material_name: string;
+  unit: string;
+  required_quantity: number;
+  purchased_quantity: number;
+  unit_price: number;
+  total_value: number;
+  status: ProcurementStatus;
+  source_plan_material_ids: string[];
+  is_deleted: boolean;
+};
+
+export type MaterialDelivery = {
+  id: string;
+  project_id: string;
+  family_id: string;
+  operational_plan_id: string;
+  delivery_date: string;
+  status: "entregado_parcial" | "entregado_total" | "cancelado";
+  observations: string | null;
+  registered_by: string | null;
+  is_deleted: boolean;
+};
+
+export type MaterialDeliveryItem = {
+  id: string;
+  material_delivery_id: string;
+  project_id: string;
+  family_id: string;
+  operational_plan_id: string;
+  plan_activity_id: string;
+  activity_id: string | null;
+  plan_project_material_id: string;
+  material_id: string | null;
+  provisional_material_id: string | null;
+  material_name: string;
+  unit: string;
+  approved_quantity: number;
+  delivered_quantity: number;
+  unit_price: number;
+  total_value: number;
+  observations: string | null;
+  admin_override: boolean;
+  override_authorized_by: string | null;
+  is_deleted: boolean;
+};
+
+export type DeliveryAct = {
+  id: string;
+  project_id: string;
+  family_id: string;
+  operational_plan_id: string;
+  material_delivery_id: string;
+  act_number: string;
+  status: "generated" | "signed" | "void";
+  generated_at: string;
+  generated_by: string | null;
+  pdf_path: string | null;
+  word_path: string | null;
+  observations: string | null;
+  is_deleted: boolean;
+};

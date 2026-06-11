@@ -25,15 +25,21 @@ import { supabase, supabaseConfigured } from "@/lib/supabase";
 import type {
   Activity,
   CounterpartCatalog,
+  DeliveryAct,
   Department,
   Family,
   Material,
+  MaterialDelivery,
+  MaterialDeliveryItem,
   Municipality,
   OperationalPlan,
   PlanActivity,
   PlanFamilyCounterpart,
   PlanProjectMaterial,
   Profile,
+  ProcurementBatch,
+  ProcurementBatchItem,
+  ProcurementStatus,
   Project,
   ProjectDepartment,
   ProjectMunicipality,
@@ -44,7 +50,7 @@ import type {
   Village
 } from "@/lib/types";
 
-type ViewKey = "dashboard" | "projects" | "profiles" | "families" | "activities" | "materials" | "counterparts" | "plans";
+type ViewKey = "dashboard" | "projects" | "profiles" | "families" | "activities" | "materials" | "counterparts" | "plans" | "phase5";
 type Notice = { type: "info" | "error"; message: string } | null;
 type ProjectLogoPosition = "left" | "center" | "right" | "bottom-left" | "bottom-center" | "bottom-right";
 type ProjectLogoConfig = { id: string; dataUrl: string; position: ProjectLogoPosition; name: string; size: number };
@@ -236,6 +242,11 @@ function AdminApp({ session }: { session: Session }) {
   const [projectDepartments, setProjectDepartments] = useState<ProjectDepartment[]>([]);
   const [projectMunicipalities, setProjectMunicipalities] = useState<ProjectMunicipality[]>([]);
   const [projectVillages, setProjectVillages] = useState<ProjectVillage[]>([]);
+  const [procurementBatches, setProcurementBatches] = useState<ProcurementBatch[]>([]);
+  const [procurementBatchItems, setProcurementBatchItems] = useState<ProcurementBatchItem[]>([]);
+  const [materialDeliveries, setMaterialDeliveries] = useState<MaterialDelivery[]>([]);
+  const [materialDeliveryItems, setMaterialDeliveryItems] = useState<MaterialDeliveryItem[]>([]);
+  const [deliveryActs, setDeliveryActs] = useState<DeliveryAct[]>([]);
 
   const roleNames = useMemo(() => {
     const roleById = new Map(roles.map((role) => [role.id, role.name]));
@@ -278,7 +289,12 @@ function AdminApp({ session }: { session: Session }) {
         villagesResult,
         projectDepartmentsResult,
         projectMunicipalitiesResult,
-        projectVillagesResult
+        projectVillagesResult,
+        procurementBatchesResult,
+        procurementBatchItemsResult,
+        materialDeliveriesResult,
+        materialDeliveryItemsResult,
+        deliveryActsResult
       ] = await Promise.all([
         supabase.from("roles").select("id,name,description,permissions").order("name"),
         supabase.from("users_profiles").select("*").eq("auth_user_id", session.user.id).maybeSingle(),
@@ -299,7 +315,12 @@ function AdminApp({ session }: { session: Session }) {
         supabase.from("villages").select("*").order("name"),
         supabase.from("project_departments").select("*").eq("is_deleted", false),
         supabase.from("project_municipalities").select("*").eq("is_deleted", false),
-        supabase.from("project_villages").select("*").eq("is_deleted", false)
+        supabase.from("project_villages").select("*").eq("is_deleted", false),
+        supabase.from("procurement_batches").select("*").eq("is_deleted", false).order("created_at", { ascending: false }),
+        supabase.from("procurement_batch_items").select("*").eq("is_deleted", false),
+        supabase.from("material_deliveries").select("*").eq("is_deleted", false).order("created_at", { ascending: false }),
+        supabase.from("material_delivery_items").select("*").eq("is_deleted", false),
+        supabase.from("delivery_acts").select("*").eq("is_deleted", false).order("generated_at", { ascending: false })
       ]);
 
       const error = [
@@ -347,6 +368,11 @@ function AdminApp({ session }: { session: Session }) {
       setProjectDepartments((projectDepartmentsResult.data ?? []) as ProjectDepartment[]);
       setProjectMunicipalities((projectMunicipalitiesResult.data ?? []) as ProjectMunicipality[]);
       setProjectVillages((projectVillagesResult.data ?? []) as ProjectVillage[]);
+      setProcurementBatches((procurementBatchesResult.data ?? []) as ProcurementBatch[]);
+      setProcurementBatchItems((procurementBatchItemsResult.data ?? []) as ProcurementBatchItem[]);
+      setMaterialDeliveries((materialDeliveriesResult.data ?? []) as MaterialDelivery[]);
+      setMaterialDeliveryItems((materialDeliveryItemsResult.data ?? []) as MaterialDeliveryItem[]);
+      setDeliveryActs((deliveryActsResult.data ?? []) as DeliveryAct[]);
     } catch (error) {
       setNotice({ type: "error", message: getErrorMessage(error) });
     } finally {
@@ -371,7 +397,8 @@ function AdminApp({ session }: { session: Session }) {
     { key: "activities", label: "Actividades" },
     { key: "materials", label: "Materiales" },
     { key: "counterparts", label: "Contrapartidas" },
-    { key: "plans", label: "Planes Operativos" }
+    { key: "plans", label: "Planes Operativos" },
+    { key: "phase5", label: "Compras / Entregas / Actas" }
   ];
 
   return (
@@ -479,6 +506,30 @@ function AdminApp({ session }: { session: Session }) {
               canReview={canWrite}
               canManageLogos={roleNames.has("admin")}
               currentProfile={profile}
+              onChange={loadAll}
+            />
+          ) : null}
+          {view === "phase5" ? (
+            <ProcurementDeliveriesActs
+              projects={projects}
+              families={families}
+              municipalities={municipalities}
+              villages={villages}
+              activities={activities}
+              materials={materials}
+              plans={plans}
+              planActivities={planActivities}
+              planMaterials={planMaterials}
+              provisionalMaterials={provisionalMaterials}
+              procurementBatches={procurementBatches}
+              procurementBatchItems={procurementBatchItems}
+              materialDeliveries={materialDeliveries}
+              materialDeliveryItems={materialDeliveryItems}
+              deliveryActs={deliveryActs}
+              currentProfile={profile}
+              canManageProcurement={canWrite}
+              canAdminOverride={roleNames.has("admin")}
+              canGenerateActs={canWrite}
               onChange={loadAll}
             />
           ) : null}
@@ -2381,6 +2432,961 @@ function validatePlanForApproval(
     }
   }
   return errors;
+}
+
+type Phase5Tab = "purchases" | "deliveries" | "acts";
+
+type ProcurementFilters = {
+  project_id: string;
+  municipality_id: string;
+  village_id: string;
+  family_id: string;
+  activity_id: string;
+  material_id: string;
+};
+
+type ApprovedMaterialNeed = {
+  id: string;
+  project_id: string;
+  projectName: string;
+  municipality_id: string | null;
+  municipalityName: string;
+  village_id: string | null;
+  villageName: string;
+  family_id: string;
+  familyCode: string;
+  familyName: string;
+  documentNumber: string;
+  operational_plan_id: string;
+  plan_activity_id: string;
+  activity_id: string | null;
+  activityName: string;
+  plan_project_material_id: string;
+  material_id: string | null;
+  provisional_material_id: string | null;
+  materialName: string;
+  unit: string;
+  approvedQuantity: number;
+  deliveredQuantity: number;
+  pendingQuantity: number;
+  unitPrice: number;
+  totalValue: number;
+};
+
+type ConsolidatedMaterialNeed = {
+  key: string;
+  project_id: string;
+  projectName: string;
+  material_id: string | null;
+  provisional_material_id: string | null;
+  materialName: string;
+  unit: string;
+  requiredQuantity: number;
+  deliveredQuantity: number;
+  pendingQuantity: number;
+  unitPrice: number;
+  totalValue: number;
+  sourcePlanMaterialIds: string[];
+};
+
+type DeliveryActContext = {
+  act: DeliveryAct;
+  delivery: MaterialDelivery;
+  items: MaterialDeliveryItem[];
+  project?: Project;
+  family?: Family;
+  municipality?: Municipality;
+  village?: Village;
+  plan?: OperationalPlan;
+  activityById: Map<string, Activity>;
+  projectLogos: Record<string, ProjectLogoConfig[]>;
+};
+
+function ProcurementDeliveriesActs({
+  projects,
+  families,
+  municipalities,
+  villages,
+  activities,
+  materials,
+  plans,
+  planActivities,
+  planMaterials,
+  provisionalMaterials,
+  procurementBatches,
+  procurementBatchItems,
+  materialDeliveries,
+  materialDeliveryItems,
+  deliveryActs,
+  currentProfile,
+  canManageProcurement,
+  canAdminOverride,
+  canGenerateActs,
+  onChange
+}: {
+  projects: Project[];
+  families: Family[];
+  municipalities: Municipality[];
+  villages: Village[];
+  activities: Activity[];
+  materials: Material[];
+  plans: OperationalPlan[];
+  planActivities: PlanActivity[];
+  planMaterials: PlanProjectMaterial[];
+  provisionalMaterials: ProvisionalMaterial[];
+  procurementBatches: ProcurementBatch[];
+  procurementBatchItems: ProcurementBatchItem[];
+  materialDeliveries: MaterialDelivery[];
+  materialDeliveryItems: MaterialDeliveryItem[];
+  deliveryActs: DeliveryAct[];
+  currentProfile: Profile | null;
+  canManageProcurement: boolean;
+  canAdminOverride: boolean;
+  canGenerateActs: boolean;
+  onChange: () => Promise<void>;
+}) {
+  const [activeTab, setActiveTab] = useState<Phase5Tab>("purchases");
+  const [filters, setFilters] = useState<ProcurementFilters>({
+    project_id: "",
+    municipality_id: "",
+    village_id: "",
+    family_id: "",
+    activity_id: "",
+    material_id: ""
+  });
+  const [notice, setNotice] = useState<Notice>(null);
+  const [batchName, setBatchName] = useState("");
+  const [batchObservation, setBatchObservation] = useState("");
+  const [selectedNeedId, setSelectedNeedId] = useState("");
+  const [deliveryQuantity, setDeliveryQuantity] = useState("");
+  const [deliveryDate, setDeliveryDate] = useState(new Date().toISOString().slice(0, 10));
+  const [deliveryObservation, setDeliveryObservation] = useState("");
+  const [adminOverride, setAdminOverride] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const approvedNeeds = useMemo(() => buildApprovedMaterialNeeds({
+    projects,
+    families,
+    municipalities,
+    villages,
+    activities,
+    materials,
+    plans,
+    planActivities,
+    planMaterials,
+    provisionalMaterials,
+    materialDeliveryItems
+  }), [projects, families, municipalities, villages, activities, materials, plans, planActivities, planMaterials, provisionalMaterials, materialDeliveryItems]);
+
+  const filteredNeeds = useMemo(() => filterApprovedNeeds(approvedNeeds, filters), [approvedNeeds, filters]);
+  const consolidatedNeeds = useMemo(() => consolidateMaterialNeeds(filteredNeeds), [filteredNeeds]);
+  const selectedNeed = approvedNeeds.find((need) => need.id === selectedNeedId) ?? null;
+  const projectLogos = useMemo(() => loadProjectLogos(), []);
+
+  const visibleDeliveries = materialDeliveries.filter((delivery) =>
+    (!filters.project_id || delivery.project_id === filters.project_id)
+    && (!filters.family_id || delivery.family_id === filters.family_id)
+  );
+
+  const deliveriesWithItems = visibleDeliveries.filter((delivery) =>
+    materialDeliveryItems.some((item) => item.material_delivery_id === delivery.id)
+  );
+
+  function updateFilter(key: keyof ProcurementFilters, value: string) {
+    setFilters((current) => {
+      const next = { ...current, [key]: value };
+      if (key === "project_id") {
+        next.municipality_id = "";
+        next.village_id = "";
+        next.family_id = "";
+        next.activity_id = "";
+        next.material_id = "";
+      }
+      if (key === "municipality_id") {
+        next.village_id = "";
+        next.family_id = "";
+      }
+      if (key === "village_id") next.family_id = "";
+      return next;
+    });
+  }
+
+  async function createProcurementBatch() {
+    setNotice(null);
+    if (!canManageProcurement) {
+      setNotice({ type: "error", message: "No tiene permisos para crear lotes de compra." });
+      return;
+    }
+    if (!filters.project_id) {
+      setNotice({ type: "error", message: "Seleccione un proyecto para crear el lote de compra." });
+      return;
+    }
+    if (consolidatedNeeds.length === 0) {
+      setNotice({ type: "error", message: "No hay materiales aprobados para consolidar con los filtros actuales." });
+      return;
+    }
+    const projectId = filters.project_id;
+    const batchCode = `COMP-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}-${Date.now().toString().slice(-5)}`;
+    setSaving(true);
+    try {
+      const subtotal = consolidatedNeeds.reduce((sum, item) => sum + item.pendingQuantity * item.unitPrice, 0);
+      const { data: batch, error: batchError } = await supabase
+        .from("procurement_batches")
+        .insert({
+          project_id: projectId,
+          batch_code: batchCode,
+          name: batchName.trim() || `Consolidado ${batchCode}`,
+          status: "pendiente_compra",
+          filter_project_id: filters.project_id || null,
+          filter_municipality_id: filters.municipality_id || null,
+          filter_village_id: filters.village_id || null,
+          filter_family_id: filters.family_id || null,
+          filter_activity_id: filters.activity_id || null,
+          filter_material_id: filters.material_id || null,
+          subtotal,
+          observations: batchObservation.trim() || null
+        })
+        .select()
+        .single();
+      if (batchError) throw batchError;
+
+      const { error: itemsError } = await supabase.from("procurement_batch_items").insert(
+        consolidatedNeeds.map((item) => ({
+          procurement_batch_id: batch.id,
+          material_id: item.material_id,
+          provisional_material_id: item.provisional_material_id,
+          material_name: item.materialName,
+          unit: item.unit,
+          required_quantity: item.pendingQuantity,
+          purchased_quantity: 0,
+          unit_price: item.unitPrice,
+          status: "pendiente_compra",
+          source_plan_material_ids: item.sourcePlanMaterialIds
+        }))
+      );
+      if (itemsError) throw itemsError;
+      setBatchName("");
+      setBatchObservation("");
+      setNotice({ type: "info", message: "Lote de compra creado desde planes aprobados." });
+      await onChange();
+    } catch (error) {
+      setNotice({ type: "error", message: getErrorMessage(error) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function registerDelivery() {
+    setNotice(null);
+    if (!selectedNeed) {
+      setNotice({ type: "error", message: "Seleccione un material aprobado pendiente de entrega." });
+      return;
+    }
+    const quantity = Number(deliveryQuantity);
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      setNotice({ type: "error", message: "La cantidad entregada debe ser mayor que cero." });
+      return;
+    }
+    if (quantity > selectedNeed.pendingQuantity && (!adminOverride || !canAdminOverride)) {
+      setNotice({ type: "error", message: "La cantidad supera el saldo aprobado. Requiere autorizacion administrativa." });
+      return;
+    }
+    const familyNeeds = approvedNeeds.filter((need) =>
+      need.project_id === selectedNeed.project_id
+      && need.family_id === selectedNeed.family_id
+      && need.operational_plan_id === selectedNeed.operational_plan_id
+    );
+    const status = familyNeeds.every((need) => {
+      const pending = need.id === selectedNeed.id ? need.pendingQuantity - quantity : need.pendingQuantity;
+      return pending <= 0.0001;
+    }) ? "entregado_total" : "entregado_parcial";
+
+    setSaving(true);
+    try {
+      const { data: delivery, error: deliveryError } = await supabase
+        .from("material_deliveries")
+        .insert({
+          project_id: selectedNeed.project_id,
+          family_id: selectedNeed.family_id,
+          operational_plan_id: selectedNeed.operational_plan_id,
+          delivery_date: deliveryDate,
+          status,
+          observations: deliveryObservation.trim() || null,
+          registered_by: currentProfile?.id ?? null
+        })
+        .select()
+        .single();
+      if (deliveryError) throw deliveryError;
+
+      const { error: itemError } = await supabase.from("material_delivery_items").insert({
+        material_delivery_id: delivery.id,
+        project_id: selectedNeed.project_id,
+        family_id: selectedNeed.family_id,
+        operational_plan_id: selectedNeed.operational_plan_id,
+        plan_activity_id: selectedNeed.plan_activity_id,
+        activity_id: selectedNeed.activity_id,
+        plan_project_material_id: selectedNeed.plan_project_material_id,
+        material_id: selectedNeed.material_id,
+        provisional_material_id: selectedNeed.provisional_material_id,
+        material_name: selectedNeed.materialName,
+        unit: selectedNeed.unit,
+        approved_quantity: selectedNeed.approvedQuantity,
+        delivered_quantity: quantity,
+        unit_price: selectedNeed.unitPrice,
+        observations: deliveryObservation.trim() || null,
+        admin_override: quantity > selectedNeed.pendingQuantity,
+        override_authorized_by: quantity > selectedNeed.pendingQuantity ? currentProfile?.id ?? null : null
+      });
+      if (itemError) throw itemError;
+      setDeliveryQuantity("");
+      setDeliveryObservation("");
+      setAdminOverride(false);
+      setNotice({ type: "info", message: status === "entregado_total" ? "Entrega total registrada." : "Entrega parcial registrada." });
+      await onChange();
+    } catch (error) {
+      setNotice({ type: "error", message: getErrorMessage(error) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function ensureDeliveryAct(delivery: MaterialDelivery) {
+    const items = materialDeliveryItems.filter((item) => item.material_delivery_id === delivery.id);
+    if (items.length === 0) throw new Error("No se puede generar acta sin entrega registrada con items.");
+    const existing = deliveryActs.find((act) => act.material_delivery_id === delivery.id && !act.is_deleted);
+    if (existing) return existing;
+    if (!canGenerateActs) throw new Error("No tiene permisos para generar actas.");
+    const family = families.find((item) => item.id === delivery.family_id);
+    const actNumber = `ACT-${family?.family_code ?? "FAM"}-${String(deliveryActs.length + 1).padStart(3, "0")}`;
+    const { data, error } = await supabase
+      .from("delivery_acts")
+      .insert({
+        project_id: delivery.project_id,
+        family_id: delivery.family_id,
+        operational_plan_id: delivery.operational_plan_id,
+        material_delivery_id: delivery.id,
+        act_number: actNumber,
+        status: "generated",
+        generated_by: currentProfile?.id ?? null,
+        observations: delivery.observations
+      })
+      .select()
+      .single();
+    if (error) throw error;
+    await onChange();
+    return data as DeliveryAct;
+  }
+
+  async function exportDeliveryAct(delivery: MaterialDelivery, format: "pdf" | "word") {
+    setNotice(null);
+    setSaving(true);
+    try {
+      const act = await ensureDeliveryAct(delivery);
+      const context = buildDeliveryActContext({
+        act,
+        delivery,
+        projects,
+        families,
+        municipalities,
+        villages,
+        plans,
+        activities,
+        materialDeliveryItems,
+        projectLogos
+      });
+      if (format === "pdf") {
+        const bytes = await buildDeliveryActPdf(context);
+        saveBlob(new Blob([bytes], { type: "application/pdf" }), `${sanitizeFileName(act.act_number)}.pdf`);
+      } else {
+        const blob = await buildDeliveryActDocx(context);
+        saveBlob(blob, `${sanitizeFileName(act.act_number)}.docx`);
+      }
+      setNotice({ type: "info", message: `Acta ${format === "pdf" ? "PDF" : "Word"} generada.` });
+    } catch (error) {
+      setNotice({ type: "error", message: getErrorMessage(error) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="section">
+      <div className="toolbar">
+        <div>
+          <h2>Compras, entregas y actas</h2>
+          <div className="muted">Solo se consolidan materiales de planes operativos aprobados.</div>
+        </div>
+        <span className="badge">{canManageProcurement ? "Gestion habilitada" : "Solo lectura"}</span>
+      </div>
+      {notice ? <div className={`alert ${notice.type}`}>{notice.message}</div> : null}
+      <div className="form-actions">
+        <button className={activeTab === "purchases" ? "" : "secondary"} type="button" onClick={() => setActiveTab("purchases")}>Compras / Adquisiciones</button>
+        <button className={activeTab === "deliveries" ? "" : "secondary"} type="button" onClick={() => setActiveTab("deliveries")}>Entregas</button>
+        <button className={activeTab === "acts" ? "" : "secondary"} type="button" onClick={() => setActiveTab("acts")}>Actas</button>
+      </div>
+      <Phase5Filters
+        filters={filters}
+        projects={projects}
+        families={families}
+        municipalities={municipalities}
+        villages={villages}
+        activities={activities}
+        materials={materials}
+        onChange={updateFilter}
+      />
+
+      {activeTab === "purchases" ? (
+        <div className="section">
+          <div className="summary-grid">
+            <Metric label="Materiales consolidados" value={consolidatedNeeds.length} />
+            <Metric label="Lineas aprobadas" value={filteredNeeds.length} />
+            <Metric label="Lotes de compra" value={procurementBatches.length} />
+            <Metric label="Items de compra" value={procurementBatchItems.length} />
+            <Metric label="Pendientes" value={consolidatedNeeds.filter((item) => item.pendingQuantity > 0).length} />
+          </div>
+          <div className="panel grid">
+            <label className="span-4">
+              Nombre del lote
+              <input value={batchName} onChange={(event) => setBatchName(event.target.value)} placeholder="Consolidado de materiales" />
+            </label>
+            <label className="span-6">
+              Observaciones
+              <input value={batchObservation} onChange={(event) => setBatchObservation(event.target.value)} />
+            </label>
+            <div className="span-12 form-actions">
+              <button disabled={!canManageProcurement || saving || !filters.project_id || consolidatedNeeds.length === 0} type="button" onClick={() => void createProcurementBatch()}>
+                Crear lote de compra
+              </button>
+              <button className="secondary" disabled={consolidatedNeeds.length === 0} type="button" onClick={() => exportConsolidatedCsv(consolidatedNeeds)}>
+                Exportar consolidado CSV
+              </button>
+            </div>
+          </div>
+          <DataTable
+            headers={["Proyecto", "Material", "Unidad", "Aprobado", "Entregado", "Pendiente", "Valor pendiente"]}
+            rows={consolidatedNeeds.map((item) => [
+              item.projectName,
+              item.materialName,
+              item.unit,
+              formatNumber(item.requiredQuantity),
+              formatNumber(item.deliveredQuantity),
+              formatNumber(item.pendingQuantity),
+              formatExportMoney(item.pendingQuantity * item.unitPrice)
+            ])}
+          />
+          <DataTable
+            headers={["Proyecto", "Municipio", "Vereda", "Familia", "Actividad", "Material", "Aprobado", "Pendiente"]}
+            rows={filteredNeeds.map((need) => [
+              need.projectName,
+              need.municipalityName,
+              need.villageName,
+              `${need.familyCode} - ${need.familyName}`,
+              need.activityName,
+              need.materialName,
+              `${formatNumber(need.approvedQuantity)} ${need.unit}`,
+              `${formatNumber(need.pendingQuantity)} ${need.unit}`
+            ])}
+          />
+          <DataTable
+            headers={["Lote", "Proyecto", "Estado", "Subtotal", "Observaciones"]}
+            rows={procurementBatches.map((batch) => {
+              const project = projects.find((item) => item.id === batch.project_id);
+              return [
+                `${batch.batch_code} - ${batch.name}`,
+                project?.name ?? "Sin proyecto",
+                <span className="badge" key="status">{procurementStatusLabel(batch.status)}</span>,
+                formatExportMoney(Number(batch.subtotal)),
+                batch.observations ?? ""
+              ];
+            })}
+          />
+        </div>
+      ) : null}
+
+      {activeTab === "deliveries" ? (
+        <div className="section">
+          <div className="panel grid">
+            <label className="span-6">
+              Material aprobado pendiente
+              <select value={selectedNeedId} onChange={(event) => setSelectedNeedId(event.target.value)}>
+                <option value="">Seleccione...</option>
+                {filteredNeeds.filter((need) => need.pendingQuantity > 0 || canAdminOverride).map((need) => (
+                  <option key={need.id} value={need.id}>
+                    {need.familyCode} - {need.materialName} - pendiente {formatNumber(need.pendingQuantity)} {need.unit}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="span-3">
+              Fecha
+              <input type="date" value={deliveryDate} onChange={(event) => setDeliveryDate(event.target.value)} />
+            </label>
+            <label className="span-3">
+              Cantidad entregada
+              <input type="number" min="0" step="0.01" value={deliveryQuantity} onChange={(event) => setDeliveryQuantity(event.target.value)} />
+            </label>
+            <label className="span-12">
+              Observaciones
+              <textarea value={deliveryObservation} onChange={(event) => setDeliveryObservation(event.target.value)} rows={2} />
+            </label>
+            <label className="span-12 checkbox-row">
+              <input type="checkbox" checked={adminOverride} disabled={!canAdminOverride} onChange={(event) => setAdminOverride(event.target.checked)} />
+              Autorizar entrega superior a la cantidad aprobada
+            </label>
+            {selectedNeed ? (
+              <div className="span-12 alert info">
+                Aprobado: {formatNumber(selectedNeed.approvedQuantity)} {selectedNeed.unit}. Entregado: {formatNumber(selectedNeed.deliveredQuantity)}. Saldo: {formatNumber(selectedNeed.pendingQuantity)}.
+              </div>
+            ) : null}
+            <div className="span-12 form-actions">
+              <button disabled={saving || !selectedNeed} type="button" onClick={() => void registerDelivery()}>
+                Registrar entrega
+              </button>
+            </div>
+          </div>
+          <DataTable
+            headers={["Fecha", "Familia", "Estado", "Items", "Observacion"]}
+            rows={visibleDeliveries.map((delivery) => {
+              const family = families.find((item) => item.id === delivery.family_id);
+              const items = materialDeliveryItems.filter((item) => item.material_delivery_id === delivery.id);
+              return [
+                delivery.delivery_date,
+                family ? `${family.family_code} - ${family.representative_name}` : "Sin familia",
+                <span className="badge" key="status">{deliveryStatusLabel(delivery.status)}</span>,
+                items.map((item) => `${item.material_name}: ${formatNumber(item.delivered_quantity)} ${item.unit}`).join("; "),
+                delivery.observations ?? ""
+              ];
+            })}
+          />
+        </div>
+      ) : null}
+
+      {activeTab === "acts" ? (
+        <div className="section">
+          <div className="alert info">Las actas solo se generan para entregas con items registrados.</div>
+          <DataTable
+            headers={["Fecha", "Familia", "Estado entrega", "Acta", "Exportar"]}
+            rows={deliveriesWithItems.map((delivery) => {
+              const family = families.find((item) => item.id === delivery.family_id);
+              const act = deliveryActs.find((item) => item.material_delivery_id === delivery.id && !item.is_deleted);
+              return [
+                delivery.delivery_date,
+                family ? `${family.family_code} - ${family.representative_name}` : "Sin familia",
+                <span className="badge" key="status">{deliveryStatusLabel(delivery.status)}</span>,
+                act?.act_number ?? "Pendiente",
+                <div className="row-actions" key="actions">
+                  <button className="secondary" disabled={saving || !canGenerateActs} type="button" onClick={() => void exportDeliveryAct(delivery, "pdf")}>PDF</button>
+                  <button className="secondary" disabled={saving || !canGenerateActs} type="button" onClick={() => void exportDeliveryAct(delivery, "word")}>Word</button>
+                </div>
+              ];
+            })}
+          />
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function Phase5Filters({
+  filters,
+  projects,
+  families,
+  municipalities,
+  villages,
+  activities,
+  materials,
+  onChange
+}: {
+  filters: ProcurementFilters;
+  projects: Project[];
+  families: Family[];
+  municipalities: Municipality[];
+  villages: Village[];
+  activities: Activity[];
+  materials: Material[];
+  onChange: (key: keyof ProcurementFilters, value: string) => void;
+}) {
+  const visibleFamilies = families.filter((family) =>
+    (!filters.project_id || family.project_id === filters.project_id)
+    && (!filters.municipality_id || family.municipality_id === filters.municipality_id)
+    && (!filters.village_id || family.village_id === filters.village_id)
+  );
+  const visibleVillages = villages.filter((village) =>
+    !filters.municipality_id || village.municipality_id === filters.municipality_id
+  );
+  return (
+    <div className="panel grid">
+      <label className="span-3">
+        Proyecto
+        <select value={filters.project_id} onChange={(event) => onChange("project_id", event.target.value)}>
+          <option value="">Todos</option>
+          {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+        </select>
+      </label>
+      <label className="span-3">
+        Municipio
+        <select value={filters.municipality_id} onChange={(event) => onChange("municipality_id", event.target.value)}>
+          <option value="">Todos</option>
+          {municipalities.map((municipality) => <option key={municipality.id} value={municipality.id}>{municipality.name}</option>)}
+        </select>
+      </label>
+      <label className="span-3">
+        Vereda
+        <select value={filters.village_id} onChange={(event) => onChange("village_id", event.target.value)}>
+          <option value="">Todas</option>
+          {visibleVillages.map((village) => <option key={village.id} value={village.id}>{village.name}</option>)}
+        </select>
+      </label>
+      <label className="span-3">
+        Familia
+        <select value={filters.family_id} onChange={(event) => onChange("family_id", event.target.value)}>
+          <option value="">Todas</option>
+          {visibleFamilies.map((family) => (
+            <option key={family.id} value={family.id}>{family.family_code} - {family.representative_name}</option>
+          ))}
+        </select>
+      </label>
+      <label className="span-3">
+        Actividad
+        <select value={filters.activity_id} onChange={(event) => onChange("activity_id", event.target.value)}>
+          <option value="">Todas</option>
+          {activities.map((activity) => <option key={activity.id} value={activity.id}>{activity.name}</option>)}
+        </select>
+      </label>
+      <label className="span-3">
+        Material
+        <select value={filters.material_id} onChange={(event) => onChange("material_id", event.target.value)}>
+          <option value="">Todos</option>
+          {materials.map((material) => <option key={material.id} value={material.id}>{material.name}</option>)}
+        </select>
+      </label>
+    </div>
+  );
+}
+
+function buildApprovedMaterialNeeds(data: {
+  projects: Project[];
+  families: Family[];
+  municipalities: Municipality[];
+  villages: Village[];
+  activities: Activity[];
+  materials: Material[];
+  plans: OperationalPlan[];
+  planActivities: PlanActivity[];
+  planMaterials: PlanProjectMaterial[];
+  provisionalMaterials: ProvisionalMaterial[];
+  materialDeliveryItems: MaterialDeliveryItem[];
+}): ApprovedMaterialNeed[] {
+  const projectById = new Map(data.projects.map((item) => [item.id, item]));
+  const familyById = new Map(data.families.map((item) => [item.id, item]));
+  const municipalityById = new Map(data.municipalities.map((item) => [item.id, item]));
+  const villageById = new Map(data.villages.map((item) => [item.id, item]));
+  const activityById = new Map(data.activities.map((item) => [item.id, item]));
+  const materialById = new Map(data.materials.map((item) => [item.id, item]));
+  const provisionalById = new Map(data.provisionalMaterials.map((item) => [item.id, item]));
+  const deliveredByPlanMaterial = new Map<string, number>();
+
+  for (const item of data.materialDeliveryItems.filter((row) => !row.is_deleted)) {
+    deliveredByPlanMaterial.set(
+      item.plan_project_material_id,
+      (deliveredByPlanMaterial.get(item.plan_project_material_id) ?? 0) + Number(item.delivered_quantity)
+    );
+  }
+
+  const activitiesByPlan = new Map<string, PlanActivity[]>();
+  for (const activity of data.planActivities.filter((item) => !item.is_deleted)) {
+    const rows = activitiesByPlan.get(activity.plan_id) ?? [];
+    rows.push(activity);
+    activitiesByPlan.set(activity.plan_id, rows);
+  }
+  const materialsByActivity = new Map<string, PlanProjectMaterial[]>();
+  for (const material of data.planMaterials.filter((item) => !item.is_deleted)) {
+    const rows = materialsByActivity.get(material.plan_activity_id) ?? [];
+    rows.push(material);
+    materialsByActivity.set(material.plan_activity_id, rows);
+  }
+
+  return data.plans
+    .filter((plan) => plan.status === "approved" && !plan.is_deleted)
+    .flatMap((plan) => {
+      const project = projectById.get(plan.project_id);
+      const family = familyById.get(plan.family_id);
+      const municipality = family?.municipality_id ? municipalityById.get(family.municipality_id) : undefined;
+      const village = family?.village_id ? villageById.get(family.village_id) : undefined;
+      return (activitiesByPlan.get(plan.id) ?? []).flatMap((planActivity) => {
+        const activity = activityById.get(planActivity.activity_id);
+        return (materialsByActivity.get(planActivity.id) ?? []).map((planMaterial) => {
+          const material = planMaterial.material_id ? materialById.get(planMaterial.material_id) : undefined;
+          const provisional = planMaterial.provisional_material_id ? provisionalById.get(planMaterial.provisional_material_id) : undefined;
+          const approvedQuantity = Number(planMaterial.quantity);
+          const deliveredQuantity = deliveredByPlanMaterial.get(planMaterial.id) ?? 0;
+          const unitPrice = Number(planMaterial.quoted_unit_price);
+          return {
+            id: planMaterial.id,
+            project_id: plan.project_id,
+            projectName: project?.name ?? "Sin proyecto",
+            municipality_id: family?.municipality_id ?? null,
+            municipalityName: municipality?.name ?? "N/A",
+            village_id: family?.village_id ?? null,
+            villageName: village?.name ?? "N/A",
+            family_id: plan.family_id,
+            familyCode: family?.family_code ?? "N/A",
+            familyName: family?.representative_name ?? "N/A",
+            documentNumber: family?.document_number ?? "N/A",
+            operational_plan_id: plan.id,
+            plan_activity_id: planActivity.id,
+            activity_id: planActivity.activity_id,
+            activityName: activity?.name ?? "Actividad",
+            plan_project_material_id: planMaterial.id,
+            material_id: planMaterial.material_id,
+            provisional_material_id: planMaterial.provisional_material_id,
+            materialName: material?.name ?? provisional?.provisional_name ?? planMaterial.observations ?? "Material",
+            unit: planMaterial.unit,
+            approvedQuantity,
+            deliveredQuantity,
+            pendingQuantity: Math.max(0, approvedQuantity - deliveredQuantity),
+            unitPrice,
+            totalValue: approvedQuantity * unitPrice
+          };
+        });
+      });
+    });
+}
+
+function filterApprovedNeeds(needs: ApprovedMaterialNeed[], filters: ProcurementFilters) {
+  return needs.filter((need) =>
+    (!filters.project_id || need.project_id === filters.project_id)
+    && (!filters.municipality_id || need.municipality_id === filters.municipality_id)
+    && (!filters.village_id || need.village_id === filters.village_id)
+    && (!filters.family_id || need.family_id === filters.family_id)
+    && (!filters.activity_id || need.activity_id === filters.activity_id)
+    && (!filters.material_id || need.material_id === filters.material_id)
+  );
+}
+
+function consolidateMaterialNeeds(needs: ApprovedMaterialNeed[]): ConsolidatedMaterialNeed[] {
+  const rows = new Map<string, ConsolidatedMaterialNeed>();
+  for (const need of needs) {
+    const key = `${need.project_id}-${need.material_id ?? need.provisional_material_id ?? need.materialName}-${need.unit}`;
+    const current = rows.get(key) ?? {
+      key,
+      project_id: need.project_id,
+      projectName: need.projectName,
+      material_id: need.material_id,
+      provisional_material_id: need.provisional_material_id,
+      materialName: need.materialName,
+      unit: need.unit,
+      requiredQuantity: 0,
+      deliveredQuantity: 0,
+      pendingQuantity: 0,
+      unitPrice: need.unitPrice,
+      totalValue: 0,
+      sourcePlanMaterialIds: []
+    };
+    current.requiredQuantity += need.approvedQuantity;
+    current.deliveredQuantity += need.deliveredQuantity;
+    current.pendingQuantity += need.pendingQuantity;
+    current.totalValue += need.pendingQuantity * need.unitPrice;
+    current.sourcePlanMaterialIds.push(need.plan_project_material_id);
+    rows.set(key, current);
+  }
+  return Array.from(rows.values()).sort((left, right) => left.materialName.localeCompare(right.materialName));
+}
+
+function exportConsolidatedCsv(rows: ConsolidatedMaterialNeed[]) {
+  const headers = ["proyecto", "material", "unidad", "cantidad_aprobada", "cantidad_entregada", "cantidad_pendiente", "valor_pendiente"];
+  const body = rows.map((row) => [
+    row.projectName,
+    row.materialName,
+    row.unit,
+    formatNumber(row.requiredQuantity),
+    formatNumber(row.deliveredQuantity),
+    formatNumber(row.pendingQuantity),
+    String(Math.round(row.pendingQuantity * row.unitPrice))
+  ]);
+  const csv = [headers, ...body]
+    .map((line) => line.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(","))
+    .join("\n");
+  saveBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), "consolidado-materiales.csv");
+}
+
+function buildDeliveryActContext(data: {
+  act: DeliveryAct;
+  delivery: MaterialDelivery;
+  projects: Project[];
+  families: Family[];
+  municipalities: Municipality[];
+  villages: Village[];
+  plans: OperationalPlan[];
+  activities: Activity[];
+  materialDeliveryItems: MaterialDeliveryItem[];
+  projectLogos: Record<string, ProjectLogoConfig[]>;
+}): DeliveryActContext {
+  const family = data.families.find((item) => item.id === data.delivery.family_id);
+  return {
+    act: data.act,
+    delivery: data.delivery,
+    items: data.materialDeliveryItems.filter((item) => item.material_delivery_id === data.delivery.id && !item.is_deleted),
+    project: data.projects.find((item) => item.id === data.delivery.project_id),
+    family,
+    municipality: data.municipalities.find((item) => item.id === family?.municipality_id),
+    village: data.villages.find((item) => item.id === family?.village_id),
+    plan: data.plans.find((item) => item.id === data.delivery.operational_plan_id),
+    activityById: new Map(data.activities.map((item) => [item.id, item])),
+    projectLogos: data.projectLogos
+  };
+}
+
+async function buildDeliveryActPdf(context: DeliveryActContext) {
+  const doc = createPdfDocument();
+  await drawDeliveryActPdf(doc, context);
+  return doc.finish();
+}
+
+async function drawDeliveryActPdf(doc: PdfDocumentBuilder, context: DeliveryActContext) {
+  const logos = context.projectLogos[context.delivery.project_id] ?? [];
+  doc.setPageChrome({
+    topLogos: await preparePdfLogos(logos.filter((logo) => !isBottomLogoPosition(logo.position)), "header"),
+    bottomLogos: await preparePdfLogos(logos.filter((logo) => isBottomLogoPosition(logo.position)), "footer")
+  });
+  let y = doc.contentTop;
+  doc.text("Acta de entrega de materiales", doc.margin, y, 18, true, ForestPdf);
+  y += 22;
+  y = drawMetaPdf(doc, [
+    ["Acta", context.act.act_number],
+    ["Proyecto", context.project?.name ?? "Sin proyecto"],
+    ["Codigo familia", context.family?.family_code ?? "N/A"],
+    ["Representante", context.family?.representative_name ?? "N/A"],
+    ["Documento", context.family?.document_number ?? "N/A"],
+    ["Municipio", context.municipality?.name ?? "N/A"],
+    ["Vereda", context.village?.name ?? "N/A"],
+    ["Fecha de entrega", context.delivery.delivery_date],
+    ["Estado", deliveryStatusLabel(context.delivery.status)]
+  ], y);
+  doc.line(doc.margin, y + 6, doc.pageWidth - doc.margin, y + 6, ForestPdf, 2);
+  y += 26;
+  y = drawPdfTable(doc, y, ["Material", "Actividad", "Cantidad", "Valor uni", "Valor total"], context.items.map((item) => [
+    item.material_name,
+    context.activityById.get(item.activity_id ?? "")?.name ?? "Actividad",
+    formatQuantity(Number(item.delivered_quantity), item.unit),
+    formatExportMoney(Number(item.unit_price)),
+    formatExportMoney(Number(item.total_value))
+  ]), [170, 135, 75, 75, 75]);
+  y = doc.ensureSpace(y + 10, 100);
+  doc.text("Observaciones:", doc.margin, y, 10, true, ForestPdf);
+  y += 14;
+  doc.text(context.delivery.observations ?? "Sin observaciones.", doc.margin, y, 9);
+  y += 46;
+  doc.line(doc.margin, y, doc.margin + 190, y, "111111", 0.8);
+  doc.line(doc.pageWidth - doc.margin - 190, y, doc.pageWidth - doc.margin, y, "111111", 0.8);
+  y += 14;
+  doc.text("Entrega", doc.margin + 65, y, 9, true);
+  doc.text("Recibe familia", doc.pageWidth - doc.margin - 132, y, 9, true);
+}
+
+async function buildDeliveryActDocx(context: DeliveryActContext) {
+  const logos = context.projectLogos[context.delivery.project_id] ?? [];
+  const document = new WordDocument({
+    title: context.act.act_number,
+    creator: "Restauracion Admin",
+    sections: [{
+      properties: {
+        page: {
+          size: { orientation: PageOrientation.PORTRAIT, width: 11906, height: 16838 },
+          margin: { top: 1500, right: 648, bottom: 1220, left: 648, header: 260, footer: 260 }
+        }
+      },
+      headers: {
+        default: new Header({ children: [buildDocxLogoParagraph(logos.filter((logo) => !isBottomLogoPosition(logo.position)), "header", "right")] })
+      },
+      footers: {
+        default: new Footer({ children: [buildDocxLogoParagraph(logos.filter((logo) => isBottomLogoPosition(logo.position)), "footer", "center")] })
+      },
+      children: [
+        docxParagraph("Acta de entrega de materiales", { bold: true, size: 36, color: ForestPdf, spacingAfter: 120 }),
+        buildDocxMetaTable([
+          ["Acta", context.act.act_number],
+          ["Proyecto", context.project?.name ?? "Sin proyecto"],
+          ["Codigo familia", context.family?.family_code ?? "N/A"],
+          ["Representante", context.family?.representative_name ?? "N/A"],
+          ["Documento", context.family?.document_number ?? "N/A"],
+          ["Municipio", context.municipality?.name ?? "N/A"],
+          ["Vereda", context.village?.name ?? "N/A"],
+          ["Fecha de entrega", context.delivery.delivery_date],
+          ["Estado", deliveryStatusLabel(context.delivery.status)]
+        ]),
+        docxSeparator(),
+        buildDocxExportTable("MATERIALES ENTREGADOS", context.items.map((item) => [
+          item.material_name,
+          formatQuantity(Number(item.delivered_quantity), item.unit),
+          formatExportMoney(Number(item.unit_price)),
+          formatExportMoney(Number(item.total_value))
+        ])),
+        docxParagraph(`Observaciones: ${context.delivery.observations ?? "Sin observaciones."}`, { size: 18, spacingBefore: 160, spacingAfter: 520 }),
+        buildDocxSignatureTable()
+      ]
+    }]
+  });
+  return Packer.toBlob(document);
+}
+
+function buildDocxSignatureTable() {
+  const border = { style: BorderStyle.SINGLE, size: 4, color: "111111" };
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    layout: TableLayoutType.FIXED,
+    borders: docxNoBorders(),
+    rows: [
+      new TableRow({
+        children: [
+          new TableCell({
+            borders: { top: border, bottom: docxNoBorder(), left: docxNoBorder(), right: docxNoBorder() },
+            children: [docxParagraph("Entrega", { bold: true, alignment: AlignmentType.CENTER, spacingAfter: 0 })]
+          }),
+          new TableCell({
+            borders: { top: border, bottom: docxNoBorder(), left: docxNoBorder(), right: docxNoBorder() },
+            children: [docxParagraph("Recibe familia", { bold: true, alignment: AlignmentType.CENTER, spacingAfter: 0 })]
+          })
+        ]
+      })
+    ]
+  });
+}
+
+function saveBlob(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function formatNumber(value: number) {
+  return new Intl.NumberFormat("es-CO", { maximumFractionDigits: 2 }).format(value);
+}
+
+function procurementStatusLabel(status: ProcurementStatus) {
+  const labels: Record<ProcurementStatus, string> = {
+    pendiente_compra: "Pendiente compra",
+    en_proceso: "En proceso",
+    comprado: "Comprado",
+    entregado_parcial: "Entregado parcial",
+    entregado_total: "Entregado total",
+    cancelado: "Cancelado"
+  };
+  return labels[status] ?? status;
+}
+
+function deliveryStatusLabel(status: MaterialDelivery["status"]) {
+  const labels: Record<MaterialDelivery["status"], string> = {
+    entregado_parcial: "Entregado parcial",
+    entregado_total: "Entregado total",
+    cancelado: "Cancelado"
+  };
+  return labels[status] ?? status;
 }
 
 type PlanExportContext = {
