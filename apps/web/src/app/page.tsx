@@ -28,6 +28,8 @@ import type {
   DeliveryAct,
   Department,
   Family,
+  ImplementationProgress,
+  ImplementationProgressStatus,
   Material,
   MaterialDelivery,
   MaterialDeliveryItem,
@@ -247,6 +249,7 @@ function AdminApp({ session }: { session: Session }) {
   const [materialDeliveries, setMaterialDeliveries] = useState<MaterialDelivery[]>([]);
   const [materialDeliveryItems, setMaterialDeliveryItems] = useState<MaterialDeliveryItem[]>([]);
   const [deliveryActs, setDeliveryActs] = useState<DeliveryAct[]>([]);
+  const [implementationProgress, setImplementationProgress] = useState<ImplementationProgress[]>([]);
 
   const roleNames = useMemo(() => {
     const roleById = new Map(roles.map((role) => [role.id, role.name]));
@@ -294,7 +297,8 @@ function AdminApp({ session }: { session: Session }) {
         procurementBatchItemsResult,
         materialDeliveriesResult,
         materialDeliveryItemsResult,
-        deliveryActsResult
+        deliveryActsResult,
+        implementationProgressResult
       ] = await Promise.all([
         supabase.from("roles").select("id,name,description,permissions").order("name"),
         supabase.from("users_profiles").select("*").eq("auth_user_id", session.user.id).maybeSingle(),
@@ -320,7 +324,8 @@ function AdminApp({ session }: { session: Session }) {
         supabase.from("procurement_batch_items").select("*").eq("is_deleted", false),
         supabase.from("material_deliveries").select("*").eq("is_deleted", false).order("created_at", { ascending: false }),
         supabase.from("material_delivery_items").select("*").eq("is_deleted", false),
-        supabase.from("delivery_acts").select("*").eq("is_deleted", false).order("generated_at", { ascending: false })
+        supabase.from("delivery_acts").select("*").eq("is_deleted", false).order("generated_at", { ascending: false }),
+        supabase.from("implementation_progress").select("*").eq("is_deleted", false).order("created_at", { ascending: false })
       ]);
 
       const error = [
@@ -373,6 +378,7 @@ function AdminApp({ session }: { session: Session }) {
       setMaterialDeliveries((materialDeliveriesResult.data ?? []) as MaterialDelivery[]);
       setMaterialDeliveryItems((materialDeliveryItemsResult.data ?? []) as MaterialDeliveryItem[]);
       setDeliveryActs((deliveryActsResult.data ?? []) as DeliveryAct[]);
+      setImplementationProgress((implementationProgressResult.data ?? []) as ImplementationProgress[]);
     } catch (error) {
       setNotice({ type: "error", message: getErrorMessage(error) });
     } finally {
@@ -526,10 +532,12 @@ function AdminApp({ session }: { session: Session }) {
               materialDeliveries={materialDeliveries}
               materialDeliveryItems={materialDeliveryItems}
               deliveryActs={deliveryActs}
+              implementationProgress={implementationProgress}
               currentProfile={profile}
               canManageProcurement={canWrite}
               canAdminOverride={roleNames.has("admin")}
               canGenerateActs={canWrite}
+              canEditImplementation={canWrite || roleNames.has("technician")}
               onChange={loadAll}
             />
           ) : null}
@@ -2434,7 +2442,7 @@ function validatePlanForApproval(
   return errors;
 }
 
-type Phase5Tab = "purchases" | "deliveries" | "acts";
+type Phase5Tab = "consolidated" | "indicators" | "acts";
 
 type ProcurementFilters = {
   project_id: string;
@@ -2489,6 +2497,60 @@ type ConsolidatedMaterialNeed = {
   sourcePlanMaterialIds: string[];
 };
 
+type ConsolidatedMatrixFamily = {
+  id: string;
+  label: string;
+};
+
+type ConsolidatedMatrixRow = {
+  key: string;
+  materialName: string;
+  unit: string;
+  quantities: Record<string, number>;
+  total: number;
+};
+
+type ConsolidatedMatrix = {
+  families: ConsolidatedMatrixFamily[];
+  rows: ConsolidatedMatrixRow[];
+};
+
+type IndicatorRow = {
+  key: string;
+  project_id: string;
+  family_id: string;
+  operational_plan_id: string;
+  plan_activity_id: string;
+  material_id: string | null;
+  familyCode: string;
+  familyName: string;
+  municipalityName: string;
+  villageName: string;
+  hectares: string;
+  activityName: string;
+  materialName: string;
+  unit: string;
+  targetQuantity: number;
+  deliveredQuantity: number;
+  implementedQuantity: number;
+  progressPercentage: number;
+  status: ImplementationProgressStatus;
+  observations: string;
+  progress?: ImplementationProgress;
+};
+
+type IndicatorConsolidatedRow = {
+  key: string;
+  municipalityName: string;
+  villageName: string;
+  activityName: string;
+  status: ImplementationProgressStatus;
+  targetQuantity: number;
+  deliveredQuantity: number;
+  implementedQuantity: number;
+  progressPercentage: number;
+};
+
 type DeliveryActContext = {
   act: DeliveryAct;
   delivery: MaterialDelivery;
@@ -2498,6 +2560,7 @@ type DeliveryActContext = {
   municipality?: Municipality;
   village?: Village;
   plan?: OperationalPlan;
+  technician?: Profile | null;
   activityById: Map<string, Activity>;
   projectLogos: Record<string, ProjectLogoConfig[]>;
 };
@@ -2518,10 +2581,12 @@ function ProcurementDeliveriesActs({
   materialDeliveries,
   materialDeliveryItems,
   deliveryActs,
+  implementationProgress,
   currentProfile,
   canManageProcurement,
   canAdminOverride,
   canGenerateActs,
+  canEditImplementation,
   onChange
 }: {
   projects: Project[];
@@ -2539,13 +2604,15 @@ function ProcurementDeliveriesActs({
   materialDeliveries: MaterialDelivery[];
   materialDeliveryItems: MaterialDeliveryItem[];
   deliveryActs: DeliveryAct[];
+  implementationProgress: ImplementationProgress[];
   currentProfile: Profile | null;
   canManageProcurement: boolean;
   canAdminOverride: boolean;
   canGenerateActs: boolean;
+  canEditImplementation: boolean;
   onChange: () => Promise<void>;
 }) {
-  const [activeTab, setActiveTab] = useState<Phase5Tab>("purchases");
+  const [activeTab, setActiveTab] = useState<Phase5Tab>("consolidated");
   const [filters, setFilters] = useState<ProcurementFilters>({
     project_id: "",
     municipality_id: "",
@@ -2562,6 +2629,11 @@ function ProcurementDeliveriesActs({
   const [deliveryDate, setDeliveryDate] = useState(new Date().toISOString().slice(0, 10));
   const [deliveryObservation, setDeliveryObservation] = useState("");
   const [adminOverride, setAdminOverride] = useState(false);
+  const [selectedIndicatorKey, setSelectedIndicatorKey] = useState("");
+  const [implementedQuantity, setImplementedQuantity] = useState("");
+  const [indicatorStatus, setIndicatorStatus] = useState<ImplementationProgressStatus>("pending");
+  const [indicatorObservation, setIndicatorObservation] = useState("");
+  const [indicatorDate, setIndicatorDate] = useState(new Date().toISOString().slice(0, 10));
   const [saving, setSaving] = useState(false);
   const [approvedNeedsFromDb, setApprovedNeedsFromDb] = useState<ApprovedMaterialNeed[] | null>(null);
   const [loadingApprovedNeeds, setLoadingApprovedNeeds] = useState(false);
@@ -2610,7 +2682,11 @@ function ProcurementDeliveriesActs({
 
   const filteredNeeds = useMemo(() => filterApprovedNeeds(approvedNeeds, filters), [approvedNeeds, filters]);
   const consolidatedNeeds = useMemo(() => consolidateMaterialNeeds(filteredNeeds), [filteredNeeds]);
+  const consolidatedMatrix = useMemo(() => buildConsolidatedMatrix(filteredNeeds), [filteredNeeds]);
+  const indicatorRows = useMemo(() => buildIndicatorRows(filteredNeeds, implementationProgress), [filteredNeeds, implementationProgress]);
+  const indicatorConsolidated = useMemo(() => consolidateIndicatorRows(indicatorRows), [indicatorRows]);
   const selectedNeed = approvedNeeds.find((need) => need.id === selectedNeedId) ?? null;
+  const selectedIndicator = indicatorRows.find((row) => row.key === selectedIndicatorKey) ?? null;
   const projectLogos = useMemo(() => loadProjectLogos(), []);
 
   const visibleDeliveries = materialDeliveries.filter((delivery) =>
@@ -2621,6 +2697,18 @@ function ProcurementDeliveriesActs({
   const deliveriesWithItems = visibleDeliveries.filter((delivery) =>
     materialDeliveryItems.some((item) => item.material_delivery_id === delivery.id)
   );
+
+  useEffect(() => {
+    if (!selectedIndicator) {
+      setImplementedQuantity("");
+      setIndicatorStatus("pending");
+      setIndicatorObservation("");
+      return;
+    }
+    setImplementedQuantity(String(selectedIndicator.implementedQuantity || ""));
+    setIndicatorStatus(selectedIndicator.status);
+    setIndicatorObservation(selectedIndicator.observations);
+  }, [selectedIndicator]);
 
   function updateFilter(key: keyof ProcurementFilters, value: string) {
     setFilters((current) => {
@@ -2780,6 +2868,51 @@ function ProcurementDeliveriesActs({
     }
   }
 
+  async function saveImplementationProgress() {
+    setNotice(null);
+    if (!selectedIndicator) {
+      setNotice({ type: "error", message: "Seleccione una fila de la herramienta de indicadores." });
+      return;
+    }
+    if (!canEditImplementation) {
+      setNotice({ type: "error", message: "No tiene permisos para editar avances de implementacion." });
+      return;
+    }
+    const implemented = Number(implementedQuantity || 0);
+    if (!Number.isFinite(implemented) || implemented < 0) {
+      setNotice({ type: "error", message: "La cantidad implementada debe ser cero o mayor." });
+      return;
+    }
+    setSaving(true);
+    try {
+      const payload = {
+        project_id: selectedIndicator.project_id,
+        family_id: selectedIndicator.family_id,
+        operational_plan_id: selectedIndicator.operational_plan_id,
+        plan_activity_id: selectedIndicator.plan_activity_id,
+        material_id: selectedIndicator.material_id,
+        indicator_name: selectedIndicator.materialName || selectedIndicator.activityName,
+        unit: selectedIndicator.unit,
+        target_quantity: selectedIndicator.targetQuantity,
+        delivered_quantity: selectedIndicator.deliveredQuantity,
+        implemented_quantity: implemented,
+        status: indicatorStatus,
+        observations: indicatorObservation.trim() || null,
+        progress_date: indicatorDate || null
+      };
+      const result = selectedIndicator.progress
+        ? await supabase.from("implementation_progress").update(payload).eq("id", selectedIndicator.progress.id)
+        : await supabase.from("implementation_progress").insert(payload);
+      if (result.error) throw result.error;
+      setNotice({ type: "info", message: "Avance de implementacion guardado." });
+      await onChange();
+    } catch (error) {
+      setNotice({ type: "error", message: getErrorMessage(error) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function ensureDeliveryAct(delivery: MaterialDelivery) {
     const items = materialDeliveryItems.filter((item) => item.material_delivery_id === delivery.id);
     if (items.length === 0) throw new Error("No se puede generar acta sin entrega registrada con items.");
@@ -2822,6 +2955,7 @@ function ProcurementDeliveriesActs({
         plans,
         activities,
         materialDeliveryItems,
+        technician: currentProfile,
         projectLogos
       });
       if (format === "pdf") {
@@ -2844,15 +2978,15 @@ function ProcurementDeliveriesActs({
       <div className="toolbar">
         <div>
           <h2>Compras, entregas y actas</h2>
-          <div className="muted">Solo se consolidan materiales de planes operativos aprobados.</div>
+          <div className="muted">Consolidado, seguimiento de implementacion y actas desde planes operativos aprobados.</div>
         </div>
         <span className="badge">{canManageProcurement ? "Gestion habilitada" : "Solo lectura"}</span>
       </div>
       {notice ? <div className={`alert ${notice.type}`}>{notice.message}</div> : null}
       <div className="form-actions">
-        <button className={activeTab === "purchases" ? "" : "secondary"} type="button" onClick={() => setActiveTab("purchases")}>Compras / Adquisiciones</button>
-        <button className={activeTab === "deliveries" ? "" : "secondary"} type="button" onClick={() => setActiveTab("deliveries")}>Entregas</button>
-        <button className={activeTab === "acts" ? "" : "secondary"} type="button" onClick={() => setActiveTab("acts")}>Actas</button>
+        <button className={activeTab === "consolidated" ? "" : "secondary"} type="button" onClick={() => setActiveTab("consolidated")}>Consolidado de materiales</button>
+        <button className={activeTab === "indicators" ? "" : "secondary"} type="button" onClick={() => setActiveTab("indicators")}>Herramienta de indicadores</button>
+        <button className={activeTab === "acts" ? "" : "secondary"} type="button" onClick={() => setActiveTab("acts")}>Actas de entrega</button>
       </div>
       <Phase5Filters
         filters={filters}
@@ -2865,16 +2999,24 @@ function ProcurementDeliveriesActs({
         onChange={updateFilter}
       />
 
-      {activeTab === "purchases" ? (
+      {activeTab === "consolidated" ? (
         <div className="section">
           <div className="summary-grid">
-            <Metric label="Materiales consolidados" value={consolidatedNeeds.length} />
+            <Metric label="Materiales consolidados" value={consolidatedMatrix.rows.length} />
             <Metric label="Lineas aprobadas" value={filteredNeeds.length} />
             <Metric label="Lotes de compra" value={procurementBatches.length} />
             <Metric label="Items de compra" value={procurementBatchItems.length} />
-            <Metric label="Pendientes" value={consolidatedNeeds.filter((item) => item.pendingQuantity > 0).length} />
+            <Metric label="Familias" value={consolidatedMatrix.families.length} />
           </div>
           {loadingApprovedNeeds ? <div className="alert info">Consultando materiales aprobados...</div> : null}
+          <DataTable
+            headers={["Descripcion producto", ...consolidatedMatrix.families.map((family) => family.label), "Total general"]}
+            rows={consolidatedMatrix.rows.map((row) => [
+              row.materialName,
+              ...consolidatedMatrix.families.map((family) => formatNumber(row.quantities[family.id] ?? 0)),
+              <strong key="total">{formatNumber(row.total)} {row.unit}</strong>
+            ])}
+          />
           <div className="panel grid">
             <label className="span-4">
               Nombre del lote
@@ -2888,23 +3030,11 @@ function ProcurementDeliveriesActs({
               <button disabled={!canManageProcurement || saving || !filters.project_id || consolidatedNeeds.length === 0} type="button" onClick={() => void createProcurementBatch()}>
                 Crear lote de compra
               </button>
-              <button className="secondary" disabled={consolidatedNeeds.length === 0} type="button" onClick={() => exportConsolidatedCsv(consolidatedNeeds)}>
-                Exportar consolidado CSV
+              <button className="secondary" disabled={filteredNeeds.length === 0} type="button" onClick={() => void exportConsolidatedExcel(consolidatedMatrix, filteredNeeds)}>
+                Exportar consolidado Excel
               </button>
             </div>
           </div>
-          <DataTable
-            headers={["Proyecto", "Material", "Unidad", "Aprobado", "Entregado", "Pendiente", "Valor pendiente"]}
-            rows={consolidatedNeeds.map((item) => [
-              item.projectName,
-              item.materialName,
-              item.unit,
-              formatNumber(item.requiredQuantity),
-              formatNumber(item.deliveredQuantity),
-              formatNumber(item.pendingQuantity),
-              formatExportMoney(item.pendingQuantity * item.unitPrice)
-            ])}
-          />
           <DataTable
             headers={["Proyecto", "Municipio", "Vereda", "Familia", "Actividad", "Material", "Aprobado", "Pendiente"]}
             rows={filteredNeeds.map((need) => [
@@ -2934,7 +3064,94 @@ function ProcurementDeliveriesActs({
         </div>
       ) : null}
 
-      {activeTab === "deliveries" ? (
+      {activeTab === "indicators" ? (
+        <div className="section">
+          <div className="summary-grid">
+            <Metric label="Filas seguimiento" value={indicatorRows.length} />
+            <Metric label="Completados" value={indicatorRows.filter((row) => row.status === "completed").length} />
+            <Metric label="En proceso" value={indicatorRows.filter((row) => row.status === "in_progress").length} />
+            <Metric label="Pendientes" value={indicatorRows.filter((row) => row.status === "pending").length} />
+            <Metric label="Consolidados" value={indicatorConsolidated.length} />
+          </div>
+          <div className="panel grid">
+            <label className="span-6">
+              Indicador / actividad / material
+              <select value={selectedIndicatorKey} onChange={(event) => setSelectedIndicatorKey(event.target.value)}>
+                <option value="">Seleccione...</option>
+                {indicatorRows.map((row) => (
+                  <option key={row.key} value={row.key}>
+                    {row.familyCode} - {row.activityName} - {row.materialName}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="span-2">
+              Implementado
+              <input type="number" min="0" step="0.01" value={implementedQuantity} onChange={(event) => setImplementedQuantity(event.target.value)} />
+            </label>
+            <label className="span-2">
+              Estado
+              <select value={indicatorStatus} onChange={(event) => setIndicatorStatus(event.target.value as ImplementationProgressStatus)}>
+                <option value="pending">Pendiente</option>
+                <option value="in_progress">En proceso</option>
+                <option value="completed">Completado</option>
+                <option value="overdue">Atrasado</option>
+                <option value="cancelled">Cancelado</option>
+              </select>
+            </label>
+            <label className="span-2">
+              Fecha
+              <input type="date" value={indicatorDate} onChange={(event) => setIndicatorDate(event.target.value)} />
+            </label>
+            <label className="span-12">
+              Observaciones
+              <textarea value={indicatorObservation} onChange={(event) => setIndicatorObservation(event.target.value)} rows={2} />
+            </label>
+            <div className="span-12 form-actions">
+              <button disabled={!canEditImplementation || saving || !selectedIndicator} type="button" onClick={() => void saveImplementationProgress()}>
+                Guardar avance
+              </button>
+              <button className="secondary" disabled={indicatorRows.length === 0} type="button" onClick={() => void exportIndicatorsExcel(indicatorRows, indicatorConsolidated)}>
+                Exportar indicadores Excel
+              </button>
+            </div>
+          </div>
+          <DataTable
+            headers={["Codigo familia", "Familia", "Municipio", "Vereda", "Hectareas", "Actividad / indicador", "Material", "Unidad", "Meta", "Entregado", "Implementado", "Avance", "Estado", "Observaciones"]}
+            rows={indicatorRows.map((row) => [
+              row.familyCode,
+              row.familyName,
+              row.municipalityName,
+              row.villageName,
+              row.hectares,
+              row.activityName,
+              row.materialName,
+              row.unit,
+              formatNumber(row.targetQuantity),
+              formatNumber(row.deliveredQuantity),
+              formatNumber(row.implementedQuantity),
+              `${formatNumber(row.progressPercentage)}%`,
+              <span className="badge" key="status">{implementationStatusLabel(row.status)}</span>,
+              row.observations
+            ])}
+          />
+          <DataTable
+            headers={["Municipio", "Vereda", "Actividad / indicador", "Estado", "Meta", "Entregado", "Implementado", "Avance"]}
+            rows={indicatorConsolidated.map((row) => [
+              row.municipalityName,
+              row.villageName,
+              row.activityName,
+              implementationStatusLabel(row.status),
+              formatNumber(row.targetQuantity),
+              formatNumber(row.deliveredQuantity),
+              formatNumber(row.implementedQuantity),
+              `${formatNumber(row.progressPercentage)}%`
+            ])}
+          />
+        </div>
+      ) : null}
+
+      {activeTab === "acts" ? (
         <div className="section">
           <div className="panel grid">
             <label className="span-6">
@@ -2989,11 +3206,6 @@ function ProcurementDeliveriesActs({
               ];
             })}
           />
-        </div>
-      ) : null}
-
-      {activeTab === "acts" ? (
-        <div className="section">
           <div className="alert info">Las actas solo se generan para entregas con items registrados.</div>
           <DataTable
             headers={["Fecha", "Familia", "Estado entrega", "Acta", "Exportar"]}
@@ -3138,7 +3350,7 @@ function buildApprovedMaterialNeeds(data: {
   }
 
   return data.plans
-    .filter((plan) => plan.status === "approved" && !plan.is_deleted)
+    .filter((plan) => isApprovedPlanStatus(plan.status) && !plan.is_deleted)
     .flatMap((plan) => {
       const project = projectById.get(plan.project_id);
       const family = familyById.get(plan.family_id);
@@ -3294,6 +3506,247 @@ function consolidateMaterialNeeds(needs: ApprovedMaterialNeed[]): ConsolidatedMa
   return Array.from(rows.values()).sort((left, right) => left.materialName.localeCompare(right.materialName));
 }
 
+function buildConsolidatedMatrix(needs: ApprovedMaterialNeed[]): ConsolidatedMatrix {
+  const familyMap = new Map<string, ConsolidatedMatrixFamily>();
+  const rowMap = new Map<string, ConsolidatedMatrixRow>();
+
+  for (const need of needs) {
+    if (!familyMap.has(need.family_id)) {
+      familyMap.set(need.family_id, {
+        id: need.family_id,
+        label: `${need.familyCode} - ${need.familyName}`
+      });
+    }
+    const key = `${need.material_id ?? need.provisional_material_id ?? need.materialName}-${need.unit}`;
+    const row = rowMap.get(key) ?? {
+      key,
+      materialName: need.materialName,
+      unit: need.unit,
+      quantities: {},
+      total: 0
+    };
+    row.quantities[need.family_id] = (row.quantities[need.family_id] ?? 0) + need.approvedQuantity;
+    row.total += need.approvedQuantity;
+    rowMap.set(key, row);
+  }
+
+  return {
+    families: Array.from(familyMap.values()).sort((left, right) => left.label.localeCompare(right.label)),
+    rows: Array.from(rowMap.values()).sort((left, right) => left.materialName.localeCompare(right.materialName))
+  };
+}
+
+async function exportConsolidatedExcel(matrix: ConsolidatedMatrix, needs: ApprovedMaterialNeed[]) {
+  const ExcelJS = await import("exceljs");
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = "Restauracion Admin";
+  workbook.created = new Date();
+
+  const consolidated = workbook.addWorksheet("Consolidado");
+  consolidated.addRow(["Descripcion Producto", ...matrix.families.map((family) => family.label), "Total General"]);
+  for (const row of matrix.rows) {
+    consolidated.addRow([
+      row.materialName,
+      ...matrix.families.map((family) => row.quantities[family.id] ?? 0),
+      row.total
+    ]);
+  }
+  styleWorksheetHeader(consolidated);
+  consolidated.getColumn(1).width = 42;
+  for (let index = 2; index <= matrix.families.length + 2; index += 1) {
+    consolidated.getColumn(index).width = index === matrix.families.length + 2 ? 16 : 20;
+  }
+
+  const base = workbook.addWorksheet("Base");
+  base.addRow([
+    "Proyecto",
+    "Municipio",
+    "Vereda",
+    "Codigo familia",
+    "Familia",
+    "Actividad",
+    "Descripcion Producto",
+    "Unidad",
+    "Cantidad",
+    "Valor unitario",
+    "Valor total"
+  ]);
+  for (const need of needs) {
+    base.addRow([
+      need.projectName,
+      need.municipalityName,
+      need.villageName,
+      need.familyCode,
+      need.familyName,
+      need.activityName,
+      need.materialName,
+      need.unit,
+      need.approvedQuantity,
+      need.unitPrice,
+      need.totalValue
+    ]);
+  }
+  styleWorksheetHeader(base);
+  [1, 2, 3, 5, 6, 7].forEach((column) => {
+    base.getColumn(column).width = column === 7 ? 42 : 24;
+  });
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  saveBlob(new Blob([buffer], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  }), "consolidado-materiales.xlsx");
+}
+
+function buildIndicatorRows(needs: ApprovedMaterialNeed[], progressRows: ImplementationProgress[]): IndicatorRow[] {
+  const progressByKey = new Map<string, ImplementationProgress>();
+  for (const progress of progressRows.filter((row) => !row.is_deleted)) {
+    progressByKey.set(implementationProgressKey(progress.family_id, progress.plan_activity_id, progress.material_id, progress.indicator_name), progress);
+  }
+
+  return needs.map((need) => {
+    const progress = progressByKey.get(implementationProgressKey(need.family_id, need.plan_activity_id, need.material_id, need.materialName));
+    const targetQuantity = need.approvedQuantity;
+    const implementedQuantity = Number(progress?.implemented_quantity ?? 0);
+    const deliveredQuantity = need.deliveredQuantity;
+    const progressPercentage = targetQuantity > 0 ? Math.min(999, implementedQuantity / targetQuantity * 100) : 0;
+    const status = progress?.status ?? (implementedQuantity >= targetQuantity && targetQuantity > 0 ? "completed" : implementedQuantity > 0 ? "in_progress" : "pending");
+    return {
+      key: need.id,
+      project_id: need.project_id,
+      family_id: need.family_id,
+      operational_plan_id: need.operational_plan_id,
+      plan_activity_id: need.plan_activity_id,
+      material_id: need.material_id,
+      familyCode: need.familyCode,
+      familyName: need.familyName,
+      municipalityName: need.municipalityName,
+      villageName: need.villageName,
+      hectares: "N/A",
+      activityName: need.activityName,
+      materialName: need.materialName,
+      unit: need.unit,
+      targetQuantity,
+      deliveredQuantity,
+      implementedQuantity,
+      progressPercentage,
+      status,
+      observations: progress?.observations ?? "",
+      progress
+    };
+  });
+}
+
+function implementationProgressKey(familyId: string, planActivityId: string | null, materialId: string | null, indicatorName: string | null) {
+  return `${familyId}-${planActivityId ?? "sin-actividad"}-${materialId ?? indicatorName ?? "indicador"}`;
+}
+
+function consolidateIndicatorRows(rows: IndicatorRow[]): IndicatorConsolidatedRow[] {
+  const consolidated = new Map<string, IndicatorConsolidatedRow>();
+  for (const row of rows) {
+    const key = `${row.municipalityName}-${row.villageName}-${row.activityName}-${row.status}`;
+    const current = consolidated.get(key) ?? {
+      key,
+      municipalityName: row.municipalityName,
+      villageName: row.villageName,
+      activityName: row.activityName,
+      status: row.status,
+      targetQuantity: 0,
+      deliveredQuantity: 0,
+      implementedQuantity: 0,
+      progressPercentage: 0
+    };
+    current.targetQuantity += row.targetQuantity;
+    current.deliveredQuantity += row.deliveredQuantity;
+    current.implementedQuantity += row.implementedQuantity;
+    current.progressPercentage = current.targetQuantity > 0 ? current.implementedQuantity / current.targetQuantity * 100 : 0;
+    consolidated.set(key, current);
+  }
+  return Array.from(consolidated.values()).sort((left, right) =>
+    `${left.municipalityName}-${left.villageName}-${left.activityName}`.localeCompare(`${right.municipalityName}-${right.villageName}-${right.activityName}`)
+  );
+}
+
+async function exportIndicatorsExcel(rows: IndicatorRow[], consolidatedRows: IndicatorConsolidatedRow[]) {
+  const ExcelJS = await import("exceljs");
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = "Restauracion Admin";
+  workbook.created = new Date();
+
+  const detail = workbook.addWorksheet("Detalle");
+  detail.addRow([
+    "Codigo predio/familia",
+    "Familia",
+    "Municipio",
+    "Vereda",
+    "Hectareas del predio",
+    "Actividad o indicador",
+    "Material/insumo",
+    "Unidad",
+    "Meta",
+    "Cantidad entregada",
+    "Cantidad implementada/sembrada",
+    "Avance porcentual",
+    "Estado",
+    "Observaciones"
+  ]);
+  for (const row of rows) {
+    detail.addRow([
+      row.familyCode,
+      row.familyName,
+      row.municipalityName,
+      row.villageName,
+      row.hectares,
+      row.activityName,
+      row.materialName,
+      row.unit,
+      row.targetQuantity,
+      row.deliveredQuantity,
+      row.implementedQuantity,
+      row.progressPercentage / 100,
+      implementationStatusLabel(row.status),
+      row.observations
+    ]);
+  }
+  styleWorksheetHeader(detail);
+  detail.getColumn(6).width = 34;
+  detail.getColumn(7).width = 34;
+  detail.getColumn(12).numFmt = "0.00%";
+
+  const consolidated = workbook.addWorksheet("Consolidado");
+  consolidated.addRow(["Municipio", "Vereda", "Actividad/indicador", "Estado", "Meta", "Entregado", "Implementado", "Avance"]);
+  for (const row of consolidatedRows) {
+    consolidated.addRow([
+      row.municipalityName,
+      row.villageName,
+      row.activityName,
+      implementationStatusLabel(row.status),
+      row.targetQuantity,
+      row.deliveredQuantity,
+      row.implementedQuantity,
+      row.progressPercentage / 100
+    ]);
+  }
+  styleWorksheetHeader(consolidated);
+  consolidated.getColumn(3).width = 34;
+  consolidated.getColumn(8).numFmt = "0.00%";
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  saveBlob(new Blob([buffer], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  }), "herramienta-indicadores.xlsx");
+}
+
+function styleWorksheetHeader(worksheet: import("exceljs").Worksheet) {
+  const header = worksheet.getRow(1);
+  header.font = { bold: true, color: { argb: "FFFFFFFF" } };
+  header.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F4D35" } };
+  header.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+  worksheet.views = [{ state: "frozen", ySplit: 1 }];
+  worksheet.columns.forEach((column) => {
+    column.width = Math.max(column.width ?? 14, 14);
+  });
+}
+
 function exportConsolidatedCsv(rows: ConsolidatedMaterialNeed[]) {
   const headers = ["proyecto", "material", "unidad", "cantidad_aprobada", "cantidad_entregada", "cantidad_pendiente", "valor_pendiente"];
   const body = rows.map((row) => [
@@ -3321,6 +3774,7 @@ function buildDeliveryActContext(data: {
   plans: OperationalPlan[];
   activities: Activity[];
   materialDeliveryItems: MaterialDeliveryItem[];
+  technician?: Profile | null;
   projectLogos: Record<string, ProjectLogoConfig[]>;
 }): DeliveryActContext {
   const family = data.families.find((item) => item.id === data.delivery.family_id);
@@ -3333,6 +3787,7 @@ function buildDeliveryActContext(data: {
     municipality: data.municipalities.find((item) => item.id === family?.municipality_id),
     village: data.villages.find((item) => item.id === family?.village_id),
     plan: data.plans.find((item) => item.id === data.delivery.operational_plan_id),
+    technician: data.technician,
     activityById: new Map(data.activities.map((item) => [item.id, item])),
     projectLogos: data.projectLogos
   };
@@ -3351,38 +3806,42 @@ async function drawDeliveryActPdf(doc: PdfDocumentBuilder, context: DeliveryActC
     bottomLogos: await preparePdfLogos(logos.filter((logo) => isBottomLogoPosition(logo.position)), "footer")
   });
   let y = doc.contentTop;
-  doc.text("Acta de entrega de materiales", doc.margin, y, 18, true, ForestPdf);
-  y += 22;
+  doc.text("ACTA DE ENTREGA DE INSUMOS Y MATERIALES", doc.margin, y, 16, true, ForestPdf);
+  y += 24;
   y = drawMetaPdf(doc, [
-    ["Acta", context.act.act_number],
-    ["Proyecto", context.project?.name ?? "Sin proyecto"],
-    ["Codigo familia", context.family?.family_code ?? "N/A"],
-    ["Representante", context.family?.representative_name ?? "N/A"],
-    ["Documento", context.family?.document_number ?? "N/A"],
+    ["Entrega No.", context.act.act_number],
+    ["Representante familia", context.family?.representative_name ?? "N/A"],
+    ["Departamento", context.municipality?.department ?? "N/A"],
     ["Municipio", context.municipality?.name ?? "N/A"],
     ["Vereda", context.village?.name ?? "N/A"],
-    ["Fecha de entrega", context.delivery.delivery_date],
-    ["Estado", deliveryStatusLabel(context.delivery.status)]
+    ["Codigo predial / familia", context.family?.family_code ?? "N/A"],
+    ["Fecha de entrega", context.delivery.delivery_date]
   ], y);
   doc.line(doc.margin, y + 6, doc.pageWidth - doc.margin, y + 6, ForestPdf, 2);
-  y += 26;
-  y = drawPdfTable(doc, y, ["Material", "Actividad", "Cantidad", "Valor uni", "Valor total"], context.items.map((item) => [
+  y += 24;
+  y = drawWrappedPdfText(doc, "De acuerdo con la planificacion predial o plan operativo aprobado, se hace entrega de los siguientes materiales e insumos concertados para el cumplimiento de las actividades y metas priorizadas.", doc.margin, y, doc.pageWidth - doc.margin * 2, 9);
+  y += 12;
+  y = drawPdfTable(doc, y, ["#", "Descripcion del articulo", "Cantidad"], context.items.map((item, index) => [
+    String(index + 1),
     item.material_name,
-    context.activityById.get(item.activity_id ?? "")?.name ?? "Actividad",
-    formatQuantity(Number(item.delivered_quantity), item.unit),
-    formatExportMoney(Number(item.unit_price)),
-    formatExportMoney(Number(item.total_value))
-  ]), [170, 135, 75, 75, 75]);
+    formatQuantity(Number(item.delivered_quantity), item.unit)
+  ]), [40, 350, 130]);
   y = doc.ensureSpace(y + 10, 100);
   doc.text("Observaciones:", doc.margin, y, 10, true, ForestPdf);
   y += 14;
   doc.text(context.delivery.observations ?? "Sin observaciones.", doc.margin, y, 9);
-  y += 46;
+  y += 58;
   doc.line(doc.margin, y, doc.margin + 190, y, "111111", 0.8);
   doc.line(doc.pageWidth - doc.margin - 190, y, doc.pageWidth - doc.margin, y, "111111", 0.8);
   y += 14;
-  doc.text("Entrega", doc.margin + 65, y, 9, true);
-  doc.text("Recibe familia", doc.pageWidth - doc.margin - 132, y, 9, true);
+  doc.text("Representante familia", doc.margin + 42, y, 9, true);
+  doc.text("Tecnico proyecto", doc.pageWidth - doc.margin - 132, y, 9, true);
+  y += 14;
+  doc.text(`Nombre: ${context.family?.representative_name ?? "N/A"}`, doc.margin, y, 8);
+  doc.text(`Nombre: ${context.technician?.full_name ?? "N/A"}`, doc.pageWidth - doc.margin - 190, y, 8);
+  y += 12;
+  doc.text(`Cedula: ${context.family?.document_number ?? "N/A"}`, doc.margin, y, 8);
+  doc.text(`Cedula: ${context.technician?.document_number ?? "N/A"}`, doc.pageWidth - doc.margin - 190, y, 8);
 }
 
 async function buildDeliveryActDocx(context: DeliveryActContext) {
@@ -3404,34 +3863,56 @@ async function buildDeliveryActDocx(context: DeliveryActContext) {
         default: new Footer({ children: [buildDocxLogoParagraph(logos.filter((logo) => isBottomLogoPosition(logo.position)), "footer", "center")] })
       },
       children: [
-        docxParagraph("Acta de entrega de materiales", { bold: true, size: 36, color: ForestPdf, spacingAfter: 120 }),
+        docxParagraph("ACTA DE ENTREGA DE INSUMOS Y MATERIALES", { bold: true, size: 30, color: ForestPdf, spacingAfter: 120 }),
         buildDocxMetaTable([
-          ["Acta", context.act.act_number],
-          ["Proyecto", context.project?.name ?? "Sin proyecto"],
-          ["Codigo familia", context.family?.family_code ?? "N/A"],
-          ["Representante", context.family?.representative_name ?? "N/A"],
-          ["Documento", context.family?.document_number ?? "N/A"],
+          ["Entrega No.", context.act.act_number],
+          ["Representante familia", context.family?.representative_name ?? "N/A"],
+          ["Departamento", context.municipality?.department ?? "N/A"],
           ["Municipio", context.municipality?.name ?? "N/A"],
           ["Vereda", context.village?.name ?? "N/A"],
-          ["Fecha de entrega", context.delivery.delivery_date],
-          ["Estado", deliveryStatusLabel(context.delivery.status)]
+          ["Codigo predial / familia", context.family?.family_code ?? "N/A"],
+          ["Fecha de entrega", context.delivery.delivery_date]
         ]),
         docxSeparator(),
-        buildDocxExportTable("MATERIALES ENTREGADOS", context.items.map((item) => [
-          item.material_name,
-          formatQuantity(Number(item.delivered_quantity), item.unit),
-          formatExportMoney(Number(item.unit_price)),
-          formatExportMoney(Number(item.total_value))
-        ])),
+        docxParagraph("De acuerdo con la planificacion predial o plan operativo aprobado, se hace entrega de los siguientes materiales e insumos concertados para el cumplimiento de las actividades y metas priorizadas.", {
+          size: 18,
+          spacingAfter: 140
+        }),
+        buildDocxDeliveryItemsTable(context.items),
         docxParagraph(`Observaciones: ${context.delivery.observations ?? "Sin observaciones."}`, { size: 18, spacingBefore: 160, spacingAfter: 520 }),
-        buildDocxSignatureTable()
+        buildDocxSignatureTable(context)
       ]
     }]
   });
   return Packer.toBlob(document);
 }
 
-function buildDocxSignatureTable() {
+function buildDocxDeliveryItemsTable(items: MaterialDeliveryItem[]) {
+  const widths = [600, 7200, 2200];
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    layout: TableLayoutType.FIXED,
+    columnWidths: widths,
+    borders: docxTableBorders(),
+    rows: [
+      new TableRow({
+        tableHeader: true,
+        children: ["#", "DESCRIPCION DEL ARTICULO", "CANTIDAD"].map((header, index) =>
+          docxCell(header, { bold: true, fill: "F3F6F1", alignment: index === 1 ? AlignmentType.LEFT : AlignmentType.CENTER, width: widths[index] })
+        )
+      }),
+      ...items.map((item, index) => new TableRow({
+        children: [
+          docxCell(String(index + 1), { alignment: AlignmentType.CENTER, width: widths[0] }),
+          docxCell(item.material_name, { width: widths[1] }),
+          docxCell(formatQuantity(Number(item.delivered_quantity), item.unit), { alignment: AlignmentType.CENTER, width: widths[2] })
+        ]
+      }))
+    ]
+  });
+}
+
+function buildDocxSignatureTable(context: DeliveryActContext) {
   const border = { style: BorderStyle.SINGLE, size: 4, color: "111111" };
   return new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
@@ -3442,11 +3923,21 @@ function buildDocxSignatureTable() {
         children: [
           new TableCell({
             borders: { top: border, bottom: docxNoBorder(), left: docxNoBorder(), right: docxNoBorder() },
-            children: [docxParagraph("Entrega", { bold: true, alignment: AlignmentType.CENTER, spacingAfter: 0 })]
+            children: [
+              docxParagraph("Representante familia", { bold: true, alignment: AlignmentType.CENTER, spacingAfter: 60 }),
+              docxParagraph(`Nombre: ${context.family?.representative_name ?? "N/A"}`, { spacingAfter: 20 }),
+              docxParagraph(`Cedula: ${context.family?.document_number ?? "N/A"}`, { spacingAfter: 20 }),
+              docxParagraph("Firma:", { spacingAfter: 0 })
+            ]
           }),
           new TableCell({
             borders: { top: border, bottom: docxNoBorder(), left: docxNoBorder(), right: docxNoBorder() },
-            children: [docxParagraph("Recibe familia", { bold: true, alignment: AlignmentType.CENTER, spacingAfter: 0 })]
+            children: [
+              docxParagraph("Tecnico proyecto", { bold: true, alignment: AlignmentType.CENTER, spacingAfter: 60 }),
+              docxParagraph(`Nombre: ${context.technician?.full_name ?? "N/A"}`, { spacingAfter: 20 }),
+              docxParagraph(`Cedula: ${context.technician?.document_number ?? "N/A"}`, { spacingAfter: 20 }),
+              docxParagraph("Firma:", { spacingAfter: 0 })
+            ]
           })
         ]
       })
@@ -3486,6 +3977,17 @@ function deliveryStatusLabel(status: MaterialDelivery["status"]) {
     entregado_parcial: "Entregado parcial",
     entregado_total: "Entregado total",
     cancelado: "Cancelado"
+  };
+  return labels[status] ?? status;
+}
+
+function implementationStatusLabel(status: ImplementationProgressStatus) {
+  const labels: Record<ImplementationProgressStatus, string> = {
+    pending: "Pendiente",
+    in_progress: "En proceso",
+    completed: "Completado",
+    overdue: "Atrasado",
+    cancelled: "Cancelado"
   };
   return labels[status] ?? status;
 }
@@ -4208,6 +4710,29 @@ function drawMetaPdf(doc: PdfDocumentBuilder, rows: [string, string][], startY: 
     doc.text(`${label}: ${value}`, doc.margin, y, 9, true);
     doc.line(doc.margin, y + 3, doc.pageWidth - doc.margin, y + 3, "dddddd", 0.5);
     y += 13;
+  }
+  return y;
+}
+
+function drawWrappedPdfText(doc: PdfDocumentBuilder, value: string, x: number, startY: number, width: number, size = 9) {
+  const words = pdfText(value).split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let line = "";
+  const maxChars = Math.max(20, Math.floor(width / (size * 0.48)));
+  for (const word of words) {
+    const next = line ? `${line} ${word}` : word;
+    if (next.length > maxChars) {
+      if (line) lines.push(line);
+      line = word;
+    } else {
+      line = next;
+    }
+  }
+  if (line) lines.push(line);
+  let y = startY;
+  for (const current of lines) {
+    doc.text(current, x, y, size);
+    y += size + 4;
   }
   return y;
 }

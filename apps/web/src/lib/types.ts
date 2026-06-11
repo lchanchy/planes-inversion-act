@@ -297,3 +297,23 @@ export type DeliveryAct = {
   observations: string | null;
   is_deleted: boolean;
 };
+
+export type ImplementationProgressStatus = "pending" | "in_progress" | "completed" | "overdue" | "cancelled";
+
+export type ImplementationProgress = {
+  id: string;
+  project_id: string;
+  family_id: string;
+  operational_plan_id: string | null;
+  plan_activity_id: string | null;
+  material_id: string | null;
+  indicator_name: string | null;
+  unit: string | null;
+  target_quantity: number | null;
+  delivered_quantity: number;
+  implemented_quantity: number;
+  status: ImplementationProgressStatus;
+  observations: string | null;
+  progress_date: string | null;
+  is_deleted: boolean;
+};
