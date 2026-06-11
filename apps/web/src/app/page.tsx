@@ -2518,10 +2518,15 @@ type ConsolidatedMatrix = {
 type IndicatorRow = {
   key: string;
   project_id: string;
+  municipality_id: string | null;
+  village_id: string | null;
   family_id: string;
   operational_plan_id: string;
   plan_activity_id: string;
+  activity_id: string | null;
+  plan_project_material_id: string;
   material_id: string | null;
+  provisional_material_id: string | null;
   familyCode: string;
   familyName: string;
   municipalityName: string;
@@ -2678,12 +2683,13 @@ function ProcurementDeliveriesActs({
     provisionalMaterials,
     materialDeliveryItems
   }), [projects, families, municipalities, villages, activities, materials, plans, planActivities, planMaterials, provisionalMaterials, materialDeliveryItems]);
-  const approvedNeeds = approvedNeedsFromDb ?? approvedNeedsFromState;
+  const approvedNeeds = approvedNeedsFromDb && approvedNeedsFromDb.length > 0 ? approvedNeedsFromDb : approvedNeedsFromState;
 
   const filteredNeeds = useMemo(() => filterApprovedNeeds(approvedNeeds, filters), [approvedNeeds, filters]);
   const consolidatedNeeds = useMemo(() => consolidateMaterialNeeds(filteredNeeds), [filteredNeeds]);
   const consolidatedMatrix = useMemo(() => buildConsolidatedMatrix(filteredNeeds), [filteredNeeds]);
-  const indicatorRows = useMemo(() => buildIndicatorRows(filteredNeeds, implementationProgress), [filteredNeeds, implementationProgress]);
+  const allIndicatorRows = useMemo(() => buildIndicatorRows(approvedNeeds, implementationProgress), [approvedNeeds, implementationProgress]);
+  const indicatorRows = useMemo(() => filterIndicatorRows(allIndicatorRows, filters), [allIndicatorRows, filters]);
   const indicatorConsolidated = useMemo(() => consolidateIndicatorRows(indicatorRows), [indicatorRows]);
   const selectedNeed = approvedNeeds.find((need) => need.id === selectedNeedId) ?? null;
   const selectedIndicator = indicatorRows.find((row) => row.key === selectedIndicatorKey) ?? null;
@@ -2900,8 +2906,9 @@ function ProcurementDeliveriesActs({
         observations: indicatorObservation.trim() || null,
         progress_date: indicatorDate || null
       };
-      const result = selectedIndicator.progress
-        ? await supabase.from("implementation_progress").update(payload).eq("id", selectedIndicator.progress.id)
+      const existingProgress = selectedIndicator.progress ?? await findExistingImplementationProgress(selectedIndicator);
+      const result = existingProgress
+        ? await supabase.from("implementation_progress").update(payload).eq("id", existingProgress.id)
         : await supabase.from("implementation_progress").insert(payload);
       if (result.error) throw result.error;
       setNotice({ type: "info", message: "Avance de implementacion guardado." });
@@ -3477,6 +3484,17 @@ function filterApprovedNeeds(needs: ApprovedMaterialNeed[], filters: Procurement
   );
 }
 
+function filterIndicatorRows(rows: IndicatorRow[], filters: ProcurementFilters) {
+  return rows.filter((row) =>
+    (!filters.project_id || row.project_id === filters.project_id)
+    && (!filters.municipality_id || row.municipality_id === filters.municipality_id)
+    && (!filters.village_id || row.village_id === filters.village_id)
+    && (!filters.family_id || row.family_id === filters.family_id)
+    && (!filters.activity_id || row.activity_id === filters.activity_id || row.plan_activity_id === filters.activity_id)
+    && (!filters.material_id || row.material_id === filters.material_id)
+  );
+}
+
 function consolidateMaterialNeeds(needs: ApprovedMaterialNeed[]): ConsolidatedMaterialNeed[] {
   const rows = new Map<string, ConsolidatedMaterialNeed>();
   for (const need of needs) {
@@ -3613,10 +3631,15 @@ function buildIndicatorRows(needs: ApprovedMaterialNeed[], progressRows: Impleme
     return {
       key: need.id,
       project_id: need.project_id,
+      municipality_id: need.municipality_id,
+      village_id: need.village_id,
       family_id: need.family_id,
       operational_plan_id: need.operational_plan_id,
       plan_activity_id: need.plan_activity_id,
+      activity_id: need.activity_id,
+      plan_project_material_id: need.plan_project_material_id,
       material_id: need.material_id,
+      provisional_material_id: need.provisional_material_id,
       familyCode: need.familyCode,
       familyName: need.familyName,
       municipalityName: need.municipalityName,
@@ -3638,6 +3661,23 @@ function buildIndicatorRows(needs: ApprovedMaterialNeed[], progressRows: Impleme
 
 function implementationProgressKey(familyId: string, planActivityId: string | null, materialId: string | null, indicatorName: string | null) {
   return `${familyId}-${planActivityId ?? "sin-actividad"}-${materialId ?? indicatorName ?? "indicador"}`;
+}
+
+async function findExistingImplementationProgress(row: IndicatorRow) {
+  let query = supabase
+    .from("implementation_progress")
+    .select("*")
+    .eq("is_deleted", false)
+    .eq("family_id", row.family_id)
+    .eq("plan_activity_id", row.plan_activity_id);
+
+  query = row.material_id
+    ? query.eq("material_id", row.material_id)
+    : query.eq("indicator_name", row.materialName || row.activityName);
+
+  const { data, error } = await query.maybeSingle();
+  if (error) throw error;
+  return (data as ImplementationProgress | null) ?? null;
 }
 
 function consolidateIndicatorRows(rows: IndicatorRow[]): IndicatorConsolidatedRow[] {
