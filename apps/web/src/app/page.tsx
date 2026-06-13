@@ -56,6 +56,9 @@ type ViewKey = "dashboard" | "projects" | "profiles" | "families" | "activities"
 type Notice = { type: "info" | "error"; message: string } | null;
 type ProjectLogoPosition = "left" | "center" | "right" | "bottom-left" | "bottom-center" | "bottom-right";
 type ProjectLogoConfig = { id: string; dataUrl: string; position: ProjectLogoPosition; name: string; size: number };
+type Phase5SchemaStatus = { ready: boolean; message: string | null };
+
+const PHASE5_MISSING_MIGRATIONS_MESSAGE = "Faltan migraciones de Fase 5 en Supabase. Aplique las migraciones antes de usar este modulo.";
 
 const emptyProject = {
   name: "",
@@ -250,6 +253,7 @@ function AdminApp({ session }: { session: Session }) {
   const [materialDeliveryItems, setMaterialDeliveryItems] = useState<MaterialDeliveryItem[]>([]);
   const [deliveryActs, setDeliveryActs] = useState<DeliveryAct[]>([]);
   const [implementationProgress, setImplementationProgress] = useState<ImplementationProgress[]>([]);
+  const [phase5SchemaStatus, setPhase5SchemaStatus] = useState<Phase5SchemaStatus>({ ready: true, message: null });
 
   const roleNames = useMemo(() => {
     const roleById = new Map(roles.map((role) => [role.id, role.name]));
@@ -352,6 +356,33 @@ function AdminApp({ session }: { session: Session }) {
       ].find(Boolean);
 
       if (error) throw error;
+
+      const phase5Results = [
+        { table: "procurement_batches", error: procurementBatchesResult.error },
+        { table: "procurement_batch_items", error: procurementBatchItemsResult.error },
+        { table: "material_deliveries", error: materialDeliveriesResult.error },
+        { table: "material_delivery_items", error: materialDeliveryItemsResult.error },
+        { table: "delivery_acts", error: deliveryActsResult.error },
+        { table: "implementation_progress", error: implementationProgressResult.error }
+      ];
+      const missingTables = phase5Results
+        .filter((result) => result.error && isMissingTableError(result.error))
+        .map((result) => result.table);
+      const phase5Error = phase5Results.find((result) => result.error);
+
+      if (missingTables.length > 0) {
+        setPhase5SchemaStatus({
+          ready: false,
+          message: `${PHASE5_MISSING_MIGRATIONS_MESSAGE} Tablas faltantes: ${missingTables.join(", ")}.`
+        });
+      } else if (phase5Error?.error) {
+        setPhase5SchemaStatus({
+          ready: false,
+          message: `No fue posible consultar tablas de Fase 5: ${getErrorMessage(phase5Error.error)}`
+        });
+      } else {
+        setPhase5SchemaStatus({ ready: true, message: null });
+      }
 
       setRoles((rolesResult.data ?? []) as Role[]);
       setProfile((profileResult.data as Profile | null) ?? null);
@@ -533,6 +564,7 @@ function AdminApp({ session }: { session: Session }) {
               materialDeliveryItems={materialDeliveryItems}
               deliveryActs={deliveryActs}
               implementationProgress={implementationProgress}
+              phase5SchemaStatus={phase5SchemaStatus}
               currentProfile={profile}
               canManageProcurement={canWrite}
               canAdminOverride={roleNames.has("admin")}
@@ -1019,9 +1051,10 @@ function ProfilesCrud({
       </div>
       <form className="panel grid" onSubmit={save}>
         <TextInput
-          label="Auth user ID"
+          label="Cuenta Auth Supabase"
           value={form.auth_user_id}
           onChange={(auth_user_id) => setForm({ ...form, auth_user_id })}
+          type="password"
           required
         />
         <TextInput
@@ -1062,10 +1095,10 @@ function ProfilesCrud({
         </div>
       </form>
       <DataTable
-        headers={["Nombre", "Auth user ID", "Rol", "Activo", "Acciones"]}
+        headers={["Nombre", "Rol", "Activo", "Acciones"]}
+        emptyMessage="No hay perfiles registrados."
         rows={profiles.map((item) => [
           item.full_name,
-          item.auth_user_id,
           roleName(item.default_role_id),
           item.active ? "Si" : "No",
           <Actions key="actions" canWrite={canWrite} onEdit={() => edit(item)} onDelete={() => remove(item.id)} />
@@ -2587,6 +2620,7 @@ function ProcurementDeliveriesActs({
   materialDeliveryItems,
   deliveryActs,
   implementationProgress,
+  phase5SchemaStatus,
   currentProfile,
   canManageProcurement,
   canAdminOverride,
@@ -2610,6 +2644,7 @@ function ProcurementDeliveriesActs({
   materialDeliveryItems: MaterialDeliveryItem[];
   deliveryActs: DeliveryAct[];
   implementationProgress: ImplementationProgress[];
+  phase5SchemaStatus: Phase5SchemaStatus;
   currentProfile: Profile | null;
   canManageProcurement: boolean;
   canAdminOverride: boolean;
@@ -2694,6 +2729,7 @@ function ProcurementDeliveriesActs({
   const selectedNeed = approvedNeeds.find((need) => need.id === selectedNeedId) ?? null;
   const selectedIndicator = indicatorRows.find((row) => row.key === selectedIndicatorKey) ?? null;
   const projectLogos = useMemo(() => loadProjectLogos(), []);
+  const phase5Blocked = !phase5SchemaStatus.ready;
 
   const visibleDeliveries = materialDeliveries.filter((delivery) =>
     (!filters.project_id || delivery.project_id === filters.project_id)
@@ -2737,6 +2773,10 @@ function ProcurementDeliveriesActs({
 
   async function createProcurementBatch() {
     setNotice(null);
+    if (phase5Blocked) {
+      setNotice({ type: "error", message: phase5SchemaStatus.message ?? PHASE5_MISSING_MIGRATIONS_MESSAGE });
+      return;
+    }
     if (!canManageProcurement) {
       setNotice({ type: "error", message: "No tiene permisos para crear lotes de compra." });
       return;
@@ -2802,6 +2842,14 @@ function ProcurementDeliveriesActs({
 
   async function registerDelivery() {
     setNotice(null);
+    if (phase5Blocked) {
+      setNotice({ type: "error", message: phase5SchemaStatus.message ?? PHASE5_MISSING_MIGRATIONS_MESSAGE });
+      return;
+    }
+    if (!canManageProcurement) {
+      setNotice({ type: "error", message: "No tiene permisos para registrar entregas." });
+      return;
+    }
     if (!selectedNeed) {
       setNotice({ type: "error", message: "Seleccione un material aprobado pendiente de entrega." });
       return;
@@ -2876,6 +2924,10 @@ function ProcurementDeliveriesActs({
 
   async function saveImplementationProgress() {
     setNotice(null);
+    if (phase5Blocked) {
+      setNotice({ type: "error", message: phase5SchemaStatus.message ?? PHASE5_MISSING_MIGRATIONS_MESSAGE });
+      return;
+    }
     if (!selectedIndicator) {
       setNotice({ type: "error", message: "Seleccione una fila de la herramienta de indicadores." });
       return;
@@ -2921,6 +2973,7 @@ function ProcurementDeliveriesActs({
   }
 
   async function ensureDeliveryAct(delivery: MaterialDelivery) {
+    if (phase5Blocked) throw new Error(phase5SchemaStatus.message ?? PHASE5_MISSING_MIGRATIONS_MESSAGE);
     const items = materialDeliveryItems.filter((item) => item.material_delivery_id === delivery.id);
     if (items.length === 0) throw new Error("No se puede generar acta sin entrega registrada con items.");
     const existing = deliveryActs.find((act) => act.material_delivery_id === delivery.id && !act.is_deleted);
@@ -2987,7 +3040,7 @@ function ProcurementDeliveriesActs({
           <h2>Compras, entregas y actas</h2>
           <div className="muted">Consolidado, seguimiento de implementacion y actas desde planes operativos aprobados.</div>
         </div>
-        <span className="badge">{canManageProcurement ? "Gestion habilitada" : "Solo lectura"}</span>
+        <span className="badge">{canManageProcurement ? "Operacion habilitada" : "Solo lectura"}</span>
       </div>
       {notice ? <div className={`alert ${notice.type}`}>{notice.message}</div> : null}
       <div className="form-actions">
@@ -3005,8 +3058,11 @@ function ProcurementDeliveriesActs({
         materials={materials}
         onChange={updateFilter}
       />
+      {phase5Blocked ? (
+        <div className="alert error">{phase5SchemaStatus.message ?? PHASE5_MISSING_MIGRATIONS_MESSAGE}</div>
+      ) : null}
 
-      {activeTab === "consolidated" ? (
+      {!phase5Blocked && activeTab === "consolidated" ? (
         <div className="section">
           <div className="summary-grid">
             <Metric label="Materiales consolidados" value={consolidatedMatrix.rows.length} />
@@ -3018,6 +3074,7 @@ function ProcurementDeliveriesActs({
           {loadingApprovedNeeds ? <div className="alert info">Consultando materiales aprobados...</div> : null}
           <DataTable
             headers={["Descripcion producto", ...consolidatedMatrix.families.map((family) => family.label), "Total general"]}
+            emptyMessage={filters.project_id ? "No hay planes aprobados con materiales para los filtros seleccionados." : "Seleccione un proyecto o deje Todos para consultar materiales aprobados."}
             rows={consolidatedMatrix.rows.map((row) => [
               row.materialName,
               ...consolidatedMatrix.families.map((family) => formatNumber(row.quantities[family.id] ?? 0)),
@@ -3044,6 +3101,7 @@ function ProcurementDeliveriesActs({
           </div>
           <DataTable
             headers={["Proyecto", "Municipio", "Vereda", "Familia", "Actividad", "Material", "Aprobado", "Pendiente"]}
+            emptyMessage="No hay planes aprobados con materiales para los filtros seleccionados."
             rows={filteredNeeds.map((need) => [
               need.projectName,
               need.municipalityName,
@@ -3057,6 +3115,7 @@ function ProcurementDeliveriesActs({
           />
           <DataTable
             headers={["Lote", "Proyecto", "Estado", "Subtotal", "Observaciones"]}
+            emptyMessage="No hay lotes de compra registrados para los filtros actuales."
             rows={procurementBatches.map((batch) => {
               const project = projects.find((item) => item.id === batch.project_id);
               return [
@@ -3071,7 +3130,7 @@ function ProcurementDeliveriesActs({
         </div>
       ) : null}
 
-      {activeTab === "indicators" ? (
+      {!phase5Blocked && activeTab === "indicators" ? (
         <div className="section">
           <div className="summary-grid">
             <Metric label="Filas seguimiento" value={indicatorRows.length} />
@@ -3084,7 +3143,7 @@ function ProcurementDeliveriesActs({
             <label className="span-6">
               Indicador / actividad / material
               <select value={selectedIndicatorKey} onChange={(event) => setSelectedIndicatorKey(event.target.value)}>
-                <option value="">Seleccione...</option>
+                <option value="">{indicatorRows.length > 0 ? "Seleccione..." : "No hay indicadores para los filtros seleccionados"}</option>
                 {indicatorRows.map((row) => (
                   <option key={row.key} value={row.key}>
                     {row.familyCode} - {row.activityName} - {row.materialName}
@@ -3125,6 +3184,7 @@ function ProcurementDeliveriesActs({
           </div>
           <DataTable
             headers={["Codigo familia", "Familia", "Municipio", "Vereda", "Hectareas", "Actividad / indicador", "Material", "Unidad", "Meta", "Entregado", "Implementado", "Avance", "Estado", "Observaciones"]}
+            emptyMessage="No hay planes aprobados con materiales para los filtros seleccionados."
             rows={indicatorRows.map((row) => [
               row.familyCode,
               row.familyName,
@@ -3144,6 +3204,7 @@ function ProcurementDeliveriesActs({
           />
           <DataTable
             headers={["Municipio", "Vereda", "Actividad / indicador", "Estado", "Meta", "Entregado", "Implementado", "Avance"]}
+            emptyMessage="No hay avances consolidados para los filtros seleccionados."
             rows={indicatorConsolidated.map((row) => [
               row.municipalityName,
               row.villageName,
@@ -3158,7 +3219,7 @@ function ProcurementDeliveriesActs({
         </div>
       ) : null}
 
-      {activeTab === "acts" ? (
+      {!phase5Blocked && activeTab === "acts" ? (
         <div className="section">
           <div className="panel grid">
             <label className="span-6">
@@ -3194,13 +3255,14 @@ function ProcurementDeliveriesActs({
               </div>
             ) : null}
             <div className="span-12 form-actions">
-              <button disabled={saving || !selectedNeed} type="button" onClick={() => void registerDelivery()}>
+              <button disabled={saving || !canManageProcurement || !selectedNeed} type="button" onClick={() => void registerDelivery()}>
                 Registrar entrega
               </button>
             </div>
           </div>
           <DataTable
             headers={["Fecha", "Familia", "Estado", "Items", "Observacion"]}
+            emptyMessage="No hay entregas registradas para esta familia o para los filtros seleccionados."
             rows={visibleDeliveries.map((delivery) => {
               const family = families.find((item) => item.id === delivery.family_id);
               const items = materialDeliveryItems.filter((item) => item.material_delivery_id === delivery.id);
@@ -3216,6 +3278,7 @@ function ProcurementDeliveriesActs({
           <div className="alert info">Las actas solo se generan para entregas con items registrados.</div>
           <DataTable
             headers={["Fecha", "Familia", "Estado entrega", "Acta", "Exportar"]}
+            emptyMessage="No hay entregas con items para generar acta."
             rows={deliveriesWithItems.map((delivery) => {
               const family = families.find((item) => item.id === delivery.family_id);
               const act = deliveryActs.find((item) => item.material_delivery_id === delivery.id && !item.is_deleted);
@@ -3618,11 +3681,11 @@ async function exportConsolidatedExcel(matrix: ConsolidatedMatrix, needs: Approv
 function buildIndicatorRows(needs: ApprovedMaterialNeed[], progressRows: ImplementationProgress[]): IndicatorRow[] {
   const progressByKey = new Map<string, ImplementationProgress>();
   for (const progress of progressRows.filter((row) => !row.is_deleted)) {
-    progressByKey.set(implementationProgressKey(progress.family_id, progress.plan_activity_id, progress.material_id, progress.indicator_name), progress);
+    progressByKey.set(implementationProgressKey(progress.family_id, progress.operational_plan_id, progress.plan_activity_id, progress.material_id, progress.indicator_name), progress);
   }
 
   return needs.map((need) => {
-    const progress = progressByKey.get(implementationProgressKey(need.family_id, need.plan_activity_id, need.material_id, need.materialName));
+    const progress = progressByKey.get(implementationProgressKey(need.family_id, need.operational_plan_id, need.plan_activity_id, need.material_id, need.materialName));
     const targetQuantity = need.approvedQuantity;
     const implementedQuantity = Number(progress?.implemented_quantity ?? 0);
     const deliveredQuantity = need.deliveredQuantity;
@@ -3659,8 +3722,8 @@ function buildIndicatorRows(needs: ApprovedMaterialNeed[], progressRows: Impleme
   });
 }
 
-function implementationProgressKey(familyId: string, planActivityId: string | null, materialId: string | null, indicatorName: string | null) {
-  return `${familyId}-${planActivityId ?? "sin-actividad"}-${materialId ?? indicatorName ?? "indicador"}`;
+function implementationProgressKey(familyId: string, operationalPlanId: string | null, planActivityId: string | null, materialId: string | null, indicatorName: string | null) {
+  return `${familyId}-${operationalPlanId ?? "sin-plan"}-${planActivityId ?? "sin-actividad"}-${materialId ?? indicatorName ?? "indicador"}`;
 }
 
 async function findExistingImplementationProgress(row: IndicatorRow) {
@@ -3668,16 +3731,18 @@ async function findExistingImplementationProgress(row: IndicatorRow) {
     .from("implementation_progress")
     .select("*")
     .eq("is_deleted", false)
+    .eq("project_id", row.project_id)
     .eq("family_id", row.family_id)
+    .eq("operational_plan_id", row.operational_plan_id)
     .eq("plan_activity_id", row.plan_activity_id);
 
   query = row.material_id
     ? query.eq("material_id", row.material_id)
     : query.eq("indicator_name", row.materialName || row.activityName);
 
-  const { data, error } = await query.maybeSingle();
+  const { data, error } = await query.order("updated_at", { ascending: false }).limit(1);
   if (error) throw error;
-  return (data as ImplementationProgress | null) ?? null;
+  return ((data as ImplementationProgress[] | null)?.[0]) ?? null;
 }
 
 function consolidateIndicatorRows(rows: IndicatorRow[]): IndicatorConsolidatedRow[] {
@@ -5353,7 +5418,15 @@ function CrudSection({
   );
 }
 
-function DataTable({ headers, rows }: { headers: string[]; rows: React.ReactNode[][] }) {
+function DataTable({
+  headers,
+  rows,
+  emptyMessage = "No hay registros para mostrar con los filtros actuales."
+}: {
+  headers: string[];
+  rows: React.ReactNode[][];
+  emptyMessage?: string;
+}) {
   return (
     <div className="panel">
       <table>
@@ -5367,7 +5440,7 @@ function DataTable({ headers, rows }: { headers: string[]; rows: React.ReactNode
         <tbody>
           {rows.length === 0 ? (
             <tr>
-              <td colSpan={headers.length} className="muted">Sin registros visibles.</td>
+              <td colSpan={headers.length} className="muted">{emptyMessage}</td>
             </tr>
           ) : (
             rows.map((row, index) => (
@@ -5549,6 +5622,14 @@ function getErrorMessage(error: unknown) {
   if (error instanceof Error) return error.message;
   if (typeof error === "object" && error && "message" in error) return String(error.message);
   return "Ocurrio un error inesperado.";
+}
+
+function isMissingTableError(error: unknown) {
+  const message = getErrorMessage(error).toLowerCase();
+  return message.includes("could not find the table")
+    || message.includes("schema cache")
+    || message.includes("relation") && message.includes("does not exist")
+    || message.includes("tabla") && message.includes("no existe");
 }
 
 function formatMoney(value: number) {
