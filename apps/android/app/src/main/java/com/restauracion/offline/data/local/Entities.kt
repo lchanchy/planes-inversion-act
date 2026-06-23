@@ -68,6 +68,7 @@ data class MaterialCatalogEntity(
     val category: String?,
     val unit: String,
     val quotedUnitPrice: Double,
+    val vegetalIndicatorGroup: String? = null,
     val active: Boolean
 )
 
@@ -128,6 +129,7 @@ data class PlanFamilyCounterpartEntity(
     val quantity: Double,
     val unit: String,
     val estimatedUnitValue: Double,
+    val vegetalIndicatorGroup: String? = null,
     val observations: String?,
     val syncState: SyncState = SyncState.PENDING_SYNC
 )

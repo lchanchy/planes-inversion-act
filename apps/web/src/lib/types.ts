@@ -1,13 +1,23 @@
 export type Role = {
   id: string;
-  name: "admin" | "coordinator" | "technician" | "viewer" | "auditor" | string;
+  name:
+    | "super_admin"
+    | "project_admin"
+    | "municipal_technician"
+    | "admin"
+    | "coordinator"
+    | "technician"
+    | "viewer"
+    | "auditor"
+    | string;
   description: string | null;
   permissions: Record<string, unknown>;
 };
 
 export type Profile = {
   id: string;
-  auth_user_id: string;
+  auth_user_id: string | null;
+  email: string | null;
   full_name: string;
   document_number: string | null;
   phone: string | null;
@@ -22,6 +32,18 @@ export type ProjectUser = {
   user_id: string;
   role_id: string;
   status: "active" | "inactive" | "retired";
+  can_approve_plans?: boolean;
+  can_manage_purchases?: boolean;
+  can_generate_documents?: boolean;
+};
+
+export type UserMunicipalityAssignment = {
+  id: string;
+  project_id: string;
+  user_id: string;
+  municipality_id: string;
+  status: "active" | "inactive" | "retired";
+  is_deleted: boolean;
 };
 
 export type Project = {
@@ -83,6 +105,7 @@ export type Family = {
   representative_name: string;
   document_number: string | null;
   age: number | null;
+  birth_date: string | null;
   phone: string | null;
   municipality_id: string | null;
   village_id: string | null;
@@ -92,11 +115,22 @@ export type Family = {
   is_deleted: boolean;
 };
 
+export type Property = {
+  id: string;
+  family_id: string;
+  property_name: string | null;
+  total_area_ha: number | null;
+  conservation_area_ha: number | null;
+  observations: string | null;
+  is_deleted: boolean;
+};
+
 export type Activity = {
   id: string;
   project_id: string | null;
   name: string;
   category: string | null;
+  restoration_strategy: "restauracion_ecologica" | "rehabilitacion_ecologica" | "recuperacion_ecologica" | "no_aplica" | null;
   description: string | null;
   unit: string;
   indicator_type: string | null;
@@ -104,6 +138,14 @@ export type Activity = {
   requires_target: boolean;
   allows_project_materials: boolean;
   allows_counterpart: boolean;
+  maintenance_enabled: boolean;
+  maintenance_deshierbe_required: number;
+  maintenance_deshierbe_optional: number;
+  maintenance_fertilization_required: number;
+  maintenance_fertilization_optional: number;
+  maintenance_pruning_required: number;
+  maintenance_pruning_optional: number;
+  maintenance_replanting_optional: number;
   active: boolean;
   is_deleted: boolean;
 };
@@ -117,6 +159,9 @@ export type Material = {
   unit: string;
   quoted_unit_price: number;
   price_updated_at: string | null;
+  etec_block: string | null;
+  technical_characteristics: string | null;
+  vegetal_indicator_group: "colinos" | "cacao" | "frutales" | "forestales_nativos" | "otro" | null;
   active: boolean;
   observations: string | null;
   is_deleted: boolean;
@@ -189,6 +234,7 @@ export type PlanFamilyCounterpart = {
   unit: string;
   estimated_unit_value: number;
   estimated_total: number;
+  vegetal_indicator_group: "colinos" | "cacao" | "frutales" | "forestales_nativos" | "otro" | null;
   observations: string | null;
   is_deleted: boolean;
 };
@@ -218,8 +264,12 @@ export type ProcurementBatch = {
   id: string;
   project_id: string;
   batch_code: string;
+  purchase_number: number | null;
   name: string;
   status: ProcurementStatus;
+  supplier_name: string | null;
+  invoice_number: string | null;
+  invoice_date: string | null;
   filter_project_id: string | null;
   filter_municipality_id: string | null;
   filter_village_id: string | null;
@@ -228,6 +278,7 @@ export type ProcurementBatch = {
   filter_material_id: string | null;
   subtotal: number;
   observations: string | null;
+  purchase_observations: string | null;
   is_deleted: boolean;
 };
 
@@ -242,6 +293,13 @@ export type ProcurementBatchItem = {
   purchased_quantity: number;
   unit_price: number;
   total_value: number;
+  quoted_unit_price: number | null;
+  quoted_total_value: number | null;
+  invoice_quantity: number | null;
+  purchase_unit_price: number | null;
+  purchase_total_value: number | null;
+  etec_block: string | null;
+  technical_characteristics: string | null;
   status: ProcurementStatus;
   source_plan_material_ids: string[];
   is_deleted: boolean;
@@ -315,5 +373,56 @@ export type ImplementationProgress = {
   status: ImplementationProgressStatus;
   observations: string | null;
   progress_date: string | null;
+  is_deleted: boolean;
+};
+
+export type QuarterlyProgressType =
+  | "avance"
+  | "entregados"
+  | "sembrados"
+  | "cumplimiento_acuerdo"
+  | "vegetal_entrega"
+  | "vegetal_siembra";
+
+export type QuarterlyProgress = {
+  id: string;
+  project_id: string;
+  family_id: string;
+  operational_plan_id: string | null;
+  plan_activity_id: string | null;
+  activity_id: string | null;
+  year: number;
+  quarter: number | null;
+  target_quantity: number;
+  progress_quantity: number;
+  progress_type: QuarterlyProgressType;
+  vegetal_indicator_group: "colinos" | "cacao" | "frutales" | "forestales_nativos" | null;
+  observations: string | null;
+  is_deleted: boolean;
+};
+
+export type MaintenanceProgressType =
+  | "deshierbe"
+  | "fertilizacion"
+  | "poda"
+  | "resiembra"
+  | "abono_liquido"
+  | "abono_solido";
+
+export type MaintenanceProgress = {
+  id: string;
+  project_id: string;
+  family_id: string;
+  operational_plan_id: string | null;
+  plan_activity_id: string | null;
+  activity_id: string | null;
+  year: number;
+  quarter: number | null;
+  maintenance_type: MaintenanceProgressType;
+  maintenance_number: number;
+  maintenance_date: string | null;
+  progress_quantity: number;
+  unit: string | null;
+  observations: string | null;
   is_deleted: boolean;
 };

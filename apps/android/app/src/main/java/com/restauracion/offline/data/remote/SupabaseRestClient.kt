@@ -96,7 +96,7 @@ class SupabaseRestClient(
 
     suspend fun materials(): List<MaterialCatalogEntity> {
         requireConfigured()
-        return client.get("$baseUrl/rest/v1/material_catalog?select=id,project_id,name,category,unit,quoted_unit_price,active&is_deleted=eq.false") {
+        return client.get("$baseUrl/rest/v1/material_catalog?select=id,project_id,name,category,unit,quoted_unit_price,vegetal_indicator_group,active&is_deleted=eq.false") {
         authHeaders()
         }.body<List<MaterialDto>>().map { it.toEntity() }
     }
@@ -200,6 +200,7 @@ class SupabaseRestClient(
                     quantity = item.quantity,
                     unit = item.unit,
                     estimatedUnitValue = item.estimatedUnitValue,
+                    vegetalIndicatorGroup = item.vegetalIndicatorGroup,
                     observations = item.observations
                 )
             setBody(json.encodeToString(payload))
@@ -280,6 +281,7 @@ private data class PlanFamilyCounterpartUploadDto(
     val quantity: Double,
     val unit: String,
     @SerialName("estimated_unit_value") val estimatedUnitValue: Double,
+    @SerialName("vegetal_indicator_group") val vegetalIndicatorGroup: String?,
     val observations: String?
 )
 
@@ -340,9 +342,10 @@ private data class PlanFamilyCounterpartUploadDto(
     val category: String? = null,
     val unit: String,
     @SerialName("quoted_unit_price") val quotedUnitPrice: Double,
+    @SerialName("vegetal_indicator_group") val vegetalIndicatorGroup: String? = null,
     val active: Boolean
 ) {
-    fun toEntity() = MaterialCatalogEntity(id, projectId, name, category, unit, quotedUnitPrice, active)
+    fun toEntity() = MaterialCatalogEntity(id, projectId, name, category, unit, quotedUnitPrice, vegetalIndicatorGroup, active)
 }
 
 @Serializable private data class CounterpartDto(

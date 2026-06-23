@@ -5,6 +5,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -46,6 +47,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
@@ -70,31 +72,59 @@ import kotlinx.coroutines.launch
 
 private enum class Screen { LOGIN, HOME, FAMILY, PLAN }
 
-private val ForestGreen = Color(0xFF1F4D35)
-private val LeafGreen = Color(0xFF5F8D6A)
-private val MintSoft = Color(0xFFEAF3EC)
-private val SandBackground = Color(0xFFF6F1E7)
-private val CardSurface = Color(0xFFFFFCF6)
-private val TextDark = Color(0xFF20251F)
-private val ErrorRed = Color(0xFF8E2F2B)
-private val GlassBorder = Color.White.copy(alpha = 0.72f)
+private val BrandDark = Color(0xFF145F3B)
+private val BrandPrimary = Color(0xFF1F7A4F)
+private val MintSoft = Color(0xFFDCEFE3)
+private val BackgroundGradientStart = Color(0xFFA4CBB3)
+private val BackgroundGradientEnd = Color(0xFFDCEFE3)
+private val TextDark = Color(0xFF0F172A)
+private val ErrorRed = Color(0xFFB42318)
+private val GlassBorder = Color.White.copy(alpha = 0.4f)
 
 private val PlanesColorScheme = lightColorScheme(
-    primary = ForestGreen,
+    primary = BrandPrimary,
     onPrimary = Color.White,
-    secondary = LeafGreen,
+    secondary = BrandDark,
     onSecondary = Color.White,
-    background = SandBackground,
+    background = Color.Transparent, // El fondo principal será el Box con burbujas
     onBackground = TextDark,
-    surface = CardSurface,
+    surface = Color.Transparent, // Las tarjetas usarán glassmorphism
     onSurface = TextDark,
-    surfaceVariant = MintSoft,
+    surfaceVariant = Color.White.copy(alpha = 0.1f),
     onSurfaceVariant = TextDark,
     error = ErrorRed,
     onError = Color.White
 )
 
-private val AppCardShape = RoundedCornerShape(8.dp)
+private val AppCardShape = RoundedCornerShape(16.dp)
+
+fun Modifier.glassmorphism(cornerRadius: Dp = 16.dp): Modifier = this
+    .shadow(
+        elevation = 8.dp,
+        shape = RoundedCornerShape(cornerRadius),
+        spotColor = BrandDark.copy(alpha = 0.2f),
+        ambientColor = BrandDark.copy(alpha = 0.1f)
+    )
+    .background(
+        brush = androidx.compose.ui.graphics.Brush.linearGradient(
+            colors = listOf(
+                Color.White.copy(alpha = 0.6f),
+                Color.White.copy(alpha = 0.2f)
+            )
+        ),
+        shape = RoundedCornerShape(cornerRadius)
+    )
+    .border(
+        width = 1.dp,
+        brush = androidx.compose.ui.graphics.Brush.verticalGradient(
+            colors = listOf(
+                Color.White.copy(alpha = 0.9f),
+                Color.White.copy(alpha = 0.2f),
+                Color.White.copy(alpha = 0.5f)
+            )
+        ),
+        shape = RoundedCornerShape(cornerRadius)
+    )
 
 @Composable
 fun RestauracionApp(container: AppContainer) {
@@ -124,7 +154,27 @@ fun RestauracionApp(container: AppContainer) {
         LaunchedEffect(screenName, selectedProjectId, selectedFamilyId, selectedPlanId) {
             container.repository.saveNavigationState(screenName, selectedProjectId, selectedFamilyId, selectedPlanId)
         }
-        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        androidx.compose.foundation.layout.Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    brush = androidx.compose.ui.graphics.Brush.linearGradient(
+                        colors = listOf(BackgroundGradientStart, BackgroundGradientEnd)
+                    )
+                )
+        ) {
+            androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                drawCircle(
+                    color = BrandPrimary.copy(alpha = 0.08f),
+                    radius = size.width * 0.7f,
+                    center = androidx.compose.ui.geometry.Offset(size.width, 0f)
+                )
+                drawCircle(
+                    color = BrandDark.copy(alpha = 0.08f),
+                    radius = size.width * 0.5f,
+                    center = androidx.compose.ui.geometry.Offset(0f, size.height)
+                )
+            }
             when (screen) {
                 Screen.LOGIN -> LoginScreen(
                     message = message,
@@ -197,6 +247,14 @@ fun RestauracionApp(container: AppContainer) {
                                     val project = selectedProject ?: return@launch
                                     val plan = container.repository.createDraftPlan(project.id, family.id)
                                     selectedFamilyId = family.id
+                                    selectedPlanId = plan.id
+                                    screenName = Screen.PLAN.name
+                                }
+                            },
+                            onEditSentPlan = { plan ->
+                                scope.launch {
+                                    container.repository.saveDraftOffline(plan)
+                                    selectedFamilyId = plan.familyId
                                     selectedPlanId = plan.id
                                     screenName = Screen.PLAN.name
                                 }
@@ -304,13 +362,11 @@ private fun HomeScreen(
         message?.let { Text(friendlyMessage(it), color = MaterialTheme.colorScheme.primary) }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(projects) { project ->
-                Card(
-                    onClick = { onOpenProject(project) },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = AppCardShape,
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.86f)),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-                    border = BorderStroke(1.dp, GlassBorder)
+                androidx.compose.foundation.layout.Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .glassmorphism()
+                        .clickable { onOpenProject(project) }
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text(project.name, style = MaterialTheme.typography.titleMedium)
@@ -327,13 +383,15 @@ private fun FamilyScreen(
     container: AppContainer,
     project: ProjectEntity?,
     onBack: () -> Unit,
-    onCreatePlan: (FamilyEntity) -> Unit
+    onCreatePlan: (FamilyEntity) -> Unit,
+    onEditSentPlan: (OperationalPlanEntity) -> Unit
 ) {
     if (project == null) return
     val families by container.repository.families(project.id).collectAsState(initial = emptyList())
     val municipalities by container.repository.municipalities().collectAsState(initial = emptyList())
     val villages by container.repository.villages().collectAsState(initial = emptyList())
     val properties by container.repository.properties().collectAsState(initial = emptyList())
+    val sentPlans by container.repository.sentPlans(project.id).collectAsState(initial = emptyList())
     var query by remember { mutableStateOf("") }
     var selectorExpanded by remember { mutableStateOf(true) }
     var selectedFamily by remember { mutableStateOf<FamilyEntity?>(null) }
@@ -386,6 +444,49 @@ private fun FamilyScreen(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text("${family.familyCode} - ${family.representativeName}")
+                    }
+                }
+            }
+        }
+        item {
+            var outboxExpanded by remember { mutableStateOf(false) }
+            val familiesById = families.associateBy { it.id }
+            CollapsibleSectionCard(
+                title = "Bandeja de salida (${sentPlans.size})",
+                expanded = outboxExpanded,
+                onToggle = { outboxExpanded = !outboxExpanded },
+                summary = "Planes creados y enviados"
+            ) {
+                if (sentPlans.isEmpty()) {
+                    Text(
+                        text = "No hay planes en la bandeja de salida.",
+                        modifier = Modifier.padding(16.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    sentPlans.forEach { sentPlan ->
+                        val fam = familiesById[sentPlan.familyId]
+                        androidx.compose.foundation.layout.Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .glassmorphism()
+                                .clickable { onEditSentPlan(sentPlan) }
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(fam?.familyCode ?: "Desconocido", style = MaterialTheme.typography.titleSmall)
+                                Text(fam?.representativeName ?: "Sin nombre", style = MaterialTheme.typography.bodyMedium)
+                                Text("Fecha: ${sentPlan.planDate}", style = MaterialTheme.typography.bodySmall)
+                                Text("Estado: ${friendlyPlanStatus(sentPlan.status)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                                Spacer(modifier = Modifier.height(8.dp))
+                                OutlinedButton(
+                                    onClick = { onEditSentPlan(sentPlan) },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("Editar plan")
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -456,6 +557,7 @@ private fun PlanCaptureScreen(
     var editingMaterial by remember { mutableStateOf<PlanProjectMaterialEntity?>(null) }
     var selectedMaterialDraftId by remember(currentPlan.id) { mutableStateOf(draft("selected_material_id")) }
     var materialQuantity by remember(currentPlan.id) { mutableStateOf(draft("material_quantity")) }
+    var projectMaterialKind by remember(currentPlan.id) { mutableStateOf(draft("project_material_kind").ifBlank { "standard" }) }
     var useProvisionalMaterial by remember(currentPlan.id) { mutableStateOf(draft("use_provisional_material") == "true") }
     var provisionalMaterialName by remember(currentPlan.id) { mutableStateOf(draft("provisional_material_name")) }
     var provisionalMaterialUnit by remember(currentPlan.id) { mutableStateOf(draft("provisional_material_unit")) }
@@ -472,6 +574,8 @@ private fun PlanCaptureScreen(
     var counterpartUnit by remember(currentPlan.id) { mutableStateOf(draft("counterpart_unit")) }
     var counterpartUnitValue by remember(currentPlan.id) { mutableStateOf(draft("counterpart_unit_value")) }
     var counterpartObservation by remember(currentPlan.id) { mutableStateOf(draft("counterpart_observation")) }
+    var includeVegetalCounterpart by remember(currentPlan.id) { mutableStateOf(draft("include_vegetal_counterpart") == "true") }
+    var counterpartVegetalGroup by remember(currentPlan.id) { mutableStateOf(draft("counterpart_vegetal_group")) }
     var activitiesExpanded by remember { mutableStateOf(true) }
     var materialsExpanded by remember { mutableStateOf(false) }
     var counterpartsExpanded by remember { mutableStateOf(false) }
@@ -520,6 +624,7 @@ private fun PlanCaptureScreen(
         materialFilter,
         selectedMaterialDraftId,
         materialQuantity,
+        projectMaterialKind,
         useProvisionalMaterial,
         provisionalMaterialName,
         provisionalMaterialUnit,
@@ -532,7 +637,9 @@ private fun PlanCaptureScreen(
         counterpartQuantity,
         counterpartUnit,
         counterpartUnitValue,
-        counterpartObservation
+        counterpartObservation,
+        includeVegetalCounterpart,
+        counterpartVegetalGroup
     ) {
         container.repository.saveCaptureDraft(currentPlan.id, "activity_filter", activityFilter)
         container.repository.saveCaptureDraft(currentPlan.id, "selected_activity_id", selectedActivityDraftId)
@@ -541,6 +648,7 @@ private fun PlanCaptureScreen(
         container.repository.saveCaptureDraft(currentPlan.id, "material_filter", materialFilter)
         container.repository.saveCaptureDraft(currentPlan.id, "selected_material_id", selectedMaterialDraftId)
         container.repository.saveCaptureDraft(currentPlan.id, "material_quantity", materialQuantity)
+        container.repository.saveCaptureDraft(currentPlan.id, "project_material_kind", projectMaterialKind)
         container.repository.saveCaptureDraft(currentPlan.id, "use_provisional_material", useProvisionalMaterial.toString())
         container.repository.saveCaptureDraft(currentPlan.id, "provisional_material_name", provisionalMaterialName)
         container.repository.saveCaptureDraft(currentPlan.id, "provisional_material_unit", provisionalMaterialUnit)
@@ -554,6 +662,8 @@ private fun PlanCaptureScreen(
         container.repository.saveCaptureDraft(currentPlan.id, "counterpart_unit", counterpartUnit)
         container.repository.saveCaptureDraft(currentPlan.id, "counterpart_unit_value", counterpartUnitValue)
         container.repository.saveCaptureDraft(currentPlan.id, "counterpart_observation", counterpartObservation)
+        container.repository.saveCaptureDraft(currentPlan.id, "include_vegetal_counterpart", includeVegetalCounterpart.toString())
+        container.repository.saveCaptureDraft(currentPlan.id, "counterpart_vegetal_group", counterpartVegetalGroup)
     }
 
     val filteredActivities = if (activityFilter.isBlank()) {
@@ -564,7 +674,10 @@ private fun PlanCaptureScreen(
     val filteredMaterials = if (materialFilter.isBlank()) {
         emptyList()
     } else {
-        materials.filter { it.name.contains(materialFilter, ignoreCase = true) }.take(8)
+        materials
+            .filter { it.name.contains(materialFilter, ignoreCase = true) }
+            .filter { material -> if (projectMaterialKind == "vegetal") isVegetalMaterial(material) else !isVegetalMaterial(material) }
+            .take(8)
     }
     val filteredCounterparts = if (counterpartFilter.isBlank()) {
         emptyList()
@@ -647,7 +760,8 @@ private fun PlanCaptureScreen(
                             runCatching {
                                 val editing = editingActivity
                                 if (editing == null) {
-                                    container.repository.addActivity(currentPlan.id, catalog.id, catalog.unit, baseValue, targetValue)
+                                    val created = container.repository.addActivity(currentPlan.id, catalog.id, catalog.unit, baseValue, targetValue)
+                                    selectedPlanActivity = created
                                 } else {
                                     container.repository.updateActivity(
                                         editing.copy(
@@ -657,14 +771,23 @@ private fun PlanCaptureScreen(
                                             target = targetValue
                                         )
                                     )
+                                    selectedPlanActivity = editing.copy(
+                                        activityId = catalog.id,
+                                        unit = catalog.unit,
+                                        baseline = baseValue,
+                                        target = targetValue
+                                    )
                                 }
                             }.onSuccess {
-                                message = "Actividad guardada localmente."
+                                message = "Actividad guardada. Ahora registre materiales del proyecto para esta actividad."
                                 editingActivity = null
                                 selectedActivity = null
                                 selectedActivityDraftId = ""
                                 baseline = ""
                                 target = ""
+                                activitiesExpanded = false
+                                materialsExpanded = true
+                                counterpartsExpanded = false
                             }.onFailure {
                                 message = it.message ?: "No fue posible guardar la actividad."
                             }
@@ -676,7 +799,12 @@ private fun PlanCaptureScreen(
 
         itemsIndexed(planActivities, key = { _, item -> item.id }) { index, item ->
             val catalog = activityNames[item.activityId]
-            Card(onClick = { selectedPlanActivity = item }, modifier = Modifier.fillMaxWidth()) {
+            androidx.compose.foundation.layout.Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .glassmorphism()
+                    .clickable { selectedPlanActivity = item }
+            ) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("Actividad ${index + 1}: ${catalog?.name ?: "Actividad sin catalogo"}", style = MaterialTheme.typography.titleMedium)
                     Text("Linea base: ${item.baseline ?: "N/A"} | Meta: ${item.target ?: "N/A"} ${item.unit}")
@@ -703,16 +831,32 @@ private fun PlanCaptureScreen(
 
         item {
             CollapsibleSectionCard(
-                title = "Materiales del proyecto",
+                title = "Materiales del proyecto y material vegetal",
                 expanded = materialsExpanded,
                 onToggle = { materialsExpanded = !materialsExpanded },
                 summary = "${planMaterials.size} en actividad seleccionada"
             ) {
                 Text("Actividad seleccionada: ${selectedPlanActivity?.let { activityNames[it.activityId]?.name } ?: "Ninguna"}")
+                Text("Seleccione si va a registrar insumos/materiales o material vegetal para esta actividad.")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = {
+                        projectMaterialKind = "standard"
+                        selectedMaterial = null
+                        selectedMaterialDraftId = ""
+                        materialFilter = ""
+                    }) { Text("Materiales / insumos") }
+                    OutlinedButton(onClick = {
+                        projectMaterialKind = "vegetal"
+                        selectedMaterial = null
+                        selectedMaterialDraftId = ""
+                        materialFilter = ""
+                    }) { Text("Material vegetal") }
+                }
+                Text("Registrando: ${if (projectMaterialKind == "vegetal") "Material vegetal del proyecto" else "Materiales e insumos del proyecto"}")
                 OutlinedTextField(
                     value = materialFilter,
                     onValueChange = { materialFilter = it },
-                    label = { Text("Buscar material") },
+                    label = { Text(if (projectMaterialKind == "vegetal") "Buscar especie o material vegetal" else "Buscar material o insumo") },
                     modifier = Modifier.fillMaxWidth()
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -832,11 +976,15 @@ private fun PlanCaptureScreen(
                     }
                 }) { Text(if (editingMaterial == null) "Guardar material" else "Actualizar material") }
                 HorizontalDivider()
-                if (planMaterials.isEmpty()) {
+                val standardMaterials = planMaterials.filter { !isVegetalPlanMaterial(it, materialNames) }
+                val vegetalMaterials = planMaterials.filter { isVegetalPlanMaterial(it, materialNames) }
+                if (standardMaterials.isEmpty() && vegetalMaterials.isEmpty()) {
                     Text("Sin materiales para esta actividad.")
-                } else {
+                }
+                if (standardMaterials.isNotEmpty()) {
                     ProjectMaterialsTable(
-                        items = planMaterials,
+                        title = "Materiales e insumos del proyecto",
+                        items = standardMaterials,
                         materialNames = materialNames,
                         onEdit = { item ->
                             val material = item.materialId?.let { materialNames[it] }
@@ -844,6 +992,7 @@ private fun PlanCaptureScreen(
                             selectedMaterial = material
                             selectedMaterialDraftId = material?.id.orEmpty()
                             materialQuantity = item.quantity.toString()
+                            projectMaterialKind = if (material?.let { isVegetalMaterial(it) } == true) "vegetal" else "standard"
                             useProvisionalMaterial = item.materialId == null
                             provisionalMaterialName = item.provisionalName.orEmpty()
                             provisionalMaterialUnit = item.unit
@@ -857,6 +1006,39 @@ private fun PlanCaptureScreen(
                         }
                     )
                 }
+                if (vegetalMaterials.isNotEmpty()) {
+                    ProjectMaterialsTable(
+                        title = "Material vegetal del proyecto",
+                        items = vegetalMaterials,
+                        materialNames = materialNames,
+                        onEdit = { item ->
+                            val material = item.materialId?.let { materialNames[it] }
+                            editingMaterial = item
+                            selectedMaterial = material
+                            selectedMaterialDraftId = material?.id.orEmpty()
+                            materialQuantity = item.quantity.toString()
+                            projectMaterialKind = "vegetal"
+                            useProvisionalMaterial = item.materialId == null
+                            provisionalMaterialName = item.provisionalName.orEmpty()
+                            provisionalMaterialUnit = item.unit
+                            provisionalMaterialObservation = item.observations.orEmpty()
+                        },
+                        onDelete = { item ->
+                            scope.launch {
+                                container.repository.deleteProjectMaterial(item)
+                                message = "Material vegetal eliminado localmente."
+                            }
+                        }
+                    )
+                }
+                OutlinedButton(
+                    onClick = {
+                        counterpartsExpanded = true
+                        materialsExpanded = false
+                        message = "Ahora registre la contrapartida familiar de esta actividad."
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Continuar a contrapartida familiar") }
             }
         }
 
@@ -882,6 +1064,30 @@ private fun PlanCaptureScreen(
                         selectedCounterpartDraftId = ""
                     }) { Text("Aporte no encontrado") }
                 }
+                Text("Material vegetal de contrapartida")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = {
+                        includeVegetalCounterpart = true
+                        counterpartType = "material_propio"
+                    }) { Text("Si") }
+                    OutlinedButton(onClick = {
+                        includeVegetalCounterpart = false
+                        counterpartVegetalGroup = ""
+                    }) { Text("No") }
+                }
+                if (includeVegetalCounterpart) {
+                    Text("Grupo vegetal")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { counterpartVegetalGroup = "colinos" }) { Text("Colinos") }
+                        OutlinedButton(onClick = { counterpartVegetalGroup = "cacao" }) { Text("Cacao") }
+                        OutlinedButton(onClick = { counterpartVegetalGroup = "frutales" }) { Text("Frutales") }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { counterpartVegetalGroup = "forestales_nativos" }) { Text("Forestales nativos") }
+                        OutlinedButton(onClick = { counterpartVegetalGroup = "otro" }) { Text("Otro vegetal") }
+                    }
+                    Text("Seleccionado: ${vegetalGroupLabel(counterpartVegetalGroup)}")
+                }
                 if (!useProvisionalCounterpart) {
                     if (counterpartFilter.isBlank() && selectedCounterpart == null) {
                         Text("Escriba para ver sugerencias del catalogo.")
@@ -905,7 +1111,7 @@ private fun PlanCaptureScreen(
                     Text("Tipo de aporte")
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(onClick = { counterpartType = "mano_obra" }) { Text("Mano de obra") }
-                        OutlinedButton(onClick = { counterpartType = "materiales_propios" }) { Text("Materiales") }
+                        OutlinedButton(onClick = { counterpartType = "material_propio" }) { Text("Materiales") }
                         OutlinedButton(onClick = { counterpartType = "otro" }) { Text("Otro") }
                     }
                 }
@@ -935,6 +1141,7 @@ private fun PlanCaptureScreen(
                     when {
                         activity == null -> message = "Seleccione una actividad del plan."
                         counterpartName.isBlank() -> message = "Ingrese el aporte de la familia."
+                        includeVegetalCounterpart && counterpartVegetalGroup.isBlank() -> message = "Seleccione el grupo vegetal de la contrapartida."
                         qty == null || qty <= 0 -> message = "Ingrese una cantidad valida de contrapartida."
                         unitValue < 0 -> message = "El valor estimado no puede ser negativo."
                         else -> scope.launch {
@@ -948,6 +1155,7 @@ private fun PlanCaptureScreen(
                                         qty,
                                         counterpartUnit.ifBlank { "unidad" },
                                         unitValue,
+                                        if (includeVegetalCounterpart) counterpartVegetalGroup else null,
                                         counterpartObservation.ifBlank { null }
                                     )
                                 } else {
@@ -958,6 +1166,7 @@ private fun PlanCaptureScreen(
                                             quantity = qty,
                                             unit = counterpartUnit.ifBlank { "unidad" },
                                             estimatedUnitValue = unitValue,
+                                            vegetalIndicatorGroup = if (includeVegetalCounterpart) counterpartVegetalGroup else null,
                                             observations = counterpartObservation.ifBlank { null }
                                         )
                                     )
@@ -972,6 +1181,8 @@ private fun PlanCaptureScreen(
                                 counterpartQuantity = ""
                                 counterpartUnit = ""
                                 counterpartUnitValue = ""
+                                includeVegetalCounterpart = false
+                                counterpartVegetalGroup = ""
                                 counterpartObservation = ""
                             }.onFailure {
                                 message = it.message ?: "No fue posible guardar la contrapartida."
@@ -980,11 +1191,15 @@ private fun PlanCaptureScreen(
                     }
                 }) { Text(if (editingCounterpart == null) "Guardar contrapartida" else "Actualizar contrapartida") }
                 HorizontalDivider()
-                if (planCounterparts.isEmpty()) {
+                val standardCounterparts = planCounterparts.filter { it.vegetalIndicatorGroup == null }
+                val vegetalCounterparts = planCounterparts.filter { it.vegetalIndicatorGroup != null }
+                if (standardCounterparts.isEmpty() && vegetalCounterparts.isEmpty()) {
                     Text("Sin contrapartidas para esta actividad.")
-                } else {
+                }
+                if (standardCounterparts.isNotEmpty()) {
                     CounterpartTable(
-                        items = planCounterparts,
+                        title = "Contrapartida familiar",
+                        items = standardCounterparts,
                         onEdit = { item ->
                             editingCounterpart = item
                             selectedCounterpart = counterpartCatalog.find { catalog -> sameCatalogCounterpart(catalog, item) }
@@ -995,6 +1210,8 @@ private fun PlanCaptureScreen(
                             counterpartQuantity = item.quantity.toString()
                             counterpartUnit = item.unit
                             counterpartUnitValue = item.estimatedUnitValue.toString()
+                            includeVegetalCounterpart = item.vegetalIndicatorGroup != null
+                            counterpartVegetalGroup = item.vegetalIndicatorGroup.orEmpty()
                             counterpartObservation = item.observations.orEmpty()
                         },
                         onDelete = { item ->
@@ -1005,17 +1222,73 @@ private fun PlanCaptureScreen(
                         }
                     )
                 }
+                if (vegetalCounterparts.isNotEmpty()) {
+                    CounterpartTable(
+                        title = "Material vegetal de contrapartida familiar",
+                        items = vegetalCounterparts,
+                        onEdit = { item ->
+                            editingCounterpart = item
+                            selectedCounterpart = counterpartCatalog.find { catalog -> sameCatalogCounterpart(catalog, item) }
+                            selectedCounterpartDraftId = selectedCounterpart?.id.orEmpty()
+                            useProvisionalCounterpart = selectedCounterpart == null
+                            counterpartType = item.contributionType
+                            counterpartName = item.name
+                            counterpartQuantity = item.quantity.toString()
+                            counterpartUnit = item.unit
+                            counterpartUnitValue = item.estimatedUnitValue.toString()
+                            includeVegetalCounterpart = true
+                            counterpartVegetalGroup = item.vegetalIndicatorGroup.orEmpty()
+                            counterpartObservation = item.observations.orEmpty()
+                        },
+                        onDelete = { item ->
+                            scope.launch {
+                                container.repository.deleteCounterpart(item)
+                                message = "Material vegetal de contrapartida eliminado localmente."
+                            }
+                        }
+                    )
+                }
+                OutlinedButton(
+                    onClick = {
+                        selectedPlanActivity = null
+                        editingActivity = null
+                        selectedActivity = null
+                        selectedActivityDraftId = ""
+                        activityFilter = ""
+                        baseline = ""
+                        target = ""
+                        activitiesExpanded = true
+                        materialsExpanded = false
+                        counterpartsExpanded = false
+                        message = "Seleccione la siguiente actividad para esta misma familia."
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Agregar otra actividad para esta familia") }
             }
         }
 
         item {
             SectionCard("Resumen del plan") {
-                val materialTotal = allPlanMaterials.sumOf { it.quantity * it.quotedUnitPrice }
-                val counterpartTotal = allPlanCounterparts.sumOf { it.quantity * it.estimatedUnitValue }
+                val summaries = buildPlanActivitySummaries(planActivities, allPlanMaterials, allPlanCounterparts, activityNames, materialNames)
+                val standardMaterialTotal = summaries.sumOf { it.standardMaterialTotal }
+                val vegetalMaterialTotal = summaries.sumOf { it.vegetalMaterialTotal }
+                val materialTotal = standardMaterialTotal + vegetalMaterialTotal
+                val standardCounterpartTotal = summaries.sumOf { it.standardCounterpartTotal }
+                val vegetalCounterpartTotal = summaries.sumOf { it.vegetalCounterpartTotal }
+                val counterpartTotal = standardCounterpartTotal + vegetalCounterpartTotal
                 val provisionalCount = allPlanMaterials.count { it.materialId == null || it.provisionalName != null }
                 Text("Actividades: ${planActivities.size}")
-                Text("Materiales del proyecto: ${allPlanMaterials.size} | Total: ${money(materialTotal)}")
-                Text("Contrapartida familiar: ${allPlanCounterparts.size} | Total: ${money(counterpartTotal)}")
+                summaries.forEachIndexed { index, summary ->
+                    ActivitySummaryCard(index + 1, summary)
+                }
+                HorizontalDivider()
+                Text("Totales generales", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Text("Materiales e insumos del proyecto: ${money(standardMaterialTotal)}")
+                Text("Material vegetal del proyecto: ${money(vegetalMaterialTotal)}")
+                Text("Total materiales del proyecto + material vegetal: ${money(materialTotal)}")
+                Text("Contrapartida familiar: ${money(standardCounterpartTotal)}")
+                Text("Material vegetal de contrapartida: ${money(vegetalCounterpartTotal)}")
+                Text("Total contrapartida familiar: ${money(counterpartTotal)}")
                 Text("Total general: ${money(materialTotal + counterpartTotal)}")
                 if (provisionalCount > 0) {
                     Text("Alerta: $provisionalCount material(es) provisional(es) pendiente(s) de resolver en web.")
@@ -1106,12 +1379,10 @@ private fun SectionCard(title: String, content: @Composable ColumnScope.() -> Un
 
 @Composable
 private fun GlassPanel(content: @Composable ColumnScope.() -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = AppCardShape,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
-        border = BorderStroke(1.dp, GlassBorder)
+    androidx.compose.foundation.layout.Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .glassmorphism()
     ) {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             content()
@@ -1127,17 +1398,15 @@ private fun CollapsibleSectionCard(
     summary: String,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = AppCardShape,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
-        border = BorderStroke(1.dp, GlassBorder)
+    androidx.compose.foundation.layout.Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .glassmorphism()
     ) {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(title, style = MaterialTheme.typography.titleMedium)
+                    Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
                     Text(summary, style = MaterialTheme.typography.bodySmall)
                 }
                 OutlinedButton(onClick = onToggle) {
@@ -1153,17 +1422,15 @@ private fun CollapsibleSectionCard(
 
 @Composable
 private fun AppHeader(chip: String? = null, syncState: String? = null, onBack: (() -> Unit)? = null) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = AppCardShape,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-        border = BorderStroke(1.dp, GlassBorder)
+    androidx.compose.foundation.layout.Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .glassmorphism()
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically
+            modifier = Modifier.padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             onBack?.let {
                 OutlinedButton(onClick = it) { Text("Volver") }
@@ -1186,10 +1453,10 @@ private fun AppHeader(chip: String? = null, syncState: String? = null, onBack: (
 @Composable
 private fun StatusChip(state: String) {
     val (label, color) = when (state) {
-        "SYNCED" -> "Sincronizado" to LeafGreen
+        "SYNCED" -> "Sincronizado" to BrandDark
         "ERROR" -> "Error" to ErrorRed
         "CONFLICT" -> "Conflicto" to Color(0xFF9A6B22)
-        else -> "Pendiente" to ForestGreen
+        else -> "Pendiente" to BrandPrimary
     }
     Surface(
         shape = RoundedCornerShape(8.dp),
@@ -1225,12 +1492,13 @@ private fun CompactRow(
 
 @Composable
 private fun ProjectMaterialsTable(
+    title: String,
     items: List<PlanProjectMaterialEntity>,
     materialNames: Map<String, MaterialCatalogEntity>,
     onEdit: (PlanProjectMaterialEntity) -> Unit,
     onDelete: (PlanProjectMaterialEntity) -> Unit
 ) {
-    ContributionTable(title = "Aporte del proyecto") {
+    ContributionTable(title = title) {
         ContributionHeader()
         items.forEach { item ->
             val material = item.materialId?.let { materialNames[it] }
@@ -1249,15 +1517,16 @@ private fun ProjectMaterialsTable(
 
 @Composable
 private fun CounterpartTable(
+    title: String,
     items: List<PlanFamilyCounterpartEntity>,
     onEdit: (PlanFamilyCounterpartEntity) -> Unit,
     onDelete: (PlanFamilyCounterpartEntity) -> Unit
 ) {
-    ContributionTable(title = "Aporte de la familia") {
+    ContributionTable(title = title) {
         ContributionHeader()
         items.forEach { item ->
             ContributionRow(
-                article = item.name,
+                article = if (item.vegetalIndicatorGroup != null) "${item.name} (${vegetalGroupLabel(item.vegetalIndicatorGroup)})" else item.name,
                 quantity = formatQuantityOnly(item.quantity),
                 unitValue = money(item.estimatedUnitValue),
                 totalValue = money(item.quantity * item.estimatedUnitValue),
@@ -1266,6 +1535,57 @@ private fun CounterpartTable(
             )
         }
         ContributionSubtotal(label = "Subtotal familia", value = money(items.sumOf { it.quantity * it.estimatedUnitValue }))
+    }
+}
+
+private data class PlanActivitySummary(
+    val activityName: String,
+    val unit: String,
+    val standardMaterialTotal: Double,
+    val vegetalMaterialTotal: Double,
+    val standardCounterpartTotal: Double,
+    val vegetalCounterpartTotal: Double
+) {
+    val projectTotal: Double get() = standardMaterialTotal + vegetalMaterialTotal
+    val counterpartTotal: Double get() = standardCounterpartTotal + vegetalCounterpartTotal
+}
+
+private fun buildPlanActivitySummaries(
+    planActivities: List<PlanActivityEntity>,
+    materials: List<PlanProjectMaterialEntity>,
+    counterparts: List<PlanFamilyCounterpartEntity>,
+    activityNames: Map<String, ActivityCatalogEntity>,
+    materialNames: Map<String, MaterialCatalogEntity>
+): List<PlanActivitySummary> {
+    return planActivities.map { activity ->
+        val activityMaterials = materials.filter { it.planActivityId == activity.id }
+        val activityCounterparts = counterparts.filter { it.planActivityId == activity.id }
+        val standardMaterials = activityMaterials.filter { !isVegetalPlanMaterial(it, materialNames) }
+        val vegetalMaterials = activityMaterials.filter { isVegetalPlanMaterial(it, materialNames) }
+        val standardCounterparts = activityCounterparts.filter { it.vegetalIndicatorGroup == null }
+        val vegetalCounterparts = activityCounterparts.filter { it.vegetalIndicatorGroup != null }
+        PlanActivitySummary(
+            activityName = activityNames[activity.activityId]?.name ?: "Actividad sin catalogo",
+            unit = activity.unit,
+            standardMaterialTotal = standardMaterials.sumOf { it.quantity * it.quotedUnitPrice },
+            vegetalMaterialTotal = vegetalMaterials.sumOf { it.quantity * it.quotedUnitPrice },
+            standardCounterpartTotal = standardCounterparts.sumOf { it.quantity * it.estimatedUnitValue },
+            vegetalCounterpartTotal = vegetalCounterparts.sumOf { it.quantity * it.estimatedUnitValue }
+        )
+    }
+}
+
+@Composable
+private fun ActivitySummaryCard(index: Int, summary: PlanActivitySummary) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
+        Text("Actividad $index: ${summary.activityName} (${summary.unit})", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+        Text("Materiales del proyecto: ${money(summary.standardMaterialTotal)}")
+        Text("Material vegetal del proyecto: ${money(summary.vegetalMaterialTotal)}")
+        Text("Subtotal proyecto actividad $index: ${money(summary.projectTotal)}")
+        Text("Contrapartida familiar: ${money(summary.standardCounterpartTotal)}")
+        Text("Material vegetal de contrapartida: ${money(summary.vegetalCounterpartTotal)}")
+        Text("Subtotal contrapartida actividad $index: ${money(summary.counterpartTotal)}")
+        HorizontalDivider()
     }
 }
 
@@ -1497,6 +1817,48 @@ private fun validatePlanForReview(
         errors += "Resuelva los materiales provisionales en la web antes de marcar listo para revision."
     }
     return errors.distinct()
+}
+
+private fun vegetalGroupLabel(value: String): String {
+    return when (value) {
+        "colinos" -> "Colinos (platano y pina)"
+        "cacao" -> "Cacao"
+        "frutales" -> "Frutales"
+        "forestales_nativos" -> "Forestales nativos"
+        "otro" -> "Otro vegetal"
+        else -> "No seleccionado"
+    }
+}
+
+private fun isVegetalPlanMaterial(item: PlanProjectMaterialEntity, materialNames: Map<String, MaterialCatalogEntity>): Boolean {
+    val material = item.materialId?.let { materialNames[it] }
+    return material?.let { isVegetalMaterial(it) } == true ||
+        item.provisionalName.orEmpty().contains("vegetal", ignoreCase = true) ||
+        item.provisionalName.orEmpty().contains("arbol", ignoreCase = true) ||
+        item.provisionalName.orEmpty().contains("cacao", ignoreCase = true) ||
+        item.provisionalName.orEmpty().contains("platano", ignoreCase = true) ||
+        item.provisionalName.orEmpty().contains("piña", ignoreCase = true) ||
+        item.provisionalName.orEmpty().contains("pina", ignoreCase = true)
+}
+
+private fun isVegetalMaterial(material: MaterialCatalogEntity): Boolean {
+    val values = listOf(
+        material.vegetalIndicatorGroup.orEmpty(),
+        material.category.orEmpty(),
+        material.name
+    ).joinToString(" ").lowercase()
+    return material.vegetalIndicatorGroup != null ||
+        values.contains("vegetal") ||
+        values.contains("colino") ||
+        values.contains("platano") ||
+        values.contains("plátano") ||
+        values.contains("piña") ||
+        values.contains("pina") ||
+        values.contains("cacao") ||
+        values.contains("frutal") ||
+        values.contains("forestal") ||
+        values.contains("arbol") ||
+        values.contains("árbol")
 }
 
 private fun sameCatalogCounterpart(catalog: CounterpartCatalogEntity, item: PlanFamilyCounterpartEntity): Boolean {

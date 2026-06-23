@@ -18,6 +18,7 @@ class RestauracionRepository(
     val projects = db.catalogDao().projects()
     val plans = db.planDao().plans()
 
+    fun sentPlans(projectId: String) = db.planDao().sentPlans(projectId)
     fun families(projectId: String) = db.catalogDao().families(projectId)
     fun municipalities() = db.catalogDao().municipalities()
     fun villages() = db.catalogDao().villages()
@@ -75,20 +76,20 @@ class RestauracionRepository(
         return plan
     }
 
-    suspend fun addActivity(planId: String, activityId: String, unit: String, baseline: Double?, target: Double?) {
+    suspend fun addActivity(planId: String, activityId: String, unit: String, baseline: Double?, target: Double?): PlanActivityEntity {
         check(db.planDao().activityByCatalog(planId, activityId) == null) {
             "La actividad ya esta registrada en este plan."
         }
-        db.planDao().upsertActivity(
-            PlanActivityEntity(
-                planId = planId,
-                activityId = activityId,
-                baseline = baseline,
-                target = target,
-                unit = unit,
-                observations = null
-            )
+        val activity = PlanActivityEntity(
+            planId = planId,
+            activityId = activityId,
+            baseline = baseline,
+            target = target,
+            unit = unit,
+            observations = null
         )
+        db.planDao().upsertActivity(activity)
+        return activity
     }
 
     suspend fun markPlanPending(plan: OperationalPlanEntity) {
@@ -173,6 +174,7 @@ class RestauracionRepository(
         quantity: Double,
         unit: String,
         unitValue: Double,
+        vegetalIndicatorGroup: String?,
         observations: String?
     ) {
         require(name.isNotBlank()) { "Ingrese el aporte de la familia." }
@@ -186,6 +188,7 @@ class RestauracionRepository(
                 quantity = quantity,
                 unit = unit,
                 estimatedUnitValue = unitValue,
+                vegetalIndicatorGroup = vegetalIndicatorGroup,
                 observations = observations
             )
         )

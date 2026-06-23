@@ -63,6 +63,9 @@ interface PlanDao {
     @Query("select * from operational_plans order by planDate desc")
     fun plans(): Flow<List<OperationalPlanEntity>>
 
+    @Query("select * from operational_plans where projectId = :projectId order by planDate desc")
+    fun sentPlans(projectId: String): Flow<List<OperationalPlanEntity>>
+
     @Query("select * from operational_plans where id = :id limit 1")
     fun plan(id: String): Flow<OperationalPlanEntity?>
 

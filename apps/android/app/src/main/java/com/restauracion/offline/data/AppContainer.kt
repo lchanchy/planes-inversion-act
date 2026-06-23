@@ -35,11 +35,23 @@ class AppContainer(context: Context) {
         }
     }
 
+    private val migration3To4 = object : Migration(3, 4) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE plan_family_counterparts ADD COLUMN vegetalIndicatorGroup TEXT")
+        }
+    }
+
+    private val migration4To5 = object : Migration(4, 5) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE material_catalog ADD COLUMN vegetalIndicatorGroup TEXT")
+        }
+    }
+
     private val database = Room.databaseBuilder(
         context,
         RestauracionDatabase::class.java,
         "restauracion_offline.db"
-    ).addMigrations(migration1To2, migration2To3).build()
+    ).addMigrations(migration1To2, migration2To3, migration3To4, migration4To5).build()
 
     private val sessionStore = SessionStore(context)
 
