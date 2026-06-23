@@ -374,7 +374,7 @@ function AdminApp({ session }: { session: Session }) {
         supabase.from("user_municipality_assignments").select("*").eq("is_deleted", false),
         supabase.from("projects").select("*").order("created_at", { ascending: false }),
         supabase.from("users_profiles").select("*").order("full_name"),
-        supabase.from("families").select("*").order("created_at", { ascending: false }),
+        supabase.from("families").select("*").eq("is_deleted", false).order("created_at", { ascending: false }),
         supabase.from("properties").select("*").eq("is_deleted", false),
         supabase.from("activity_catalog").select("*").order("name"),
         supabase.from("material_catalog").select("*").order("name"),
