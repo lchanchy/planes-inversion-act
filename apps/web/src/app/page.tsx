@@ -1332,14 +1332,18 @@ function resolveFamilyMunicipalityForImport({
   projectId,
   municipalityName,
   municipalities,
+  villages,
   projectMunicipalities,
+  projectVillages,
   rowNumber,
   errors
 }: {
   projectId: string;
   municipalityName: string;
   municipalities: Municipality[];
+  villages: Village[];
   projectMunicipalities: ProjectMunicipality[];
+  projectVillages: ProjectVillage[];
   rowNumber: number;
   errors: string[];
 }) {
@@ -1349,13 +1353,24 @@ function resolveFamilyMunicipalityForImport({
       .filter((item) => item.project_id === projectId)
       .map((item) => item.municipality_id)
   );
+  const projectVillageIds = new Set(
+    projectVillages
+      .filter((item) => item.project_id === projectId)
+      .map((item) => item.village_id)
+  );
+  const projectVillageMunicipalityIds = new Set(
+    villages
+      .filter((village) => projectVillageIds.has(village.id))
+      .map((village) => village.municipality_id)
+  );
+  const allowedMunicipalityIds = new Set([...projectMunicipalityIds, ...projectVillageMunicipalityIds]);
   const matches = municipalities
     .filter((municipality) => normalizeHeader(municipality.name) === normalizedName)
-    .filter((municipality) => projectMunicipalityIds.size === 0 || projectMunicipalityIds.has(municipality.id));
+    .filter((municipality) => allowedMunicipalityIds.size === 0 || allowedMunicipalityIds.has(municipality.id));
 
   if (matches.length === 0) {
     errors.push(
-      projectMunicipalityIds.size > 0
+      allowedMunicipalityIds.size > 0
         ? `Fila ${rowNumber}: municipio "${municipalityName}" no existe o no esta asociado al proyecto indicado.`
         : `Fila ${rowNumber}: municipio "${municipalityName}" no existe.`
     );
@@ -2632,7 +2647,9 @@ function FamiliesCrud({
         projectId,
         municipalityName,
         municipalities,
+        villages,
         projectMunicipalities,
+        projectVillages,
         rowNumber,
         errors
       }) : undefined;
@@ -2693,20 +2710,15 @@ function FamiliesCrud({
     let updated = 0;
     let created = 0;
     const generatedCodes = new Set<string>();
-    for (const operation of operations) {
-      if (operation.type === "insert" && operation.generateFamilyCode) {
-        const generatedCode = await generateNextFamilyCode(operation.projectId, generatedCodes);
-        if (!generatedCode) return;
-        operation.payload.family_code = generatedCode;
-      }
-      const result = operation.type === "update"
-        ? await supabase.from("families").update(operation.payload).eq("id", operation.id)
-        : await supabase.from("families").insert(operation.payload).select("id").single();
+    const updateOperations = operations.filter((operation) => operation.type === "update");
+    const insertOperations = operations.filter((operation) => operation.type === "insert");
+    for (const operation of updateOperations) {
+      const result = await supabase.from("families").update(operation.payload).eq("id", operation.id);
       if (result.error) {
         setNotice({ type: "error", message: `Error al guardar familias: ${result.error.message}` });
         return;
       }
-      const familyId = operation.id || result.data?.id;
+      const familyId = operation.id;
       if (familyId && operation.propertyPayload) {
         const propertyResult = operation.propertyId
           ? await supabase.from("properties").update(operation.propertyPayload).eq("id", operation.propertyId)
@@ -2716,8 +2728,41 @@ function FamiliesCrud({
           return;
         }
       }
-      if (operation.type === "update") updated += 1;
-      else created += 1;
+      updated += 1;
+    }
+    for (const operation of insertOperations) {
+      if (operation.type === "insert" && operation.generateFamilyCode) {
+        const generatedCode = await generateNextFamilyCode(operation.projectId, generatedCodes);
+        if (!generatedCode) return;
+        operation.payload.family_code = generatedCode;
+      }
+    }
+    if (insertOperations.length > 0) {
+      const insertResult = await supabase
+        .from("families")
+        .insert(insertOperations.map((operation) => operation.payload))
+        .select("id,family_code");
+      if (insertResult.error) {
+        setNotice({ type: "error", message: `No se crearon familias. Supabase rechazo el lote: ${insertResult.error.message}` });
+        return;
+      }
+      const insertedFamilies = (insertResult.data ?? []) as Array<{ id: string; family_code: string | null }>;
+      const familyIdByCode = new Map(insertedFamilies.map((family) => [normalizeHeader(family.family_code ?? ""), family.id]));
+      const propertyRows = insertOperations
+        .map((operation) => {
+          const familyCode = operation.payload.family_code ? normalizeHeader(String(operation.payload.family_code)) : "";
+          const familyId = familyIdByCode.get(familyCode);
+          return familyId && operation.propertyPayload ? { ...operation.propertyPayload, family_id: familyId } : null;
+        })
+        .filter((property): property is Partial<Property> & { family_id: string } => Boolean(property));
+      if (propertyRows.length > 0) {
+        const propertyResult = await supabase.from("properties").insert(propertyRows);
+        if (propertyResult.error) {
+          setNotice({ type: "error", message: `Familias creadas, pero no se pudo guardar predios: ${propertyResult.error.message}` });
+          return;
+        }
+      }
+      created = insertOperations.length;
     }
     setNotice({ type: "info", message: `Actualizacion masiva finalizada. Actualizadas: ${updated}. Creadas: ${created}.` });
     await onChange();
