@@ -1328,6 +1328,89 @@ function resolveProfileMunicipalitiesFromExcel({
   return Array.from(new Set(ids));
 }
 
+function resolveFamilyMunicipalityForImport({
+  projectId,
+  municipalityName,
+  municipalities,
+  projectMunicipalities,
+  rowNumber,
+  errors
+}: {
+  projectId: string;
+  municipalityName: string;
+  municipalities: Municipality[];
+  projectMunicipalities: ProjectMunicipality[];
+  rowNumber: number;
+  errors: string[];
+}) {
+  const normalizedName = normalizeHeader(municipalityName);
+  const projectMunicipalityIds = new Set(
+    projectMunicipalities
+      .filter((item) => item.project_id === projectId)
+      .map((item) => item.municipality_id)
+  );
+  const matches = municipalities
+    .filter((municipality) => normalizeHeader(municipality.name) === normalizedName)
+    .filter((municipality) => projectMunicipalityIds.size === 0 || projectMunicipalityIds.has(municipality.id));
+
+  if (matches.length === 0) {
+    errors.push(
+      projectMunicipalityIds.size > 0
+        ? `Fila ${rowNumber}: municipio "${municipalityName}" no existe o no esta asociado al proyecto indicado.`
+        : `Fila ${rowNumber}: municipio "${municipalityName}" no existe.`
+    );
+    return undefined;
+  }
+  if (matches.length > 1) {
+    errors.push(`Fila ${rowNumber}: municipio "${municipalityName}" es ambiguo. Revise el territorio asociado al proyecto.`);
+    return undefined;
+  }
+  return matches[0];
+}
+
+function resolveFamilyVillageForImport({
+  projectId,
+  municipality,
+  villageName,
+  villages,
+  projectVillages,
+  rowNumber,
+  errors
+}: {
+  projectId: string;
+  municipality: Municipality | undefined;
+  villageName: string;
+  villages: Village[];
+  projectVillages: ProjectVillage[];
+  rowNumber: number;
+  errors: string[];
+}) {
+  if (!municipality) return undefined;
+  const normalizedName = normalizeHeader(villageName);
+  const projectVillageIds = new Set(
+    projectVillages
+      .filter((item) => item.project_id === projectId)
+      .map((item) => item.village_id)
+  );
+  const matches = villages
+    .filter((village) => village.municipality_id === municipality.id && normalizeHeader(village.name) === normalizedName)
+    .filter((village) => projectVillageIds.size === 0 || projectVillageIds.has(village.id));
+
+  if (matches.length === 0) {
+    errors.push(
+      projectVillageIds.size > 0
+        ? `Fila ${rowNumber}: vereda "${villageName}" no existe para "${municipality.name}" o no esta asociada al proyecto indicado.`
+        : `Fila ${rowNumber}: vereda "${villageName}" no existe para el municipio "${municipality.name}".`
+    );
+    return undefined;
+  }
+  if (matches.length > 1) {
+    errors.push(`Fila ${rowNumber}: vereda "${villageName}" es ambigua para el municipio "${municipality.name}".`);
+    return undefined;
+  }
+  return matches[0];
+}
+
 function ProjectsCrud({
   projects,
   canWrite,
@@ -2520,8 +2603,6 @@ function FamiliesCrud({
     }
     const headerByName = excelHeaderMap(sheet);
     const projectByName = new Map(projects.map((project) => [normalizeHeader(project.name), project.id]));
-    const municipalityByName = new Map(municipalities.map((municipality) => [normalizeHeader(municipality.name), municipality]));
-    const villagesByMunicipalityAndName = new Map(villages.map((village) => [`${village.municipality_id}-${normalizeHeader(village.name)}`, village]));
     const existingById = new Map(families.map((family) => [family.id, family]));
     const existingByProjectCode = new Map(families.filter((family) => !family.is_deleted).map((family) => [`${family.project_id}-${normalizeHeader(family.family_code)}`, family]));
     const existingByProjectDocument = new Map(families.filter((family) => !family.is_deleted && family.document_number).map((family) => [`${family.project_id}-${normalizeHeader(family.document_number ?? "")}`, family]));
@@ -2547,16 +2628,29 @@ function FamiliesCrud({
       const documentNumber = materialExcelValue(row, headerByName, ["documento", "cedula"]);
       const municipalityName = materialExcelValue(row, headerByName, ["municipio"]);
       const villageName = materialExcelValue(row, headerByName, ["vereda"]);
-      const municipality = municipalityName ? municipalityByName.get(normalizeHeader(municipalityName)) : undefined;
-      const village = villageName && municipality ? villagesByMunicipalityAndName.get(`${municipality.id}-${normalizeHeader(villageName)}`) : undefined;
+      const municipality = municipalityName ? resolveFamilyMunicipalityForImport({
+        projectId,
+        municipalityName,
+        municipalities,
+        projectMunicipalities,
+        rowNumber,
+        errors
+      }) : undefined;
+      const village = villageName ? resolveFamilyVillageForImport({
+        projectId,
+        municipality,
+        villageName,
+        villages,
+        projectVillages,
+        rowNumber,
+        errors
+      }) : undefined;
       const active = parseExcelBoolean(materialExcelValue(row, headerByName, ["activo", "estado"]) || "SI");
       const areaValue = materialExcelValue(row, headerByName, ["area_predio", "area predio"]);
       const totalArea = parseExcelNumber(areaValue || "0");
       if (id && !existingById.has(id)) errors.push(`Fila ${rowNumber}: el id de familia no existe.`);
       if (!projectId) errors.push(`Fila ${rowNumber}: proyecto es obligatorio o no existe.`);
       if (!representativeName) errors.push(`Fila ${rowNumber}: representante es obligatorio.`);
-      if (municipalityName && !municipality) errors.push(`Fila ${rowNumber}: municipio no existe.`);
-      if (villageName && !village) errors.push(`Fila ${rowNumber}: vereda no existe para el municipio indicado.`);
       if (active === null) errors.push(`Fila ${rowNumber}: activo debe ser SI o NO.`);
       if (totalArea === null) errors.push(`Fila ${rowNumber}: area_predio debe ser numerica.`);
       const duplicateCode = familyCode ? existingByProjectCode.get(`${projectId}-${normalizeHeader(familyCode)}`) : undefined;
