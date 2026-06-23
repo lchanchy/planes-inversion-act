@@ -2607,10 +2607,11 @@ function FamiliesCrud({
 
   async function importFamiliesExcel(file: File | null) {
     if (!canWrite || !file) return;
-    setNotice(null);
-    const ExcelJS = await import("exceljs");
-    const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(await file.arrayBuffer());
+    setNotice({ type: "info", message: "Procesando archivo, por favor espere..." });
+    try {
+      const ExcelJS = await import("exceljs");
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(await file.arrayBuffer());
     const sheet = workbook.getWorksheet("Familias") ?? workbook.worksheets[0];
     if (!sheet) {
       setNotice({ type: "error", message: "El archivo no contiene una hoja de familias." });
@@ -2766,6 +2767,10 @@ function FamiliesCrud({
     }
     setNotice({ type: "info", message: `Actualizacion masiva finalizada. Actualizadas: ${updated}. Creadas: ${created}.` });
     await onChange();
+    } catch (error: any) {
+      console.error(error);
+      setNotice({ type: "error", message: `Error inesperado procesando el archivo: ${error?.message || "Archivo invalido o bloqueado"}` });
+    }
   }
 
   return (
