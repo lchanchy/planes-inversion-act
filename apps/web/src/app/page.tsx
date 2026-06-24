@@ -4485,11 +4485,11 @@ function PlansAdmin({
       </div>
       <div className="panel grid">
         <div className="span-12">
-          <strong>Logo para exportacion</strong>
-          <p className="muted">El administrador puede cargar varios logos JPG/PNG por proyecto y definir posicion y tamano para PDF y Word.</p>
+          <strong>Logos para exportación</strong>
+          <p className="muted">Puedes configurar múltiples logos (ej. izquierdo y derecho). Sube un archivo para agregarlo a la lista de logos del proyecto. Puedes subir el primer logo, y luego repetir el paso para subir el segundo.</p>
         </div>
         <label className="span-4">
-          Proyecto del logo
+          Proyecto
           <select value={logoProjectId} onChange={(event) => setLogoProjectId(event.target.value)}>
             <option value="">Seleccione</option>
             {projects.map((project) => (
@@ -4498,8 +4498,9 @@ function PlansAdmin({
           </select>
         </label>
         <label className="span-4">
-          Logo JPG/PNG
+          Añadir un logo (JPG/PNG)
           <input disabled={!canManageLogos || !logoProjectId} type="file" accept="image/png,image/jpeg" onChange={handleLogoUpload} />
+          <div style={{ fontSize: "0.8em", marginTop: "4px", color: "var(--primary)" }}>Selecciona un archivo para agregarlo</div>
         </label>
         <label className="span-2">
           Ubicacion
@@ -7142,11 +7143,11 @@ function ProcurementDeliveriesActs({
           </div>
           <div className="panel grid compact-panel">
             <div className="span-12">
-              <strong>Logo para exportacion</strong>
-              <p className="muted">El administrador puede cargar varios logos JPG/PNG por proyecto y definir posicion y tamano para PDF y Word.</p>
+              <strong>Logos para exportación (Actas)</strong>
+              <p className="muted">Puedes configurar múltiples logos. Sube un archivo para agregarlo a la lista. Puedes subir el primer logo, y luego repetir el paso para subir el segundo.</p>
             </div>
             <label className="span-4">
-              Proyecto del logo
+              Proyecto
               <select value={actLogoProjectId} onChange={(event) => setActLogoProjectId(event.target.value)}>
                 <option value="">Seleccione</option>
                 {projects.map((project) => (
@@ -7155,8 +7156,9 @@ function ProcurementDeliveriesActs({
               </select>
             </label>
             <label className="span-4">
-              Logo JPG/PNG
+              Añadir un logo (JPG/PNG)
               <input disabled={!canGenerateActs || !actLogoProjectId} type="file" accept="image/png,image/jpeg" onChange={handleActLogoUpload} />
+              <div style={{ fontSize: "0.8em", marginTop: "4px", color: "var(--primary)" }}>Selecciona un archivo para agregarlo</div>
             </label>
             <label className="span-2">
               Ubicacion
