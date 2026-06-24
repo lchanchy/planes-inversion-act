@@ -627,6 +627,7 @@ function AdminApp({ session }: { session: Session }) {
               projectVillages={projectVillages}
               municipalities={municipalities}
               villages={villages}
+              departments={departments}
               canWrite={canWrite}
               onChange={loadAll}
             />
@@ -2370,6 +2371,7 @@ function FamiliesCrud({
   projectVillages,
   municipalities,
   villages,
+  departments,
   canWrite,
   onChange
 }: {
@@ -2380,6 +2382,7 @@ function FamiliesCrud({
   projectVillages: ProjectVillage[];
   municipalities: Municipality[];
   villages: Village[];
+  departments: Department[];
   canWrite: boolean;
   onChange: () => Promise<void>;
 }) {
@@ -2387,6 +2390,12 @@ function FamiliesCrud({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
   const [importProjectId, setImportProjectId] = useState("");
+  
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterDepartmentId, setFilterDepartmentId] = useState("");
+  const [filterMunicipalityId, setFilterMunicipalityId] = useState("");
+  const [filterVillageId, setFilterVillageId] = useState("");
+
   const allowedMunicipalityIds = projectMunicipalities
     .filter((item) => item.project_id === form.project_id)
     .map((item) => item.municipality_id);
@@ -2400,6 +2409,23 @@ function FamiliesCrud({
   const scopedVillages = villages.filter((village) => {
     if (form.municipality_id && village.municipality_id !== form.municipality_id) return false;
     if (form.project_id && allowedVillageIds.length > 0) return allowedVillageIds.includes(village.id);
+    return true;
+  });
+
+  const filteredFamilies = families.filter((family) => {
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      const matchesName = family.representative_name?.toLowerCase().includes(q) ?? false;
+      const matchesDoc = family.document_number?.toLowerCase().includes(q) ?? false;
+      const matchesCode = family.family_code?.toLowerCase().includes(q) ?? false;
+      if (!matchesName && !matchesDoc && !matchesCode) return false;
+    }
+    if (filterMunicipalityId && family.municipality_id !== filterMunicipalityId) return false;
+    if (filterVillageId && family.village_id !== filterVillageId) return false;
+    if (filterDepartmentId) {
+      const mun = municipalities.find(m => m.id === family.municipality_id);
+      if (mun?.department_id !== filterDepartmentId) return false;
+    }
     return true;
   });
 
@@ -2794,69 +2820,108 @@ function FamiliesCrud({
           />
         </label>
       </div>
-      <form className="panel grid" onSubmit={save}>
-        <SelectProject
-          projects={projects}
-          value={form.project_id}
-          onChange={(project_id) =>
-            setForm({ ...form, project_id, municipality_id: "", village_id: "" })
-          }
-        />
+      <details className="panel" open={Boolean(editingId)}>
+        <summary><strong>{editingId ? "Editar familia" : "Nueva familia"}</strong></summary>
+        <form className="grid mt-4" onSubmit={save}>
+          <SelectProject
+            projects={projects}
+            value={form.project_id}
+            onChange={(project_id) =>
+              setForm({ ...form, project_id, municipality_id: "", village_id: "" })
+            }
+          />
+          <TextInput
+            label="Codigo familiar (opcional)"
+            value={form.family_code}
+            onChange={(family_code) => setForm({ ...form, family_code })}
+          />
+          <TextInput
+            label="Representante"
+            value={form.representative_name}
+            onChange={(representative_name) => setForm({ ...form, representative_name })}
+            required
+          />
+          <TextInput
+            label="Documento"
+            value={form.document_number}
+            onChange={(document_number) => setForm({ ...form, document_number })}
+          />
+          <TextInput label="Edad" type="number" value={form.age} onChange={(age) => setForm({ ...form, age })} />
+          <TextInput label="Fecha de nacimiento" type="date" value={form.birth_date} onChange={(birth_date) => setForm({ ...form, birth_date })} />
+          <TextInput label="Telefono" value={form.phone} onChange={(phone) => setForm({ ...form, phone })} />
+          <label className="span-4">
+            Municipio
+            <select value={form.municipality_id} onChange={(event) => setForm({ ...form, municipality_id: event.target.value })}>
+              <option value="">Sin municipio</option>
+              {scopedMunicipalities.map((municipality) => (
+                <option key={municipality.id} value={municipality.id}>{municipality.name}</option>
+              ))}
+            </select>
+          </label>
+          <label className="span-4">
+            Vereda
+            <select value={form.village_id} onChange={(event) => setForm({ ...form, village_id: event.target.value })}>
+              <option value="">Sin vereda</option>
+              {scopedVillages.map((village) => (
+                <option key={village.id} value={village.id}>{village.name}</option>
+              ))}
+            </select>
+          </label>
+          <TextInput
+            className="span-12"
+            label="Observaciones"
+            value={form.observations}
+            onChange={(observations) => setForm({ ...form, observations })}
+          />
+          <div className="span-12 form-actions">
+            <button disabled={!canWrite}>{editingId ? "Actualizar" : "Crear"}</button>
+            {editingId ? (
+              <button className="secondary" type="button" onClick={() => { setEditingId(null); setForm(emptyFamily); }}>
+                Cancelar
+              </button>
+            ) : null}
+          </div>
+        </form>
+      </details>
+
+      <div className="panel grid">
+        <div className="span-12"><strong>Buscar y filtrar familias</strong></div>
         <TextInput
-          label="Codigo familiar (opcional)"
-          value={form.family_code}
-          onChange={(family_code) => setForm({ ...form, family_code })}
+          className="span-3"
+          label="Buscar por nombre, documento o codigo"
+          value={searchQuery}
+          onChange={setSearchQuery}
         />
-        <TextInput
-          label="Representante"
-          value={form.representative_name}
-          onChange={(representative_name) => setForm({ ...form, representative_name })}
-          required
-        />
-        <TextInput
-          label="Documento"
-          value={form.document_number}
-          onChange={(document_number) => setForm({ ...form, document_number })}
-        />
-        <TextInput label="Edad" type="number" value={form.age} onChange={(age) => setForm({ ...form, age })} />
-        <TextInput label="Fecha de nacimiento" type="date" value={form.birth_date} onChange={(birth_date) => setForm({ ...form, birth_date })} />
-        <TextInput label="Telefono" value={form.phone} onChange={(phone) => setForm({ ...form, phone })} />
-        <label className="span-4">
+        <label className="span-3">
+          Departamento
+          <select value={filterDepartmentId} onChange={(e) => { setFilterDepartmentId(e.target.value); setFilterMunicipalityId(""); setFilterVillageId(""); }}>
+            <option value="">Todos</option>
+            {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+        </label>
+        <label className="span-3">
           Municipio
-          <select value={form.municipality_id} onChange={(event) => setForm({ ...form, municipality_id: event.target.value })}>
-            <option value="">Sin municipio</option>
-            {scopedMunicipalities.map((municipality) => (
-              <option key={municipality.id} value={municipality.id}>{municipality.name}</option>
+          <select value={filterMunicipalityId} onChange={(e) => { setFilterMunicipalityId(e.target.value); setFilterVillageId(""); }}>
+            <option value="">Todos</option>
+            {municipalities.filter(m => !filterDepartmentId || m.department_id === filterDepartmentId).map((m) => (
+              <option key={m.id} value={m.id}>{m.name}</option>
             ))}
           </select>
         </label>
-        <label className="span-4">
+        <label className="span-3">
           Vereda
-          <select value={form.village_id} onChange={(event) => setForm({ ...form, village_id: event.target.value })}>
-            <option value="">Sin vereda</option>
-            {scopedVillages.map((village) => (
-              <option key={village.id} value={village.id}>{village.name}</option>
+          <select value={filterVillageId} onChange={(e) => setFilterVillageId(e.target.value)}>
+            <option value="">Todas</option>
+            {villages.filter(v => !filterMunicipalityId || v.municipality_id === filterMunicipalityId).map((v) => (
+              <option key={v.id} value={v.id}>{v.name}</option>
             ))}
           </select>
         </label>
-        <TextInput
-          className="span-12"
-          label="Observaciones"
-          value={form.observations}
-          onChange={(observations) => setForm({ ...form, observations })}
-        />
-        <div className="span-12 form-actions">
-          <button disabled={!canWrite}>{editingId ? "Actualizar" : "Crear"}</button>
-          {editingId ? (
-            <button className="secondary" type="button" onClick={() => { setEditingId(null); setForm(emptyFamily); }}>
-              Cancelar
-            </button>
-          ) : null}
-        </div>
-      </form>
+      </div>
+
       <DataTable
         headers={["Codigo", "Representante", "Documento", "Edad", "Estado", "Acciones"]}
-        rows={families.map((family) => [
+        rows={filteredFamilies.map((family) => [
           family.family_code,
           family.representative_name,
           family.document_number ?? "",
