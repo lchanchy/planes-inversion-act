@@ -5633,10 +5633,6 @@ function ProcurementDeliveriesActs({
   const [actFinalText, setActFinalText] = useState(DefaultDeliveryActFinalText);
   const [actTechnicianName, setActTechnicianName] = useState(currentProfile?.full_name ?? "");
   const [actTechnicianDocument, setActTechnicianDocument] = useState(currentProfile?.document_number ?? "");
-  const [actProjectLogos, setActProjectLogos] = useState<Record<string, ProjectLogoConfig[]>>({});
-  const [actLogoProjectId, setActLogoProjectId] = useState(projects[0]?.id ?? "");
-  const [actLogoPosition, setActLogoPosition] = useState<ProjectLogoPosition>("right");
-  const [actLogoSize, setActLogoSize] = useState("140");
   const [selectedIndicatorKey, setSelectedIndicatorKey] = useState("");
   const [implementedQuantity, setImplementedQuantity] = useState("");
   const [indicatorStatus, setIndicatorStatus] = useState<ImplementationProgressStatus>("pending");
@@ -5805,14 +5801,6 @@ function ProcurementDeliveriesActs({
     deliveryDate: actDeliveryDate,
     actNumberPrefix
   }), [filteredNeeds, materialDeliveries, materialDeliveryItems, projects, families, municipalities, villages, plans, filters, actDeliveryDate, actNumberPrefix]);
-
-  useEffect(() => {
-    setActProjectLogos(loadProjectLogos());
-  }, []);
-
-  useEffect(() => {
-    if (filters.project_id) setActLogoProjectId(filters.project_id);
-  }, [filters.project_id]);
 
   useEffect(() => {
     if (!selectedIndicator) {
@@ -6619,7 +6607,7 @@ function ProcurementDeliveriesActs({
         activities,
         materialDeliveryItems,
         technician: currentProfile,
-        projectLogos: actProjectLogosForExport(actProjectLogos)
+        projectLogos: loadProjectLogos()
       });
       context.introText = actIntroText;
       context.finalText = actFinalText;
@@ -6638,56 +6626,6 @@ function ProcurementDeliveriesActs({
     } finally {
       setSaving(false);
     }
-  }
-
-  async function handleActLogoUpload(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    const projectId = actLogoProjectId;
-    if (!file || !projectId) return;
-    if (!["image/jpeg", "image/png"].includes(file.type)) {
-      setNotice({ type: "error", message: "El logo debe ser JPG o PNG." });
-      return;
-    }
-    if (file.size > 1024 * 1024) {
-      setNotice({ type: "error", message: "El logo no debe superar 1 MB." });
-      return;
-    }
-    const dataUrl = await fileToDataUrl(file);
-    const nextLogos = {
-      ...actProjectLogos,
-      [projectId]: [
-        ...(actProjectLogos[projectId] ?? []),
-        { id: crypto.randomUUID(), dataUrl, position: actLogoPosition, name: file.name, size: clampLogoSize(Number(actLogoSize)) }
-      ]
-    };
-    setActProjectLogos(nextLogos);
-    saveProjectLogos(nextLogos);
-    setNotice({ type: "info", message: "Logo actualizado para actas y exportaciones del proyecto." });
-    event.target.value = "";
-  }
-
-  function updateActLogo(logoId: string, updates: Partial<ProjectLogoConfig>) {
-    const projectId = actLogoProjectId;
-    if (!projectId) return;
-    const nextLogos = {
-      ...actProjectLogos,
-      [projectId]: (actProjectLogos[projectId] ?? []).map((logo) =>
-        logo.id === logoId ? { ...logo, ...updates } : logo
-      )
-    };
-    setActProjectLogos(nextLogos);
-    saveProjectLogos(nextLogos);
-  }
-
-  function removeActLogo(logoId: string) {
-    const projectId = actLogoProjectId;
-    if (!projectId) return;
-    const nextLogos = { ...actProjectLogos };
-    nextLogos[projectId] = (nextLogos[projectId] ?? []).filter((logo) => logo.id !== logoId);
-    if (nextLogos[projectId].length === 0) delete nextLogos[projectId];
-    setActProjectLogos(nextLogos);
-    saveProjectLogos(nextLogos);
-    setNotice({ type: "info", message: "Logo retirado." });
   }
 
   async function exportFilteredDeliveryActs(format: "pdf" | "word" | "excel") {
@@ -6710,7 +6648,7 @@ function ProcurementDeliveriesActs({
           record,
           activities,
           technician: currentProfile,
-          projectLogos: actProjectLogosForExport(actProjectLogos),
+          projectLogos: loadProjectLogos(),
           introText: actIntroText,
           finalText: actFinalText,
           technicianName: actTechnicianName,
@@ -6732,7 +6670,7 @@ function ProcurementDeliveriesActs({
     }
   }
 
-  const selectedActProjectLogos = actLogoProjectId ? actLogosForProject(actProjectLogos, actLogoProjectId) : [];
+
 
   return (
     <section className="section">
@@ -7138,87 +7076,6 @@ function ProcurementDeliveriesActs({
               Texto final del acta
               <textarea value={actFinalText} onChange={(event) => setActFinalText(event.target.value)} rows={2} />
             </label>
-          </div>
-          <div className="panel grid compact-panel">
-            <div className="span-12">
-              <strong>Logos para exportación (Actas)</strong>
-              <p className="muted">Puedes configurar múltiples logos. Sube un archivo para agregarlo a la lista. Puedes subir el primer logo, y luego repetir el paso para subir el segundo.</p>
-            </div>
-            <label className="span-4">
-              Proyecto
-              <select value={actLogoProjectId} onChange={(event) => setActLogoProjectId(event.target.value)}>
-                <option value="">Seleccione</option>
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>{project.name}</option>
-                ))}
-              </select>
-            </label>
-            <label className="span-4">
-              Añadir un logo (JPG/PNG)
-              <input disabled={!canGenerateActs || !actLogoProjectId} type="file" accept="image/png,image/jpeg" onChange={handleActLogoUpload} />
-              <div style={{ fontSize: "0.8em", marginTop: "4px", color: "var(--primary)" }}>Selecciona un archivo para agregarlo</div>
-            </label>
-            <label className="span-2">
-              Ubicacion
-              <select value={actLogoPosition} onChange={(event) => setActLogoPosition(event.target.value as ProjectLogoPosition)}>
-                <option value="left">Superior izquierda</option>
-                <option value="center">Superior centro</option>
-                <option value="right">Superior derecha</option>
-                <option value="bottom-left">Inferior izquierda</option>
-                <option value="bottom-center">Inferior centro</option>
-                <option value="bottom-right">Inferior derecha</option>
-              </select>
-            </label>
-            <label className="span-2">
-              Ancho doc.
-              <input
-                disabled={!canGenerateActs}
-                min="40"
-                max="360"
-                type="number"
-                value={actLogoSize}
-                onChange={(event) => setActLogoSize(event.target.value)}
-              />
-            </label>
-            {actLogoProjectId && selectedActProjectLogos.length > 0 ? (
-              <div className="span-12 logo-list">
-                {selectedActProjectLogos.map((logo) => (
-                  <div className="logo-item" key={logo.id}>
-                    <img src={logo.dataUrl} alt={logo.name} style={{ width: `${logo.size}px` }} />
-                    <span className="logo-name">{logo.name}</span>
-                    <label>
-                      Ubicacion
-                      <select
-                        disabled={!canGenerateActs}
-                        value={logo.position}
-                        onChange={(event) => updateActLogo(logo.id, { position: event.target.value as ProjectLogoPosition })}
-                      >
-                        <option value="left">Superior izquierda</option>
-                        <option value="center">Superior centro</option>
-                        <option value="right">Superior derecha</option>
-                        <option value="bottom-left">Inferior izquierda</option>
-                        <option value="bottom-center">Inferior centro</option>
-                        <option value="bottom-right">Inferior derecha</option>
-                      </select>
-                    </label>
-                    <label>
-                      Ancho doc.
-                      <input
-                        disabled={!canGenerateActs}
-                        min="40"
-                        max="360"
-                        type="number"
-                        value={logo.size}
-                        onChange={(event) => updateActLogo(logo.id, { size: clampLogoSize(Number(event.target.value)) })}
-                      />
-                    </label>
-                    <button className="secondary" type="button" disabled={!canGenerateActs} onClick={() => removeActLogo(logo.id)}>
-                      Quitar
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ) : null}
           </div>
           <DataTable
             headers={["Familia", "Plan operativo", "Municipio", "Vereda", "Entrega No.", "Fecha", "Fuente", "Materiales"]}
