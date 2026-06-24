@@ -6653,13 +6653,11 @@ function ProcurementDeliveriesActs({
       return;
     }
     const dataUrl = await fileToDataUrl(file);
-    const currentProjectLogos = actProjectLogos[projectId] ?? [];
-    const existing = currentProjectLogos.find((logo) => logo.position === actLogoPosition);
     const nextLogos = {
       ...actProjectLogos,
       [projectId]: [
-        ...currentProjectLogos.filter((logo) => logo.position !== actLogoPosition),
-        { id: existing?.id ?? crypto.randomUUID(), dataUrl, position: actLogoPosition, name: file.name, size: clampLogoSize(Number(actLogoSize)) }
+        ...(actProjectLogos[projectId] ?? []),
+        { id: crypto.randomUUID(), dataUrl, position: actLogoPosition, name: file.name, size: clampLogoSize(Number(actLogoSize)) }
       ]
     };
     setActProjectLogos(nextLogos);
