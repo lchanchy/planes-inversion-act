@@ -2949,6 +2949,15 @@ function ActivitiesCrud({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
   const [importProjectId, setImportProjectId] = useState("");
+  
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterStrategy, setFilterStrategy] = useState("");
+
+  const filteredActivities = activities.filter((activity) => {
+    if (searchQuery && !activity.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+    if (filterStrategy && activity.restoration_strategy !== filterStrategy) return false;
+    return true;
+  });
 
   function edit(activity: Activity) {
     setEditingId(activity.id);
@@ -3306,7 +3315,9 @@ function ActivitiesCrud({
           />
         </label>
       </div>
-      <form className="panel grid" onSubmit={save}>
+      <details className="panel" open={Boolean(editingId)}>
+        <summary><strong>{editingId ? "Editar actividad" : "Nueva actividad"}</strong></summary>
+        <form className="grid mt-4" onSubmit={save}>
         <SelectProject projects={projects} value={form.project_id} onChange={(project_id) => setForm({ ...form, project_id })} />
         <TextInput label="Nombre" value={form.name} onChange={(name) => setForm({ ...form, name })} required />
         <label className="span-4">
@@ -3385,10 +3396,30 @@ function ActivitiesCrud({
             </button>
           ) : null}
         </div>
-      </form>
+        </form>
+      </details>
+
+      <div className="panel grid">
+        <div className="span-12"><strong>Buscar y filtrar actividades</strong></div>
+        <TextInput
+          className="span-6"
+          label="Buscar por nombre"
+          value={searchQuery}
+          onChange={setSearchQuery}
+        />
+        <label className="span-6">
+          Estrategia
+          <select value={filterStrategy} onChange={(e) => setFilterStrategy(e.target.value)}>
+            <option value="">Todas</option>
+            {RESTORATION_STRATEGIES.map((strategy) => (
+              <option key={strategy.value} value={strategy.value}>{strategy.label}</option>
+            ))}
+          </select>
+        </label>
+      </div>
       <DataTable
         headers={["Nombre", "Estrategia", "Unidad", "Activo", "Acciones"]}
-        rows={activities.map((activity) => [
+        rows={filteredActivities.map((activity) => [
           activity.name,
           restorationStrategyLabel(activity.restoration_strategy),
           activity.unit,
@@ -3415,6 +3446,20 @@ function MaterialsCrud({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
   const [importProjectId, setImportProjectId] = useState("");
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterEtecBlock, setFilterEtecBlock] = useState("");
+
+  const filteredMaterials = materials.filter((material) => {
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      const matchesName = material.name.toLowerCase().includes(q);
+      const matchesCode = material.internal_code?.toLowerCase().includes(q) ?? false;
+      if (!matchesName && !matchesCode) return false;
+    }
+    if (filterEtecBlock && material.etec_block !== filterEtecBlock) return false;
+    return true;
+  });
 
   function edit(material: Material) {
     setEditingId(material.id);
@@ -3729,7 +3774,9 @@ function MaterialsCrud({
           />
         </label>
       </div>
-      <form className="panel grid" onSubmit={save}>
+      <details className="panel" open={Boolean(editingId)}>
+        <summary><strong>{editingId ? "Editar material" : "Nuevo material"}</strong></summary>
+        <form className="grid mt-4" onSubmit={save}>
         <SelectProject projects={projects} value={form.project_id} onChange={(project_id) => setForm({ ...form, project_id })} />
         <TextInput label="Codigo interno" value={form.internal_code} onChange={(internal_code) => setForm({ ...form, internal_code })} />
         <TextInput label="Nombre" value={form.name} onChange={(name) => setForm({ ...form, name })} required />
@@ -3782,10 +3829,29 @@ function MaterialsCrud({
             </button>
           ) : null}
         </div>
-      </form>
+        </form>
+      </details>
+
+      <div className="panel grid">
+        <div className="span-12"><strong>Buscar y filtrar materiales</strong></div>
+        <TextInput
+          className="span-6"
+          label="Buscar por nombre o codigo"
+          value={searchQuery}
+          onChange={setSearchQuery}
+        />
+        <label className="span-6">
+          Bloque ETEC
+          <select value={filterEtecBlock} onChange={(e) => setFilterEtecBlock(e.target.value)}>
+            <option value="">Todos</option>
+            {ETEC_DEFAULT_BLOCKS.map((block) => <option key={block} value={block}>{block}</option>)}
+          </select>
+        </label>
+      </div>
+
       <DataTable
         headers={["Nombre", "Unidad", "Grupo vegetal", "Bloque ETEC", "Caracteristicas", "Precio", "Acciones"]}
-        rows={materials.map((material) => [
+        rows={filteredMaterials.map((material) => [
           material.name,
           material.unit,
           vegetalIndicatorGroupLabel(material.vegetal_indicator_group),
