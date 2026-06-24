@@ -11614,12 +11614,7 @@ function logoAlignment(position: ProjectLogoPosition): "left" | "center" | "righ
 }
 
 function actProjectLogosForExport(logos: Record<string, ProjectLogoConfig[]>): Record<string, ProjectLogoConfig[]> {
-  return Object.fromEntries(
-    Object.entries(logos).map(([projectId, projectLogos]) => [
-      projectId,
-      projectLogos.filter((logo) => logo.position === "right" || logo.position === "bottom-center")
-    ])
-  );
+  return logos;
 }
 
 function actLogosForProject(logos: Record<string, ProjectLogoConfig[]>, projectId: string) {
