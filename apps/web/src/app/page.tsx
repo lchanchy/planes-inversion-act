@@ -3450,6 +3450,9 @@ function MaterialsCrud({
   const [searchQuery, setSearchQuery] = useState("");
   const [filterEtecBlock, setFilterEtecBlock] = useState("");
 
+  const [pageSize, setPageSize] = useState(50);
+  const [page, setPage] = useState(1);
+
   const filteredMaterials = materials.filter((material) => {
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
@@ -3460,6 +3463,13 @@ function MaterialsCrud({
     if (filterEtecBlock && material.etec_block !== filterEtecBlock) return false;
     return true;
   });
+
+  const totalItems = filteredMaterials.length;
+  const totalPages = Math.ceil(totalItems / pageSize) || 1;
+  const normalizedPage = Math.max(1, Math.min(page, totalPages));
+  const pageStart = (normalizedPage - 1) * pageSize;
+  const pageEnd = Math.min(pageStart + pageSize, totalItems);
+  const visibleMaterials = filteredMaterials.slice(pageStart, pageEnd);
 
   function edit(material: Material) {
     setEditingId(material.id);
@@ -3849,9 +3859,27 @@ function MaterialsCrud({
         </label>
       </div>
 
+      <div className="panel grid">
+        <div className="span-12 tracking-pagination">
+          <label>
+            Materiales por pagina
+            <select value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }}>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+              <option value={200}>200</option>
+            </select>
+          </label>
+          <span>
+            Mostrando {totalItems > 0 ? pageStart + 1 : 0}-{pageEnd} de {totalItems} materiales
+          </span>
+          <button className="secondary" disabled={normalizedPage <= 1} type="button" onClick={() => setPage((p) => Math.max(1, p - 1))}>Anterior</button>
+          <button className="secondary" disabled={normalizedPage >= totalPages} type="button" onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>Siguiente</button>
+        </div>
+      </div>
+
       <DataTable
         headers={["Nombre", "Unidad", "Grupo vegetal", "Bloque ETEC", "Caracteristicas", "Precio", "Acciones"]}
-        rows={filteredMaterials.map((material) => [
+        rows={visibleMaterials.map((material) => [
           material.name,
           material.unit,
           vegetalIndicatorGroupLabel(material.vegetal_indicator_group),
