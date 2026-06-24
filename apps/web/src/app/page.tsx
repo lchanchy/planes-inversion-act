@@ -7163,8 +7163,12 @@ function ProcurementDeliveriesActs({
             <label className="span-2">
               Ubicacion
               <select value={actLogoPosition} onChange={(event) => setActLogoPosition(event.target.value as ProjectLogoPosition)}>
+                <option value="left">Superior izquierda</option>
+                <option value="center">Superior centro</option>
                 <option value="right">Superior derecha</option>
+                <option value="bottom-left">Inferior izquierda</option>
                 <option value="bottom-center">Inferior centro</option>
+                <option value="bottom-right">Inferior derecha</option>
               </select>
             </label>
             <label className="span-2">
@@ -7191,8 +7195,12 @@ function ProcurementDeliveriesActs({
                         value={logo.position}
                         onChange={(event) => updateActLogo(logo.id, { position: event.target.value as ProjectLogoPosition })}
                       >
+                        <option value="left">Superior izquierda</option>
+                        <option value="center">Superior centro</option>
                         <option value="right">Superior derecha</option>
+                        <option value="bottom-left">Inferior izquierda</option>
                         <option value="bottom-center">Inferior centro</option>
+                        <option value="bottom-right">Inferior derecha</option>
                       </select>
                     </label>
                     <label>
@@ -7212,9 +7220,6 @@ function ProcurementDeliveriesActs({
                   </div>
                 ))}
               </div>
-            ) : null}
-            {actLogoProjectId && selectedActProjectLogos.length < 2 ? (
-              <div className="span-12 alert info">Configure el logo superior derecho y el logo inferior centro para que el acta quede completa.</div>
             ) : null}
           </div>
           <DataTable
