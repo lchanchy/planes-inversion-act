@@ -121,6 +121,8 @@ table {
 }
 
 .table-panel {
+  max-height: 65vh;
+  overflow-y: auto;
   overflow-x: auto;
 }
 
@@ -242,6 +244,10 @@ th {
   background: var(--panel-strong);
   color: #344139;
   font-size: 12px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  box-shadow: 0 1px 0 var(--line);
 }
 
 .login-page {
