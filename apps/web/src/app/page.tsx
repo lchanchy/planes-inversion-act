@@ -233,6 +233,18 @@ export default function Home() {
   return <AdminApp session={session} />;
 }
 
+function useUnsavedChangesWarning(hasUnsaved: boolean) {
+  useEffect(() => {
+    if (!hasUnsaved) return;
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [hasUnsaved]);
+}
+
 function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -5547,6 +5559,7 @@ type TrackingActivityCell = {
   operational_plan_id: string;
   plan_activity_id: string;
   activity_id: string;
+  baselineQuantity: string | null;
   targetQuantity: number;
   unit: string;
   values: Partial<Record<TrackingProgressType, Partial<Record<number, QuarterlyProgress>>>>;
@@ -5608,6 +5621,7 @@ type MaintenanceActivityCell = {
   operational_plan_id: string;
   plan_activity_id: string;
   activity_id: string;
+  baselineQuantity: string | null;
   targetQuantity: number;
   unit: string;
   progress: Record<string, MaintenanceProgress | undefined>;
@@ -5767,6 +5781,7 @@ function ProcurementDeliveriesActs({
   const [trackingYear, setTrackingYear] = useState(new Date().getFullYear());
   const [visibleTrackingQuarters, setVisibleTrackingQuarters] = useState<number[]>([1, 2, 3, 4]);
   const [trackingDrafts, setTrackingDrafts] = useState<Record<string, string>>({});
+  useUnsavedChangesWarning(Object.keys(trackingDrafts).length > 0);
   const [trackingPage, setTrackingPage] = useState(1);
   const [trackingPageSize, setTrackingPageSize] = useState(50);
   const [maintenanceYear, setMaintenanceYear] = useState(new Date().getFullYear());
@@ -6485,6 +6500,31 @@ function ProcurementDeliveriesActs({
     }
   }
 
+  async function saveTrackingBaseline(planActivityId: string, rawValue: string) {
+    setNotice(null);
+    if (!canEditImplementation) {
+      setNotice({ type: "error", message: "No tiene permisos para editar la linea base." });
+      return;
+    }
+    const value = rawValue.trim() === "" ? null : Number(rawValue);
+    if (value !== null && (!Number.isFinite(value) || value < 0)) {
+      setNotice({ type: "error", message: "La linea base debe ser un valor numerico mayor o igual a cero." });
+      throw new Error("Valor de linea base no valido.");
+    }
+    setSaving(true);
+    try {
+      const result = await supabase.from("plan_activities").update({ baseline: value !== null ? String(value) : null }).eq("id", planActivityId);
+      if (result.error) throw result.error;
+      setNotice({ type: "info", message: "Linea base actualizada." });
+      await onChange();
+    } catch (error) {
+      setNotice({ type: "error", message: getErrorMessage(error) });
+      throw error;
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function saveTrackingMatrix() {
     setNotice(null);
     if (phase5Blocked) {
@@ -7118,6 +7158,7 @@ function ProcurementDeliveriesActs({
             canEdit={canEditImplementation}
             onChange={updateTrackingDraft}
             onHectaresChange={saveTrackingHectares}
+            onBaselineChange={saveTrackingBaseline}
           />
           <div className="alert info">
             La matriz toma metas desde planes operativos aprobados. Los avances, entregados, sembrados y cumplimiento se guardan por familia, actividad, trimestre y año.
@@ -7168,6 +7209,7 @@ function ProcurementDeliveriesActs({
             canEdit={canEditImplementation && !saving}
             onSave={saveMaintenanceCell}
             onSaveOrganic={saveMaintenanceOrganicCell}
+            onBaselineChange={saveTrackingBaseline}
           />
           <div className="alert info">
             La matriz toma actividades desde planes operativos aprobados. Las fechas y avances de abonos se guardan por familia, actividad y aÃ±o.
@@ -7309,18 +7351,36 @@ function TrackingMatrixTable({
   drafts,
   canEdit,
   onChange,
-  onHectaresChange
+  onHectaresChange,
+  onBaselineChange
 }: {
   matrix: TrackingMatrix;
   drafts: Record<string, string>;
   canEdit: boolean;
   onChange: (key: string, value: string) => void;
   onHectaresChange: (row: TrackingFamilyRow, value: string) => Promise<void>;
+  onBaselineChange?: (planActivityId: string, value: string) => Promise<void>;
 }) {
   const baseHeaders = ["Codigo Predio", "Familia", "Cedula", "Edad Años", "Municipio", "Vereda", "Hectareas del predio"];
   const agreementColSpan = 2;
   if (matrix.rows.length === 0) {
     return <div className="panel muted">No hay planes aprobados con actividades para los filtros seleccionados.</div>;
+  }
+
+  async function confirmBaselineChange(event: React.FocusEvent<HTMLInputElement>, planActivityId: string, activityName: string) {
+    const previous = event.currentTarget.defaultValue;
+    const next = event.currentTarget.value;
+    if (next === previous) return;
+    if (!confirmManualChange(`Va a cambiar la linea base para "${activityName}" de "${previous || "N/A"}" a "${next || "0"}". ¿Desea aplicar este cambio?`)) {
+      event.currentTarget.value = previous;
+      return;
+    }
+    try {
+      if (onBaselineChange) await onBaselineChange(planActivityId, next);
+      event.currentTarget.defaultValue = next;
+    } catch {
+      event.currentTarget.value = previous;
+    }
   }
 
   function confirmTrackingCellChange(
@@ -7496,7 +7556,23 @@ function TrackingMatrixTable({
                   ));
                 }
                 const cells = [
-                  <td className={trackingGroupCellClass("tracking-col-meta", visualGroupIndex, true)} key={`${row.key}-${group.key}-meta`}>{formatNumber(cell.targetQuantity)}</td>
+                  <td className={trackingGroupCellClass("tracking-col-meta", visualGroupIndex, true)} key={`${row.key}-${group.key}-meta`}>
+                    <div className="flex gap-1 items-center" style={{ minWidth: "90px" }}>
+                      <input
+                        className="tracking-input"
+                        style={{ width: "60px", textAlign: "right" }}
+                        disabled={!canEdit}
+                        min="0"
+                        defaultValue={cell.baselineQuantity ?? ""}
+                        onBlur={(event) => void confirmBaselineChange(event, cell.plan_activity_id, group.activityName)}
+                        step="0.01"
+                        type="number"
+                        placeholder="N/A"
+                        title="Linea Base"
+                      />
+                      <span className="muted" title="Meta">/ {formatNumber(cell.targetQuantity)}</span>
+                    </div>
+                  </td>
                 ];
                 for (const type of group.progressTypes) {
                   for (const quarter of matrix.visibleQuarters) {
@@ -7574,7 +7650,8 @@ function MaintenanceMatrixTable({
   matrix,
   canEdit,
   onSave,
-  onSaveOrganic
+  onSaveOrganic,
+  onBaselineChange
 }: {
   matrix: MaintenanceMatrix;
   canEdit: boolean;
@@ -7593,10 +7670,27 @@ function MaintenanceMatrixTable({
     quarter: number;
     value: string;
   }) => Promise<void>;
+  onBaselineChange?: (planActivityId: string, value: string) => Promise<void>;
 }) {
   const baseHeaders = ["Codigo Predio", "Familia", "Cedula", "Edad AÃ±os", "Municipio", "Vereda", "Hectareas del predio"];
   if (matrix.rows.length === 0) {
     return <div className="panel muted">No hay planes aprobados con actividades de mantenimiento para los filtros seleccionados.</div>;
+  }
+
+  async function confirmBaselineChange(event: React.FocusEvent<HTMLInputElement>, planActivityId: string, activityName: string) {
+    const previous = event.currentTarget.defaultValue;
+    const next = event.currentTarget.value;
+    if (next === previous) return;
+    if (!confirmManualChange(`Va a cambiar la linea base para "${activityName}" de "${previous || "N/A"}" a "${next || "0"}". ¿Desea aplicar este cambio?`)) {
+      event.currentTarget.value = previous;
+      return;
+    }
+    try {
+      if (onBaselineChange) await onBaselineChange(planActivityId, next);
+      event.currentTarget.defaultValue = next;
+    } catch {
+      event.currentTarget.value = previous;
+    }
   }
 
   function groupTone(index: number) {
@@ -7690,7 +7784,23 @@ function MaintenanceMatrixTable({
                   ];
                 }
                 const cells = [
-                  <td className={groupCellClass("tracking-col-meta", groupIndex, true)} key={`${row.key}-${group.key}-meta`}>{formatNumber(cell.targetQuantity)}</td>
+                  <td className={groupCellClass("tracking-col-meta", groupIndex, true)} key={`${row.key}-${group.key}-meta`}>
+                    <div className="flex gap-1 items-center" style={{ minWidth: "90px" }}>
+                      <input
+                        className="tracking-input"
+                        style={{ width: "60px", textAlign: "right" }}
+                        disabled={!canEdit}
+                        min="0"
+                        defaultValue={cell.baselineQuantity ?? ""}
+                        onBlur={(event) => void confirmBaselineChange(event, cell.plan_activity_id, group.activityName)}
+                        step="0.01"
+                        type="number"
+                        placeholder="N/A"
+                        title="Linea Base"
+                      />
+                      <span className="muted" title="Meta">/ {formatNumber(cell.targetQuantity)}</span>
+                    </div>
+                  </td>
                 ];
                 for (const task of group.tasks) {
                   const current = cell.progress[maintenanceProgressKey(task.type, task.number, null)];
@@ -8002,6 +8112,7 @@ function buildTrackingMatrix(data: {
       operational_plan_id: item.plan.id,
       plan_activity_id: item.planActivity.id,
       activity_id: item.activity.id,
+      baselineQuantity: item.planActivity.baseline !== null ? String(item.planActivity.baseline) : null,
       targetQuantity: Number(item.planActivity.target ?? 0),
       unit: item.activity.unit || item.planActivity.unit,
       values
@@ -8068,7 +8179,7 @@ function comparePlanRecency(left: OperationalPlan, right: OperationalPlan) {
 
 function trackingGroupSubheaders(group: TrackingActivityGroup) {
   return [
-    "Meta",
+    "L. Base / Meta",
     ...group.progressTypes.flatMap((type) => [1, 2, 3, 4].map((quarter) => `${trackingProgressTypeLabel(type)} Q${quarter}`)),
     "Avance acumulado"
   ];
@@ -8076,7 +8187,7 @@ function trackingGroupSubheaders(group: TrackingActivityGroup) {
 
 function trackingGroupVisibleSubheaders(group: TrackingActivityGroup, quarters: number[], year: number) {
   return [
-    "Meta",
+    "L. Base / Meta",
     ...group.progressTypes.flatMap((type) => quarters.map((quarter) => `${trackingProgressTypeLabel(type)} Q${quarter}_${year}`)),
     "Avance acumulado"
   ];
@@ -8084,7 +8195,7 @@ function trackingGroupVisibleSubheaders(group: TrackingActivityGroup, quarters: 
 
 function trackingVegetalVisibleSubheaders(quarters: number[], year: number) {
   return [
-    "Meta",
+    "L. Base / Meta",
     ...quarters.map((quarter) => `Entrega Q${quarter}_${year}`),
     "Acumulado entrega",
     ...quarters.map((quarter) => `Siembra Q${quarter}_${year}`),
@@ -8098,7 +8209,7 @@ function trackingGroupHeaderLabel(group: TrackingActivityGroup) {
 }
 
 function trackingHeaderClass(header: string) {
-  if (header === "Meta") return "tracking-col-meta";
+  if (header === "L. Base / Meta") return "tracking-col-meta";
   if (header === "Avance acumulado" || header.startsWith("Acumulado")) return "tracking-col-accumulated";
   if (header.includes("%")) return "tracking-col-percent";
   return "tracking-col-progress";
@@ -8381,6 +8492,7 @@ function buildMaintenanceMatrix(data: {
       operational_plan_id: item.plan.id,
       plan_activity_id: item.planActivity.id,
       activity_id: item.activity.id,
+      baselineQuantity: item.planActivity.baseline !== null ? String(item.planActivity.baseline) : null,
       targetQuantity: Number(item.planActivity.target ?? 0),
       unit: item.activity.unit || item.planActivity.unit,
       progress
@@ -8436,7 +8548,7 @@ function maintenanceGroupHeaderLabel(group: MaintenanceActivityGroup) {
 
 function maintenanceGroupVisibleSubheaders(group: MaintenanceActivityGroup, quarters: number[], year: number) {
   return [
-    "Meta",
+    "L. Base / Meta",
     ...group.tasks.map((task) => task.label),
     "Estado ciclo"
   ];
@@ -8458,7 +8570,7 @@ function maintenanceOrganicColSpan(quarters: number[]) {
 }
 
 function maintenanceHeaderClass(header: string) {
-  if (header === "Meta") return "tracking-col-meta";
+  if (header === "L. Base / Meta") return "tracking-col-meta";
   if (header === "Estado ciclo") return "maintenance-col-cycle";
   if (header.startsWith("Acumulado")) return "tracking-col-accumulated";
   if (header.includes("Abono")) return "tracking-col-progress";
