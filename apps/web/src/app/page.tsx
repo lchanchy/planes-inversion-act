@@ -236,16 +236,45 @@ export default function Home() {
 function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [rememberMe, setRememberMe] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
   const [loading, setLoading] = useState(false);
+  const [isResetMode, setIsResetMode] = useState(false);
+
+  useEffect(() => {
+    const savedEmail = localStorage.getItem("rememberedEmail");
+    if (savedEmail) {
+      setEmail(savedEmail);
+      setRememberMe(true);
+    }
+  }, []);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     setLoading(true);
     setNotice(null);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) {
-      setNotice({ type: "error", message: error.message });
+
+    if (isResetMode) {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: window.location.origin,
+      });
+      if (error) {
+        setNotice({ type: "error", message: error.message });
+      } else {
+        setNotice({ type: "info", message: "Correo de recuperacion enviado. Revisa tu bandeja de entrada." });
+        setIsResetMode(false);
+      }
+    } else {
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) {
+        setNotice({ type: "error", message: error.message });
+      } else {
+        if (rememberMe) {
+          localStorage.setItem("rememberedEmail", email);
+        } else {
+          localStorage.removeItem("rememberedEmail");
+        }
+      }
     }
     setLoading(false);
   }
@@ -261,16 +290,34 @@ function Login() {
             Correo
             <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" required />
           </label>
-          <label>
-            Contrasena
-            <input
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              type="password"
-              required
-            />
-          </label>
-          <button disabled={loading}>{loading ? "Ingresando..." : "Ingresar"}</button>
+          {!isResetMode && (
+            <label>
+              Contrasena
+              <input
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                type="password"
+                required
+              />
+            </label>
+          )}
+          {!isResetMode && (
+            <label className="checkbox" style={{ display: "flex", alignItems: "center", gap: "8px", fontWeight: "normal" }}>
+              <input type="checkbox" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} />
+              Recordar mi correo
+            </label>
+          )}
+          <button disabled={loading}>{loading ? "Procesando..." : (isResetMode ? "Enviar correo de recuperacion" : "Ingresar")}</button>
+          <div style={{ marginTop: "1rem", textAlign: "center" }}>
+            <button
+              type="button"
+              className="secondary"
+              style={{ border: "none", background: "none", padding: 0, textDecoration: "underline", color: "var(--primary)" }}
+              onClick={() => { setIsResetMode(!isResetMode); setNotice(null); }}
+            >
+              {isResetMode ? "Volver a iniciar sesion" : "¿Olvidaste tu contrasena?"}
+            </button>
+          </div>
           {notice ? <div className={`alert ${notice.type}`}>{notice.message}</div> : null}
         </form>
       </section>
@@ -4269,21 +4316,40 @@ function PlansAdmin({
   const [logoProjectId, setLogoProjectId] = useState(projects[0]?.id ?? "");
   const [logoPosition, setLogoPosition] = useState<ProjectLogoPosition>("right");
   const [logoSize, setLogoSize] = useState("140");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [pageSize, setPageSize] = useState(50);
+  const [page, setPage] = useState(1);
+  const [isExporting, setIsExporting] = useState(false);
 
   useEffect(() => {
     setProjectLogos(loadProjectLogos());
   }, []);
 
   const selectedPlan = plans.find((plan) => plan.id === selectedPlanId) ?? null;
-  const visiblePlans = plans.filter((plan) => {
+  const filteredPlans = plans.filter((plan) => {
     const family = families.find((item) => item.id === plan.family_id);
     if (filters.projectId && plan.project_id !== filters.projectId) return false;
     if (filters.familyId && plan.family_id !== filters.familyId) return false;
     if (filters.status && plan.status !== filters.status) return false;
     if (filters.municipalityId && family?.municipality_id !== filters.municipalityId) return false;
     if (filters.villageId && family?.village_id !== filters.villageId) return false;
+    
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      const code = family?.family_code?.toLowerCase() || "";
+      const rep = family?.representative_name?.toLowerCase() || "";
+      if (!code.includes(q) && !rep.includes(q)) return false;
+    }
+
     return true;
   });
+
+  const totalItems = filteredPlans.length;
+  const totalPages = Math.ceil(totalItems / pageSize) || 1;
+  const normalizedPage = Math.max(1, Math.min(page, totalPages));
+  const pageStart = (normalizedPage - 1) * pageSize;
+  const pageEnd = Math.min(pageStart + pageSize, totalItems);
+  const visiblePlans = filteredPlans.slice(pageStart, pageEnd);
 
   const selectedPlanActivities = selectedPlan
     ? planActivities.filter((activity) => activity.plan_id === selectedPlan.id)
@@ -4601,19 +4667,51 @@ function PlansAdmin({
           <button
             className="secondary"
             type="button"
-            disabled={visiblePlans.length === 0}
-            onClick={() => void exportPlansAsPdf(visiblePlans, exportContext)}
+            disabled={filteredPlans.length === 0 || isExporting}
+            onClick={async () => {
+              setIsExporting(true);
+              try { await exportPlansAsPdf(filteredPlans, exportContext); } finally { setIsExporting(false); }
+            }}
           >
-            Exportar PDF visibles
+            {isExporting ? "Generando PDF..." : "Exportar PDF (Filtros)"}
           </button>
           <button
             className="secondary"
             type="button"
-            disabled={visiblePlans.length === 0}
-            onClick={() => void exportPlansAsWord(visiblePlans, exportContext)}
+            disabled={filteredPlans.length === 0 || isExporting}
+            onClick={async () => {
+              setIsExporting(true);
+              try { await exportPlansAsWord(filteredPlans, exportContext); } finally { setIsExporting(false); }
+            }}
           >
-            Exportar Word visibles
+            {isExporting ? "Generando Word..." : "Exportar Word (Filtros)"}
           </button>
+        </div>
+      </div>
+      <div className="panel grid">
+        <label className="span-4">
+          Buscar por Familia
+          <input
+            type="text"
+            placeholder="Código o nombre..."
+            value={searchQuery}
+            onChange={(e) => { setSearchQuery(e.target.value); setPage(1); }}
+          />
+        </label>
+        <div className="span-8 tracking-pagination" style={{ alignSelf: "end" }}>
+          <label>
+            Planes por página
+            <select value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }}>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+              <option value={200}>200</option>
+            </select>
+          </label>
+          <span>
+            Mostrando {totalItems > 0 ? pageStart + 1 : 0}-{pageEnd} de {totalItems} planes
+          </span>
+          <button className="secondary" disabled={normalizedPage <= 1} type="button" onClick={() => setPage((p) => Math.max(1, p - 1))}>Anterior</button>
+          <button className="secondary" disabled={normalizedPage >= totalPages} type="button" onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>Siguiente</button>
         </div>
       </div>
       <div className="grid">
@@ -7120,9 +7218,9 @@ function ProcurementDeliveriesActs({
             ])}
           />
           <div className="form-actions">
-            <button disabled={saving || !canGenerateActs || actExportRecords.length === 0} type="button" onClick={() => void exportFilteredDeliveryActs("pdf")}>Exportar PDF</button>
-            <button className="secondary" disabled={saving || !canGenerateActs || actExportRecords.length === 0} type="button" onClick={() => void exportFilteredDeliveryActs("word")}>Exportar Word</button>
-            <button className="secondary" disabled={saving || actExportRecords.length === 0} type="button" onClick={() => void exportFilteredDeliveryActs("excel")}>Exportar Excel</button>
+            <button disabled={saving || !canGenerateActs || actExportRecords.length === 0} type="button" onClick={() => void exportFilteredDeliveryActs("pdf")}>{saving ? "Generando..." : "Exportar PDF"}</button>
+            <button className="secondary" disabled={saving || !canGenerateActs || actExportRecords.length === 0} type="button" onClick={() => void exportFilteredDeliveryActs("word")}>{saving ? "Generando..." : "Exportar Word"}</button>
+            <button className="secondary" disabled={saving || actExportRecords.length === 0} type="button" onClick={() => void exportFilteredDeliveryActs("excel")}>{saving ? "Generando..." : "Exportar Excel"}</button>
           </div>
           <details className="collapsible-panel">
             <summary>Registrar entrega manual</summary>
@@ -7193,8 +7291,8 @@ function ProcurementDeliveriesActs({
                     delivery.status,
                     act?.act_number ?? "Pendiente",
                     <div className="table-actions" key={delivery.id}>
-                      <button className="secondary" type="button" disabled={!canGenerateActs} onClick={() => void exportDeliveryAct(delivery, "pdf")}>PDF</button>
-                      <button className="secondary" type="button" disabled={!canGenerateActs} onClick={() => void exportDeliveryAct(delivery, "word")}>Word</button>
+                      <button className="secondary" type="button" disabled={!canGenerateActs || saving} onClick={() => void exportDeliveryAct(delivery, "pdf")}>{saving ? "Generando..." : "PDF"}</button>
+                      <button className="secondary" type="button" disabled={!canGenerateActs || saving} onClick={() => void exportDeliveryAct(delivery, "word")}>{saving ? "Generando..." : "Word"}</button>
                     </div>
                   ];
                 })}
