@@ -285,83 +285,114 @@ private data class PlanFamilyCounterpartUploadDto(
     val observations: String?
 )
 
-@Serializable private data class ProjectDto(val id: String, val name: String, @SerialName("code_prefix") val codePrefix: String, val status: String) {
-    fun toEntity() = ProjectEntity(id, name, codePrefix, status)
+@Serializable private data class ProjectDto(
+    val id: String,
+    val name: String? = null,
+    @SerialName("code_prefix") val codePrefix: String? = null,
+    val status: String? = null
+) {
+    fun toEntity() = ProjectEntity(id, name ?: "Sin nombre", codePrefix ?: "", status ?: "activo")
 }
 
 @Serializable private data class FamilyDto(
     val id: String,
-    @SerialName("project_id") val projectId: String,
-    @SerialName("family_code") val familyCode: String,
-    @SerialName("representative_name") val representativeName: String,
+    @SerialName("project_id") val projectId: String? = null,
+    @SerialName("family_code") val familyCode: String? = null,
+    @SerialName("representative_name") val representativeName: String? = null,
     @SerialName("document_number") val documentNumber: String? = null,
     @SerialName("municipality_id") val municipalityId: String? = null,
     @SerialName("village_id") val villageId: String? = null,
-    val status: String
+    val status: String? = null
 ) {
-    fun toEntity() = FamilyEntity(id, projectId, familyCode, representativeName, documentNumber, municipalityId, villageId, status)
+    fun toEntity() = FamilyEntity(
+        id = id,
+        projectId = projectId ?: "",
+        familyCode = familyCode ?: "",
+        representativeName = representativeName ?: "Sin nombre",
+        documentNumber = documentNumber,
+        municipalityId = municipalityId,
+        villageId = villageId,
+        status = status ?: "activo"
+    )
 }
 
-@Serializable private data class MunicipalityDto(val id: String, val name: String) {
-    fun toEntity() = MunicipalityEntity(id, name)
+@Serializable private data class MunicipalityDto(val id: String, val name: String? = null) {
+    fun toEntity() = MunicipalityEntity(id, name ?: "Sin nombre")
 }
 
 @Serializable private data class VillageDto(
     val id: String,
-    @SerialName("municipality_id") val municipalityId: String,
-    val name: String
+    @SerialName("municipality_id") val municipalityId: String? = null,
+    val name: String? = null
 ) {
-    fun toEntity() = VillageEntity(id, municipalityId, name)
+    fun toEntity() = VillageEntity(id, municipalityId ?: "", name ?: "Sin nombre")
 }
 
 @Serializable private data class PropertyDto(
     val id: String,
-    @SerialName("family_id") val familyId: String,
+    @SerialName("family_id") val familyId: String? = null,
     @SerialName("property_name") val propertyName: String? = null,
     @SerialName("total_area_ha") val totalAreaHa: Double? = null
 ) {
-    fun toEntity() = PropertyEntity(id, familyId, propertyName, totalAreaHa)
+    fun toEntity() = PropertyEntity(id, familyId ?: "", propertyName, totalAreaHa)
 }
 
 @Serializable private data class ActivityDto(
     val id: String,
     @SerialName("project_id") val projectId: String? = null,
-    val name: String,
-    val unit: String,
-    @SerialName("requires_baseline") val requiresBaseline: Boolean,
-    @SerialName("requires_target") val requiresTarget: Boolean,
-    val active: Boolean
+    val name: String? = null,
+    val unit: String? = null,
+    @SerialName("requires_baseline") val requiresBaseline: Boolean? = null,
+    @SerialName("requires_target") val requiresTarget: Boolean? = null,
+    val active: Boolean? = null
 ) {
-    fun toEntity() = ActivityCatalogEntity(id, projectId, name, unit, requiresBaseline, requiresTarget, active)
+    fun toEntity() = ActivityCatalogEntity(
+        id = id,
+        projectId = projectId,
+        name = name ?: "Sin nombre",
+        unit = unit ?: "UND",
+        requiresBaseline = requiresBaseline ?: false,
+        requiresTarget = requiresTarget ?: false,
+        active = active ?: true
+    )
 }
 
 @Serializable private data class MaterialDto(
     val id: String,
     @SerialName("project_id") val projectId: String? = null,
-    val name: String,
+    val name: String? = null,
     val category: String? = null,
-    val unit: String,
-    @SerialName("quoted_unit_price") val quotedUnitPrice: Double,
+    val unit: String? = null,
+    @SerialName("quoted_unit_price") val quotedUnitPrice: Double? = null,
     @SerialName("vegetal_indicator_group") val vegetalIndicatorGroup: String? = null,
-    val active: Boolean
+    val active: Boolean? = null
 ) {
-    fun toEntity() = MaterialCatalogEntity(id, projectId, name, category, unit, quotedUnitPrice, vegetalIndicatorGroup, active)
+    fun toEntity() = MaterialCatalogEntity(
+        id = id,
+        projectId = projectId,
+        name = name ?: "Sin nombre",
+        category = category,
+        unit = unit ?: "UND",
+        quotedUnitPrice = quotedUnitPrice ?: 0.0,
+        vegetalIndicatorGroup = vegetalIndicatorGroup,
+        active = active ?: true
+    )
 }
 
 @Serializable private data class CounterpartDto(
     val id: String,
     @SerialName("project_id") val projectId: String? = null,
-    val name: String,
-    @SerialName("type") val contributionType: String,
+    val name: String? = null,
+    @SerialName("type") val contributionType: String? = null,
     @SerialName("suggested_unit") val suggestedUnit: String? = null,
-    val active: Boolean
+    val active: Boolean? = null
 ) {
     fun toEntity() = CounterpartCatalogEntity(
         id = id,
         projectId = projectId,
-        name = name,
-        contributionType = if (contributionType == "material_propio") "materiales_propios" else contributionType,
+        name = name ?: "Sin nombre",
+        contributionType = if (contributionType == "material_propio") "materiales_propios" else (contributionType ?: "mano_obra"),
         suggestedUnit = suggestedUnit.orEmpty(),
-        active = active
+        active = active ?: true
     )
 }
