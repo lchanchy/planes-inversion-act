@@ -5458,6 +5458,7 @@ type ConsolidatedMatrixRow = {
   sourcePlanMaterialIds: string[];
   purchaseBatch?: ProcurementBatch;
   purchaseItem?: ProcurementBatchItem;
+  families: string[];
 };
 
 type ConsolidatedMatrix = {
@@ -9000,11 +9001,15 @@ function buildConsolidatedMatrix(
       unitPrice: need.unitPrice,
       total: 0,
       totalValue: 0,
-      sourcePlanMaterialIds: []
+      sourcePlanMaterialIds: [],
+      families: []
     };
     row.total += need.approvedQuantity;
     row.totalValue += need.approvedQuantity * need.unitPrice;
     row.sourcePlanMaterialIds.push(need.plan_project_material_id);
+    if (need.familyName && !row.families.includes(need.familyName)) {
+      row.families.push(need.familyName);
+    }
     rowMap.set(key, row);
   }
 
