@@ -214,6 +214,12 @@ fun RestauracionApp(container: AppContainer) {
                                 .onFailure { message = it.message ?: "Error sincronizando." }
                         }
                     },
+                    onLogout = {
+                        scope.launch {
+                            container.sessionStore.clearSession()
+                            currentScreen = Screen.LOGIN
+                        }
+                    },
                     onOpenProject = {
                         selectedProjectId = it.id
                         selectedFamilyId = null
@@ -350,6 +356,7 @@ private fun HomeScreen(
     message: String?,
     onDownload: () -> Unit,
     onSync: () -> Unit,
+    onLogout: () -> Unit,
     onOpenProject: (ProjectEntity) -> Unit
 ) {
     val projects by container.repository.projects.collectAsState(initial = emptyList())
@@ -358,6 +365,7 @@ private fun HomeScreen(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = onDownload) { Text("Descargar") }
             Button(onClick = onSync) { Text("Sincronizar") }
+            OutlinedButton(onClick = onLogout) { Text("Salir") }
         }
         message?.let { Text(friendlyMessage(it), color = MaterialTheme.colorScheme.primary) }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
