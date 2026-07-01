@@ -405,7 +405,7 @@ private fun FamilyScreen(
             it.familyCode.contains(query, ignoreCase = true) ||
                 it.representativeName.contains(query, ignoreCase = true) ||
                 (it.documentNumber?.contains(query, ignoreCase = true) == true)
-        }.take(10)
+        }.take(50)
     }
     LazyColumn(
         modifier = Modifier
@@ -672,7 +672,7 @@ private fun PlanCaptureScreen(
     val filteredActivities = if (activityFilter.isBlank()) {
         emptyList()
     } else {
-        activities.filter { it.name.contains(activityFilter, ignoreCase = true) }.take(8)
+        activities.filter { it.name.contains(activityFilter, ignoreCase = true) }.take(50)
     }
     val filteredMaterials = if (materialFilter.isBlank()) {
         emptyList()
@@ -680,12 +680,12 @@ private fun PlanCaptureScreen(
         materials
             .filter { it.name.contains(materialFilter, ignoreCase = true) }
             .filter { material -> if (projectMaterialKind == "vegetal") isVegetalMaterial(material) else !isVegetalMaterial(material) }
-            .take(8)
+            .take(50)
     }
     val filteredCounterparts = if (counterpartFilter.isBlank()) {
         emptyList()
     } else {
-        counterpartCatalog.filter { it.name.contains(counterpartFilter, ignoreCase = true) }.take(8)
+        counterpartCatalog.filter { it.name.contains(counterpartFilter, ignoreCase = true) }.take(50)
     }
 
     LazyColumn(
