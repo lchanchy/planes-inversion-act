@@ -39,6 +39,7 @@ class SupabaseRestClient(
     private val json = Json { ignoreUnknownKeys = true }
     private val client = HttpClient(OkHttp) {
         install(ContentNegotiation) { json(json) }
+        expectSuccess = true
     }
 
     suspend fun login(email: String, password: String) {
@@ -108,8 +109,20 @@ class SupabaseRestClient(
         }.body<List<CounterpartDto>>().map { it.toEntity() }
     }
 
+    private suspend fun resolveProfileId(id: String): String {
+        return try {
+            val profiles: List<UserProfileDto> = client.get("$baseUrl/rest/v1/users_profiles?auth_user_id=eq.$id&select=id") {
+                authHeaders()
+            }.body()
+            profiles.firstOrNull()?.id ?: id
+        } catch (e: Exception) {
+            id
+        }
+    }
+
     suspend fun uploadPlan(plan: OperationalPlanEntity) {
         requireConfigured()
+        val technicianId = resolveProfileId(plan.technicianId ?: sessionStore.userId)
         client.post("$baseUrl/rest/v1/operational_plans") {
             authHeaders()
             header("Prefer", "resolution=merge-duplicates")
@@ -118,7 +131,7 @@ class SupabaseRestClient(
                     id = plan.id,
                     projectId = plan.projectId,
                     familyId = plan.familyId,
-                    technicianId = plan.technicianId ?: sessionStore.userId,
+                    technicianId = technicianId,
                     planDate = plan.planDate,
                     status = plan.status,
                     version = plan.version,
@@ -235,7 +248,8 @@ private data class PlanUploadDto(
     @SerialName("plan_date") val planDate: String,
     val status: String,
     val version: Int,
-    @SerialName("sync_status") val syncStatus: String
+    @SerialName("sync_status") val syncStatus: String,
+    @SerialName("is_deleted") val isDeleted: Boolean = false
 )
 
 @Serializable
@@ -246,7 +260,8 @@ private data class PlanActivityUploadDto(
     val baseline: Double?,
     val target: Double?,
     val unit: String,
-    val observations: String?
+    val observations: String?,
+    @SerialName("is_deleted") val isDeleted: Boolean = false
 )
 
 @Serializable
@@ -258,7 +273,8 @@ private data class PlanProjectMaterialUploadDto(
     val quantity: Double,
     val unit: String,
     @SerialName("quoted_unit_price") val quotedUnitPrice: Double,
-    val observations: String?
+    val observations: String?,
+    @SerialName("is_deleted") val isDeleted: Boolean = false
 )
 
 @Serializable
@@ -269,7 +285,8 @@ private data class ProvisionalMaterialUploadDto(
     @SerialName("suggested_unit") val suggestedUnit: String,
     val observation: String?,
     @SerialName("contribution_side") val contributionSide: String,
-    val status: String
+    val status: String,
+    @SerialName("is_deleted") val isDeleted: Boolean = false
 )
 
 @Serializable
@@ -282,7 +299,8 @@ private data class PlanFamilyCounterpartUploadDto(
     val unit: String,
     @SerialName("estimated_unit_value") val estimatedUnitValue: Double,
     @SerialName("vegetal_indicator_group") val vegetalIndicatorGroup: String?,
-    val observations: String?
+    val observations: String?,
+    @SerialName("is_deleted") val isDeleted: Boolean = false
 )
 
 @Serializable private data class ProjectDto(
@@ -396,3 +414,6 @@ private data class PlanFamilyCounterpartUploadDto(
         active = active ?: true
     )
 }
+
+@Serializable
+private data class UserProfileDto(val id: String)
