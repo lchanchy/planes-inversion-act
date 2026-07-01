@@ -69,7 +69,7 @@ class RestauracionRepository(
         val plan = OperationalPlanEntity(
             projectId = projectId,
             familyId = familyId,
-            technicianId = null,
+            technicianId = sessionStore.userId,
             planDate = LocalDate.now().toString()
         )
         db.planDao().upsertPlan(plan)

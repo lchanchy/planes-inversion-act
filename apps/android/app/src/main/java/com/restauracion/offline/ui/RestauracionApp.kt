@@ -478,6 +478,9 @@ private fun FamilyScreen(
                                 Text(fam?.representativeName ?: "Sin nombre", style = MaterialTheme.typography.bodyMedium)
                                 Text("Fecha: ${sentPlan.planDate}", style = MaterialTheme.typography.bodySmall)
                                 Text("Estado: ${friendlyPlanStatus(sentPlan.status)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                                if (sentPlan.syncState == com.restauracion.offline.data.local.SyncState.ERROR && !sentPlan.lastError.isNullOrBlank()) {
+                                    Text("Error de Sync: ${sentPlan.lastError}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                                }
                                 Spacer(modifier = Modifier.height(8.dp))
                                 OutlinedButton(
                                     onClick = { onEditSentPlan(sentPlan) },

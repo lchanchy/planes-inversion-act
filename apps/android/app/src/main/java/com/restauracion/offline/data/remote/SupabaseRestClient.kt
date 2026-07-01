@@ -118,7 +118,7 @@ class SupabaseRestClient(
                     id = plan.id,
                     projectId = plan.projectId,
                     familyId = plan.familyId,
-                    technicianId = plan.technicianId,
+                    technicianId = plan.technicianId ?: sessionStore.userId,
                     planDate = plan.planDate,
                     status = plan.status,
                     version = plan.version,
