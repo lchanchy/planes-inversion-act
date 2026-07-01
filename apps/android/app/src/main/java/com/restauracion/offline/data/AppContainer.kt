@@ -53,7 +53,7 @@ class AppContainer(context: Context) {
         "restauracion_offline.db"
     ).addMigrations(migration1To2, migration2To3, migration3To4, migration4To5).build()
 
-    private val sessionStore = SessionStore(context)
+    val sessionStore = SessionStore(context)
 
     private val remote = SupabaseRestClient(
         baseUrl = BuildConfig.SUPABASE_URL,
