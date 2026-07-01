@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, createContext, useContext } from "react";
 import {
   AlignmentType,
   BorderStyle,
@@ -182,6 +182,8 @@ const emptyCounterpartCatalog = {
   active: true
 };
 
+
+
 export default function Home() {
   const [session, setSession] = useState<Session | null>(null);
   const [loadingSession, setLoadingSession] = useState(true);
@@ -213,8 +215,7 @@ export default function Home() {
           <div className="alert error">
             Faltan `NEXT_PUBLIC_SUPABASE_URL` y/o `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
           </div>
-        </section>
-      </main>
+        </section></main>
     );
   }
 
@@ -389,6 +390,11 @@ function AdminApp({ session }: { session: Session }) {
   }, [profile, projectUsers, roles]);
 
   const canWrite = roleNames.has("super_admin") || roleNames.has("admin") || roleNames.has("project_admin") || roleNames.has("coordinator");
+  useEffect(() => {
+    if (roleNames.has("super_admin")) document.body.classList.add("is-super-admin");
+    else document.body.classList.remove("is-super-admin");
+  }, [roleNames]);
+
   const canManageProfiles = roleNames.has("super_admin") || roleNames.has("admin") || roleNames.has("project_admin");
 
   async function loadAll() {
@@ -630,7 +636,8 @@ function AdminApp({ session }: { session: Session }) {
             </button>
           </div>
         </header>
-        <section className="content">
+        
+          <section className="content">
           {notice ? <div className={`alert ${notice.type}`}>{notice.message}</div> : null}
           {!profile ? (
             <div className="alert info">
@@ -751,8 +758,7 @@ function AdminApp({ session }: { session: Session }) {
               onChange={loadAll}
             />
           ) : null}
-        </section>
-      </main>
+        </section>\n        \n      </main>
     </div>
   );
 }
@@ -4474,6 +4480,20 @@ function PlansAdmin({
     await onChange();
   }
 
+  
+  async function deleteOperationalPlan(planId: string) {
+    if (!document.body.classList.contains("is-super-admin")) return;
+    if (!window.confirm("¿Estás seguro de que deseas eliminar este plan operativo? Esta acción no se puede deshacer.")) return;
+    setNotice(null);
+    const { error } = await supabase.from("operational_plans").update({ is_deleted: true, status: "draft" }).eq("id", planId);
+    if (error) {
+      setNotice({ type: "error", message: error.message });
+      return;
+    }
+    if (selectedPlanId === planId) setSelectedPlanId(null);
+    await onChange();
+  }
+
   async function resolveProvisionalMaterial(provisionalId: string, officialMaterialId: string) {
     if (!canReview || !officialMaterialId) return;
     setNotice(null);
@@ -4729,7 +4749,7 @@ function PlansAdmin({
       <div className="grid">
         <div className="plan-list-column">
           <DataTable
-            headers={["Codigo", "Familia", "Municipio", "Vereda", "Estado"]}
+            headers={["Codigo", "Familia", "Municipio", "Vereda", "Estado", "Acciones"]}
             rows={visiblePlans.map((plan) => {
               const family = families.find((item) => item.id === plan.family_id);
               const municipality = municipalities.find((item) => item.id === family?.municipality_id);
@@ -4741,7 +4761,8 @@ function PlansAdmin({
                 family ? `${family.family_code} - ${family.representative_name}` : "Sin familia",
                 municipality?.name ?? "",
                 village?.name ?? "",
-                <span className="badge" key="status">{planStatusLabel(plan.status)}</span>
+                <span className="badge" key="status">{planStatusLabel(plan.status)}</span>,
+                <button className="danger super-admin-only" key="delete" type="button" onClick={() => void deleteOperationalPlan(plan.id)}>Eliminar</button>
               ];
             })}
           />
@@ -5235,7 +5256,7 @@ function PlanDetail({
                       >
                         Editar
                       </button>
-                      <button className="danger" disabled={!canEditPlan} type="button" onClick={() => void deletePlanMaterial(item)}>Eliminar</button>
+                      <button className="danger super-admin-only" disabled={!canEditPlan} type="button" onClick={() => void deletePlanMaterial(item)}>Eliminar</button>
                     </div>
                   ];
                 })}
@@ -5268,7 +5289,7 @@ function PlanDetail({
                     >
                       Editar
                     </button>
-                    <button className="danger" disabled={!canEditPlan} type="button" onClick={() => void deletePlanCounterpart(item)}>Eliminar</button>
+                    <button className="danger super-admin-only" disabled={!canEditPlan} type="button" onClick={() => void deletePlanCounterpart(item)}>Eliminar</button>
                   </div>
                 ])}
               />
@@ -11847,7 +11868,9 @@ function Actions({
   return (
     <div className="row-actions">
       <button className="secondary" type="button" disabled={!canWrite} onClick={onEdit}>Editar</button>
-      <button className="danger" type="button" disabled={!canWrite} onClick={onDelete}>Inactivar</button>
+      <button className="danger super-admin-only" type="button" onClick={() => {
+        if (window.confirm("¿Estás seguro de que deseas eliminar este registro? Esta acción no se puede deshacer.")) onDelete();
+      }}>Eliminar</button>
     </div>
   );
 }

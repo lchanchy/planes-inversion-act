@@ -1032,3 +1032,8 @@ th {
   max-width: 500px;
   width: 100%;
 }
+
+
+/* ponytail: CSS over JS for role-based visibility */
+.super-admin-only { display: none !important; }
+body.is-super-admin .super-admin-only { display: inline-block !important; }
