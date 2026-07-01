@@ -114,6 +114,16 @@ class RestauracionRepository(
         db.planDao().updateActivity(item.copy(syncState = SyncState.PENDING_SYNC))
     }
 
+    suspend fun deletePlan(planId: String) {
+        val activities = db.planDao().activitiesForPlan(planId)
+        for (activity in activities) {
+            db.planDao().deleteMaterialsForActivity(activity.id)
+            db.planDao().deleteCounterpartsForActivity(activity.id)
+            db.planDao().deleteActivity(activity.id)
+        }
+        db.planDao().deletePlan(planId)
+    }
+
     suspend fun deleteActivity(item: PlanActivityEntity) {
         db.planDao().deleteMaterialsForActivity(item.id)
         db.planDao().deleteCounterpartsForActivity(item.id)

@@ -264,6 +264,9 @@ fun RestauracionApp(container: AppContainer) {
                                     selectedPlanId = plan.id
                                     screenName = Screen.PLAN.name
                                 }
+                            },
+                            onDeletePlan = { plan ->
+                                scope.launch { container.repository.deletePlan(plan.id) }
                             }
                         )
                     }
@@ -392,7 +395,8 @@ private fun FamilyScreen(
     project: ProjectEntity?,
     onBack: () -> Unit,
     onCreatePlan: (FamilyEntity) -> Unit,
-    onEditSentPlan: (OperationalPlanEntity) -> Unit
+    onEditSentPlan: (OperationalPlanEntity) -> Unit,
+    onDeletePlan: (OperationalPlanEntity) -> Unit
 ) {
     if (project == null) return
     val families by container.repository.families(project.id).collectAsState(initial = emptyList())
@@ -473,28 +477,82 @@ private fun FamilyScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 } else {
-                    sentPlans.forEach { sentPlan ->
-                        val fam = familiesById[sentPlan.familyId]
-                        androidx.compose.foundation.layout.Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .glassmorphism()
-                                .clickable { onEditSentPlan(sentPlan) }
-                        ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Text(fam?.familyCode ?: "Desconocido", style = MaterialTheme.typography.titleSmall)
-                                Text(fam?.representativeName ?: "Sin nombre", style = MaterialTheme.typography.bodyMedium)
-                                Text("Fecha: ${sentPlan.planDate}", style = MaterialTheme.typography.bodySmall)
-                                Text("Estado: ${friendlyPlanStatus(sentPlan.status)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-                                if (sentPlan.syncState == com.restauracion.offline.data.local.SyncState.ERROR && !sentPlan.lastError.isNullOrBlank()) {
-                                    Text("Error de Sync: ${sentPlan.lastError}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    var selectedTab by remember { mutableStateOf(0) }
+                    val tabs = listOf("Solo guardados offline", "Sincronizados")
+                    androidx.compose.material3.TabRow(selectedTabIndex = selectedTab) {
+                        tabs.forEachIndexed { index, title ->
+                            androidx.compose.material3.Tab(
+                                selected = selectedTab == index,
+                                onClick = { selectedTab = index },
+                                text = { Text(title) }
+                            )
+                        }
+                    }
+                    val displayedPlans = if (selectedTab == 0) {
+                        sentPlans.filter { it.syncState != com.restauracion.offline.data.local.SyncState.SYNCED }
+                    } else {
+                        sentPlans.filter { it.syncState == com.restauracion.offline.data.local.SyncState.SYNCED }
+                    }
+                    var planToDelete by remember { mutableStateOf<OperationalPlanEntity?>(null) }
+                    planToDelete?.let { plan ->
+                        androidx.compose.material3.AlertDialog(
+                            onDismissRequest = { planToDelete = null },
+                            title = { Text("Eliminar Plan") },
+                            text = { Text("¿Estás seguro de que deseas eliminar este plan operativo? Esta acción no se puede deshacer.") },
+                            confirmButton = {
+                                androidx.compose.material3.TextButton(onClick = {
+                                    onDeletePlan(plan)
+                                    planToDelete = null
+                                }) {
+                                    Text("Eliminar", color = MaterialTheme.colorScheme.error)
                                 }
-                                Spacer(modifier = Modifier.height(8.dp))
-                                OutlinedButton(
-                                    onClick = { onEditSentPlan(sentPlan) },
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text("Editar plan")
+                            },
+                            dismissButton = {
+                                androidx.compose.material3.TextButton(onClick = { planToDelete = null }) {
+                                    Text("Cancelar")
+                                }
+                            }
+                        )
+                    }
+                    if (displayedPlans.isEmpty()) {
+                        Text(
+                            text = "No hay planes en esta categoría.",
+                            modifier = Modifier.padding(16.dp),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        displayedPlans.forEach { sentPlan ->
+                            val fam = familiesById[sentPlan.familyId]
+                            androidx.compose.foundation.layout.Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .glassmorphism()
+                                    .clickable { onEditSentPlan(sentPlan) }
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Text(fam?.familyCode ?: "Desconocido", style = MaterialTheme.typography.titleSmall)
+                                    Text(fam?.representativeName ?: "Sin nombre", style = MaterialTheme.typography.bodyMedium)
+                                    Text("Fecha: ${sentPlan.planDate}", style = MaterialTheme.typography.bodySmall)
+                                    Text("Estado: ${friendlyPlanStatus(sentPlan.status)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                                    if (sentPlan.syncState == com.restauracion.offline.data.local.SyncState.ERROR && !sentPlan.lastError.isNullOrBlank()) {
+                                        Text("Error de Sync: ${sentPlan.lastError}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                                    }
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        OutlinedButton(
+                                            onClick = { onEditSentPlan(sentPlan) },
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Text("Editar")
+                                        }
+                                        OutlinedButton(
+                                            onClick = { planToDelete = sentPlan },
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Text("Eliminar", color = MaterialTheme.colorScheme.error)
+                                        }
+                                    }
                                 }
                             }
                         }

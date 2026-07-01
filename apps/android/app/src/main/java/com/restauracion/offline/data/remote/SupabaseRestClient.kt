@@ -36,7 +36,7 @@ class SupabaseRestClient(
     private val sessionStore: SessionStore
 ) {
     private val baseUrl = baseUrl.trim().trimEnd('/')
-    private val json = Json { ignoreUnknownKeys = true }
+    private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
     private val client = HttpClient(OkHttp) {
         install(ContentNegotiation) { json(json) }
         expectSuccess = true
@@ -208,7 +208,7 @@ class SupabaseRestClient(
             val payload = PlanFamilyCounterpartUploadDto(
                     id = item.id,
                     planActivityId = item.planActivityId,
-                    contributionType = item.contributionType,
+                    contributionType = if (item.contributionType == "materiales_propios") "material_propio" else item.contributionType,
                     name = item.name,
                     quantity = item.quantity,
                     unit = item.unit,
@@ -298,8 +298,8 @@ private data class PlanFamilyCounterpartUploadDto(
     val quantity: Double,
     val unit: String,
     @SerialName("estimated_unit_value") val estimatedUnitValue: Double,
-    @SerialName("vegetal_indicator_group") val vegetalIndicatorGroup: String?,
-    val observations: String?,
+    @SerialName("vegetal_indicator_group") val vegetalIndicatorGroup: String? = null,
+    val observations: String? = null,
     @SerialName("is_deleted") val isDeleted: Boolean = false
 )
 
