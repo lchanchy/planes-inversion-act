@@ -75,10 +75,10 @@ interface PlanDao {
     @Query("select * from operational_plans where id = :id limit 1")
     suspend fun planById(id: String): OperationalPlanEntity?
 
-    @Query("select * from plan_activities where plan_id = :planId")
+    @Query("select * from plan_activities where planId = :planId")
     fun activities(planId: String): Flow<List<PlanActivityEntity>>
 
-    @Query("select * from plan_activities where plan_id = :planId")
+    @Query("select * from plan_activities where planId = :planId")
     suspend fun activitiesForPlan(planId: String): List<PlanActivityEntity>
 
     @Query("select * from plan_activities where id = :id limit 1")
