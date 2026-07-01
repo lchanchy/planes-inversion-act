@@ -216,7 +216,7 @@ fun RestauracionApp(container: AppContainer) {
                     },
                     onLogout = {
                         scope.launch {
-                            container.sessionStore.clearSession()
+                            container.sessionStore.clear()
                             screenName = Screen.LOGIN.name
                         }
                     },
