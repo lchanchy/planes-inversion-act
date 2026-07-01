@@ -4993,21 +4993,23 @@ function PlanDetail({
       ? await supabase.from("plan_family_counterparts").update(payload).eq("id", counterpartForm.id)
       : await supabase.from("plan_family_counterparts").insert(payload);
     if (result.error) {
-      if (isMissingCounterpartVegetalColumnError(result.error) && counterpartForm.vegetal_indicator_group) {
-        const fallbackObservation = [
-          `Grupo vegetal de contrapartida: ${vegetalIndicatorGroupLabel(counterpartForm.vegetal_indicator_group)}.`,
-          counterpartForm.observations || ""
-        ].filter(Boolean).join(" ");
-        const vegetalLabel = vegetalIndicatorGroupLabel(counterpartForm.vegetal_indicator_group);
+      if (isMissingCounterpartVegetalColumnError(result.error)) {
         const fallbackPayload = {
           plan_activity_id: payload.plan_activity_id,
           contribution_type: payload.contribution_type,
-          name: `${payload.name} (${vegetalLabel})`,
+          name: payload.name,
           quantity: payload.quantity,
           unit: payload.unit,
           estimated_unit_value: payload.estimated_unit_value,
-          observations: fallbackObservation
+          observations: payload.observations
         };
+        if (counterpartForm.vegetal_indicator_group) {
+          fallbackPayload.name = `${payload.name} (${vegetalIndicatorGroupLabel(counterpartForm.vegetal_indicator_group)})`;
+          fallbackPayload.observations = [
+            `Grupo vegetal de contrapartida: ${vegetalIndicatorGroupLabel(counterpartForm.vegetal_indicator_group)}.`,
+            counterpartForm.observations || ""
+          ].filter(Boolean).join(" ");
+        }
         const fallbackResult = counterpartForm.id
           ? await supabase.from("plan_family_counterparts").update(fallbackPayload).eq("id", counterpartForm.id)
           : await supabase.from("plan_family_counterparts").insert(fallbackPayload);
