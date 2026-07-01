@@ -75,8 +75,11 @@ interface PlanDao {
     @Query("select * from operational_plans where id = :id limit 1")
     suspend fun planById(id: String): OperationalPlanEntity?
 
-    @Query("select * from plan_activities where planId = :planId")
+    @Query("select * from plan_activities where plan_id = :planId")
     fun activities(planId: String): Flow<List<PlanActivityEntity>>
+
+    @Query("select * from plan_activities where plan_id = :planId")
+    suspend fun activitiesForPlan(planId: String): List<PlanActivityEntity>
 
     @Query("select * from plan_activities where id = :id limit 1")
     suspend fun activityById(id: String): PlanActivityEntity?
@@ -131,6 +134,9 @@ interface PlanDao {
 
     @Update
     suspend fun updateCounterpart(item: PlanFamilyCounterpartEntity)
+
+    @Query("delete from operational_plans where id = :id")
+    suspend fun deletePlan(id: String)
 
     @Query("delete from plan_activities where id = :id")
     suspend fun deleteActivity(id: String)

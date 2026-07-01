@@ -122,7 +122,7 @@ class SupabaseRestClient(
 
     suspend fun uploadPlan(plan: OperationalPlanEntity) {
         requireConfigured()
-        val technicianId = resolveProfileId(plan.technicianId ?: sessionStore.userId)
+        val technicianId = resolveProfileId(plan.technicianId ?: sessionStore.userId ?: "")
         client.post("$baseUrl/rest/v1/operational_plans") {
             authHeaders()
             header("Prefer", "resolution=merge-duplicates")
