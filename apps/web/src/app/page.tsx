@@ -11240,16 +11240,17 @@ function drawActivityPdf(doc: PdfDocumentBuilder, activity: PlanActivity, index:
   const familyRows = familyCounterparts.length > 0
     ? familyCounterparts.map((item) => [
         counterpartExportName(item),
-        formatQuantity(item.quantity, item.unit),
+        item.quantity.toString(),
+        item.unit,
         formatExportMoney(item.estimated_unit_value),
         formatExportMoney(item.quantity * item.estimated_unit_value)
       ])
-    : [["Sin aportes de la familia.", "", "", ""]];
+    : [["Sin aportes de la familia.", "", "", "", ""]];
   const familySubtotal = familyCounterparts.reduce((sum, item) => sum + item.quantity * item.estimated_unit_value, 0);
-  y = drawPdfTable(doc, y, ["APORTE DE LA FAMILIA", "CANTIDAD", "VALOR UNI", "VALOR TOTAL"], [
+  y = drawPdfTable(doc, y, ["APORTE DE LA FAMILIA", "CANTIDAD", "UNIDAD", "VALOR UNI", "VALOR TOTAL"], [
     ...familyRows,
-    ["SUBTOTAL FAMILIA", "", "", formatExportMoney(familySubtotal)]
-  ], [250, 80, 90, 100]);
+    ["SUBTOTAL FAMILIA", "", "", "", formatExportMoney(familySubtotal)]
+  ], [210, 60, 70, 90, 90]);
   const projectRows = projectMaterials.length > 0
     ? projectMaterials.map((item) => {
         const official = item.material_id ? context.materials.find((material) => material.id === item.material_id) : null;
@@ -11258,17 +11259,18 @@ function drawActivityPdf(doc: PdfDocumentBuilder, activity: PlanActivity, index:
           : null;
         return [
           `${official?.name ?? provisional?.provisional_name ?? item.observations ?? ""}${provisional?.status === "pending" ? " (pendiente)" : ""}`,
-          formatQuantity(item.quantity, item.unit),
+          item.quantity.toString(),
+          item.unit,
           formatExportMoney(item.quoted_unit_price),
           formatExportMoney(item.quantity * item.quoted_unit_price)
         ];
       })
-    : [["Sin materiales del proyecto.", "", "", ""]];
+    : [["Sin materiales del proyecto.", "", "", "", ""]];
   const projectSubtotal = projectMaterials.reduce((sum, item) => sum + item.quantity * item.quoted_unit_price, 0);
-  return drawPdfTable(doc, y, ["APORTE DEL PROYECTO", "CANTIDAD", "VALOR UNI", "VALOR TOTAL"], [
+  return drawPdfTable(doc, y, ["APORTE DEL PROYECTO", "CANTIDAD", "UNIDAD", "VALOR UNI", "VALOR TOTAL"], [
     ...projectRows,
-    ["SUBTOTAL PROYECTO", "", "", formatExportMoney(projectSubtotal)]
-  ], [250, 80, 90, 100]) + 4;
+    ["SUBTOTAL PROYECTO", "", "", "", formatExportMoney(projectSubtotal)]
+  ], [210, 60, 70, 90, 90]) + 4;
 }
 
 function drawMetaPdf(doc: PdfDocumentBuilder, rows: [string, string][], startY: number) {
