@@ -441,8 +441,8 @@ function AdminApp({ session }: { session: Session }) {
         supabase.from("users_profiles").select("*").order("full_name"),
         supabase.from("families").select("*").eq("is_deleted", false).order("created_at", { ascending: false }),
         supabase.from("properties").select("*").eq("is_deleted", false),
-        supabase.from("activity_catalog").select("*").order("name"),
-        supabase.from("material_catalog").select("*").order("name"),
+        supabase.from("activity_catalog").select("*").eq("is_deleted", false).order("name"),
+        supabase.from("material_catalog").select("*").eq("is_deleted", false).order("name"),
         supabase.from("counterpart_catalog").select("*").eq("is_deleted", false).order("name"),
         supabase.from("operational_plans").select("*").eq("is_deleted", false).order("created_at", { ascending: false }),
         supabase.from("plan_activities").select("*").eq("is_deleted", false),
@@ -758,7 +758,8 @@ function AdminApp({ session }: { session: Session }) {
               onChange={loadAll}
             />
           ) : null}
-        </section>\n        \n      </main>
+        </section>
+      </main>
     </div>
   );
 }
