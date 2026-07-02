@@ -649,11 +649,16 @@ function AdminApp({ session }: { session: Session }) {
               projects={projects}
               profiles={profiles}
               families={families}
+              properties={properties}
+              municipalities={municipalities}
+              villages={villages}
               activities={activities}
               materials={materials}
               plans={plans}
               planActivities={planActivities}
+              planMaterials={planMaterials}
               quarterlyProgress={quarterlyProgress}
+              maintenanceProgress={maintenanceProgress}
             />
           ) : null}
           {view === "projects" ? (
@@ -768,29 +773,104 @@ function Dashboard({
   projects,
   profiles,
   families,
+  properties,
+  municipalities,
+  villages,
   activities,
   materials,
   plans,
   planActivities,
-  quarterlyProgress
+  planMaterials,
+  quarterlyProgress,
+  maintenanceProgress
 }: {
   projects: Project[];
   profiles: Profile[];
   families: Family[];
+  properties: Property[];
+  municipalities: Municipality[];
+  villages: Village[];
   activities: Activity[];
   materials: Material[];
   plans: OperationalPlan[];
   planActivities: PlanActivity[];
+  planMaterials: PlanProjectMaterial[];
   quarterlyProgress: QuarterlyProgress[];
+  maintenanceProgress: MaintenanceProgress[];
 }) {
-  const strategySummary = buildRestorationStrategySummary({ activities, plans, planActivities, quarterlyProgress });
-  const strategyTotals = buildRestorationStrategyTotals(strategySummary.rows);
-  const maxStrategyValue = Math.max(1, ...strategyTotals.map((item) => Math.max(item.targetTotal, item.advanceTotal)));
+  const currentYear = new Date().getFullYear();
+  const [dashboardYear, setDashboardYear] = useState(currentYear);
+  const [dashboardQuarters, setDashboardQuarters] = useState<number[]>([1, 2, 3, 4]);
+
+  const indicatorGroups = buildDashboardChartGroups({
+    activities, materials, plans, planActivities, planMaterials, quarterlyProgress,
+    year: dashboardYear,
+    quarters: dashboardQuarters
+  });
+  const maintenanceMatrix = buildMaintenanceMatrix({
+    projects, families, properties, municipalities, villages, activities, plans, planActivities, planMaterials, maintenanceProgress,
+    filters: { project_id: "", municipality_id: "", village_id: "", family_id: "", activity_id: "", material_id: "" },
+    year: dashboardYear,
+    visibleQuarters: dashboardQuarters
+  });
+  const maintenanceSummary = buildDashboardMaintenanceSummary(maintenanceMatrix, dashboardQuarters);
+  const organicSummary = buildDashboardOrganicSummary(maintenanceMatrix, dashboardQuarters);
+  const maintenanceTaskLabel = (task: MaintenanceTaskColumn) => `${MAINTENANCE_TASK_LABELS[task.type]} ${task.number}`;
+  const maintenanceTaskCount = (row: DashboardMaintenanceSummaryRow, task: MaintenanceTaskColumn) =>
+    row.taskCounts[`${task.type}|${task.number}`];
+
+  const maintenanceChartGroup: DashboardChartGroup = {
+    key: "mantenimiento",
+    title: "Mantenimiento por actividad (familias)",
+    sheetName: "Mantenimiento",
+    categoryHeader: "Indicador",
+    categories: maintenanceSummary.rows.map((row) => `${row.activityName} (${row.unit})`),
+    series: [
+      { name: "Familias", values: maintenanceSummary.rows.map((row) => row.familyCount) },
+      { name: "Ciclo completo", values: maintenanceSummary.rows.map((row) => row.familiesComplete) },
+      { name: "Sin cierre de ciclo", values: maintenanceSummary.rows.map((row) => row.familiesIncomplete) }
+    ],
+    extraColumns: [
+      { name: "Area total mantenimiento", values: maintenanceSummary.rows.map((row) => row.areaTotal) },
+      { name: "Ciclo completo (area)", values: maintenanceSummary.rows.map((row) => row.areaComplete) },
+      { name: "Sin cierre (area)", values: maintenanceSummary.rows.map((row) => row.areaIncomplete) },
+      ...maintenanceSummary.taskColumns.map((task) => ({
+        name: maintenanceTaskLabel(task),
+        values: maintenanceSummary.rows.map((row) => maintenanceTaskCount(row, task) ?? "N/A")
+      }))
+    ],
+    totalsRow: [
+      "TOTAL",
+      maintenanceSummary.totals.familyCount,
+      maintenanceSummary.totals.familiesComplete,
+      maintenanceSummary.totals.familiesIncomplete,
+      maintenanceSummary.totals.areaTotal,
+      maintenanceSummary.totals.areaComplete,
+      maintenanceSummary.totals.areaIncomplete,
+      ...maintenanceSummary.taskColumns.map((task) => maintenanceSummary.totals.taskCounts[`${task.type}|${task.number}`] ?? 0)
+    ]
+  };
+  const organicChartGroup: DashboardChartGroup = {
+    key: "abonos",
+    title: "Produccion de abonos organicos",
+    sheetName: "Abonos organicos",
+    categoryHeader: "Abono",
+    categories: ["Abono solido (kg)", "Abono liquido (litros)"],
+    series: [
+      { name: "Familias", values: [organicSummary.solidFamilies, organicSummary.liquidFamilies] },
+      { name: "Cantidad producida", values: [organicSummary.solidQuantity, organicSummary.liquidQuantity] }
+    ]
+  };
+  const exportGroups = [...indicatorGroups, maintenanceChartGroup, organicChartGroup];
+  const hasChartData = exportGroups.some((group) => group.categories.length > 0);
 
   return (
     <section className="section">
       <div className="toolbar">
         <h2>Dashboard</h2>
+        <button className="secondary" disabled={!hasChartData} type="button" onClick={() => void exportDashboardChartsExcel(exportGroups)}>
+          Exportar dashboard Excel
+        </button>
       </div>
       <div className="summary-grid">
         <Metric label="Proyectos" value={projects.length} />
@@ -799,58 +879,345 @@ function Dashboard({
         <Metric label="Actividades" value={activities.length} />
         <Metric label="Materiales" value={materials.length} />
       </div>
-      <div className="panel">
-        <h3>Meta y avance por estrategia</h3>
-        {strategyTotals.length === 0 ? null : (
-          <div className="strategy-chart">
-            {strategyTotals.map((item) => (
-              <div className="strategy-chart-row" key={item.strategy}>
-                <div className="strategy-chart-label">{restorationStrategyLabel(item.strategy)}</div>
-                <div className="strategy-bars">
-                  <div className="strategy-bar-line">
-                    <span>Meta</span>
-                    <div className="strategy-bar-track">
-                      <div className="strategy-bar target" style={{ width: `${Math.max(2, item.targetTotal / maxStrategyValue * 100)}%` }} />
-                    </div>
-                    <strong>{formatNumber(item.targetTotal)} ha</strong>
-                  </div>
-                  <div className="strategy-bar-line">
-                    <span>Avance</span>
-                    <div className="strategy-bar-track">
-                      <div className="strategy-bar progress" style={{ width: `${Math.max(2, item.advanceTotal / maxStrategyValue * 100)}%` }} />
-                    </div>
-                    <strong>{formatNumber(item.advanceTotal)} ha</strong>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+      <div className="panel grid compact-panel">
+        <label className="span-2">
+          Año
+          <input type="number" min="2020" max="2100" value={dashboardYear} onChange={(event) => setDashboardYear(Number(event.target.value || currentYear))} />
+        </label>
+        <div className="span-6">
+          <span className="control-label">Trimestres</span>
+          <QuarterSelector selected={dashboardQuarters} onChange={setDashboardQuarters} />
+        </div>
+        <p className="span-12 muted">
+          Las metas son totales de los planes aprobados; los avances, entregas, siembras, mantenimientos y abonos corresponden al año y trimestres seleccionados.
+        </p>
+      </div>
+      {indicatorGroups.map((group) => (
+        <div className="panel" key={group.key}>
+          <h3>{group.title}</h3>
+          {group.categories.length === 0 ? (
+            <p className="muted">Sin actividades o indicadores para esta categoria.</p>
+          ) : (
+            <DashboardBarChart categories={group.categories} series={group.series} />
+          )}
+        </div>
+      ))}
+      <div className="panel table-panel">
+        <h3>Mantenimiento por actividad</h3>
+        {maintenanceSummary.rows.length === 0 ? (
+          <p className="muted">Sin actividades de mantenimiento para el año seleccionado.</p>
+        ) : (
+          <DataTable
+            embedded
+            headers={[
+              "Indicador",
+              "# de Familias",
+              "Area total mantenimiento",
+              "Ciclo completo",
+              "Sin cierre de ciclo completo",
+              ...maintenanceSummary.taskColumns.map(maintenanceTaskLabel)
+            ]}
+            emptyMessage=""
+            rows={[
+              ...maintenanceSummary.rows.map((row) => [
+                `${row.activityName} (${row.unit})`,
+                row.familyCount,
+                formatNumber(row.areaTotal),
+                formatNumber(row.areaComplete),
+                formatNumber(row.areaIncomplete),
+                ...maintenanceSummary.taskColumns.map((task) => {
+                  const count = maintenanceTaskCount(row, task);
+                  return count === null ? "N/A" : count;
+                })
+              ] as React.ReactNode[]),
+              [
+                <strong key="label">TOTAL</strong>,
+                <strong key="fam">{maintenanceSummary.totals.familyCount}</strong>,
+                <strong key="area">{formatNumber(maintenanceSummary.totals.areaTotal)}</strong>,
+                <strong key="complete">{formatNumber(maintenanceSummary.totals.areaComplete)}</strong>,
+                <strong key="incomplete">{formatNumber(maintenanceSummary.totals.areaIncomplete)}</strong>,
+                ...maintenanceSummary.taskColumns.map((task) => (
+                  <strong key={`${task.type}-${task.number}`}>{maintenanceSummary.totals.taskCounts[`${task.type}|${task.number}`] ?? 0}</strong>
+                ))
+              ] as React.ReactNode[]
+            ]}
+          />
         )}
       </div>
-      <div className="panel table-panel">
-        <h3>Actividades por estrategia</h3>
-        {strategySummary.nonAreaRows > 0 ? (
-          <p className="muted">
-            Hay {strategySummary.nonAreaRows} actividad(es) con unidad diferente a hectareas. Se muestran en la tabla, pero la grafica consolida solo unidades de area.
-          </p>
-        ) : null}
-        <DataTable
-          headers={["Estrategia", "Actividad", "Unidad", "Meta total", "Avance total", "% avance", "Familias", "Planes aprobados"]}
-          rows={strategySummary.rows.map((row) => [
-            restorationStrategyLabel(row.strategy),
-            row.activityName,
-            row.unit || "ha",
-            formatNumber(row.targetTotal),
-            formatNumber(row.advanceTotal),
-            `${formatNumber(row.progressPercent)}%`,
-            row.familyCount,
-            row.planCount
-          ])}
-          emptyMessage=""
-          embedded
-        />
+      <div className="panel">
+        <h3>Mantenimiento por actividad (familias)</h3>
+        {maintenanceSummary.rows.length === 0 ? (
+          <p className="muted">Sin actividades de mantenimiento para el año seleccionado.</p>
+        ) : (
+          <DashboardBarChart categories={maintenanceChartGroup.categories} series={maintenanceChartGroup.series} />
+        )}
+      </div>
+      <div className="panel">
+        <h3>Produccion de abonos organicos</h3>
+        <DashboardBarChart categories={organicChartGroup.categories} series={organicChartGroup.series} />
       </div>
     </section>
+  );
+}
+
+const DASHBOARD_CHART_COLORS = ["#4472c4", "#ed7d31", "#a5a5a5"];
+
+type DashboardChartSeriesDef = { name: string; values: number[] };
+
+type DashboardChartGroup = {
+  key: string;
+  title: string;
+  sheetName: string;
+  categoryHeader: string;
+  categories: string[];
+  series: DashboardChartSeriesDef[];
+  extraColumns?: { name: string; values: (number | string)[] }[];
+  totalsRow?: (number | string)[];
+};
+
+type DashboardMaintenanceSummaryRow = {
+  key: string;
+  activityName: string;
+  unit: string;
+  familyCount: number;
+  areaTotal: number;
+  areaComplete: number;
+  areaIncomplete: number;
+  familiesComplete: number;
+  familiesIncomplete: number;
+  taskCounts: Record<string, number | null>;
+};
+
+function buildDashboardMaintenanceSummary(matrix: MaintenanceMatrix, quarters: number[]) {
+  const dateInQuarters = (date: string | null | undefined) => {
+    if (!date) return false;
+    const month = Number(date.slice(5, 7));
+    if (!Number.isFinite(month) || month < 1 || month > 12) return false;
+    return quarters.includes(Math.ceil(month / 3));
+  };
+  const taskKey = (task: MaintenanceTaskColumn) => `${task.type}|${task.number}`;
+  const typeOrder: MaintenanceTaskType[] = ["deshierbe", "fertilizacion", "poda", "resiembra"];
+  const unionMap = new Map<string, MaintenanceTaskColumn>();
+  for (const group of matrix.groups) {
+    for (const task of group.tasks) {
+      if (!unionMap.has(taskKey(task))) unionMap.set(taskKey(task), task);
+    }
+  }
+  const taskColumns = Array.from(unionMap.values()).sort((left, right) =>
+    typeOrder.indexOf(left.type) - typeOrder.indexOf(right.type) || left.number - right.number
+  );
+
+  const rows: DashboardMaintenanceSummaryRow[] = matrix.groups.map((group) => {
+    const groupTaskKeys = new Set(group.tasks.map(taskKey));
+    const taskCounts: Record<string, number | null> = {};
+    for (const task of taskColumns) taskCounts[taskKey(task)] = groupTaskKeys.has(taskKey(task)) ? 0 : null;
+    let familyCount = 0;
+    let areaTotal = 0;
+    let areaComplete = 0;
+    let familiesComplete = 0;
+    const requiredTasks = group.tasks.filter((task) => task.required);
+    for (const row of matrix.rows) {
+      const cell = row.activities[group.key];
+      if (!cell) continue;
+      familyCount += 1;
+      areaTotal += cell.targetQuantity;
+      let complete = requiredTasks.length > 0;
+      for (const task of group.tasks) {
+        const progress = cell.progress[maintenanceProgressKey(task.type, task.number, null)];
+        const done = dateInQuarters(progress?.maintenance_date);
+        if (done) taskCounts[taskKey(task)] = (taskCounts[taskKey(task)] ?? 0) + 1;
+        if (task.required && !done) complete = false;
+      }
+      if (complete) {
+        familiesComplete += 1;
+        areaComplete += cell.targetQuantity;
+      }
+    }
+    return {
+      key: group.key,
+      activityName: group.activityName,
+      unit: group.unit,
+      familyCount,
+      areaTotal,
+      areaComplete,
+      areaIncomplete: areaTotal - areaComplete,
+      familiesComplete,
+      familiesIncomplete: familyCount - familiesComplete,
+      taskCounts
+    };
+  });
+
+  const totals = {
+    familyCount: rows.reduce((sum, row) => sum + row.familyCount, 0),
+    areaTotal: rows.reduce((sum, row) => sum + row.areaTotal, 0),
+    areaComplete: rows.reduce((sum, row) => sum + row.areaComplete, 0),
+    areaIncomplete: rows.reduce((sum, row) => sum + row.areaIncomplete, 0),
+    familiesComplete: rows.reduce((sum, row) => sum + row.familiesComplete, 0),
+    familiesIncomplete: rows.reduce((sum, row) => sum + row.familiesIncomplete, 0),
+    taskCounts: Object.fromEntries(taskColumns.map((task) => [
+      taskKey(task),
+      rows.reduce((sum, row) => sum + (row.taskCounts[taskKey(task)] ?? 0), 0)
+    ]))
+  };
+  return { taskColumns, rows, totals };
+}
+
+function buildDashboardOrganicSummary(matrix: MaintenanceMatrix, quarters: number[]) {
+  let solidFamilies = 0;
+  let solidQuantity = 0;
+  let liquidFamilies = 0;
+  let liquidQuantity = 0;
+  for (const row of matrix.rows) {
+    const solid = maintenanceOrganicAccumulated(row, "abono_solido", quarters);
+    const liquid = maintenanceOrganicAccumulated(row, "abono_liquido", quarters);
+    if (solid > 0) {
+      solidFamilies += 1;
+      solidQuantity += solid;
+    }
+    if (liquid > 0) {
+      liquidFamilies += 1;
+      liquidQuantity += liquid;
+    }
+  }
+  return { solidFamilies, solidQuantity, liquidFamilies, liquidQuantity };
+}
+
+function buildDashboardChartGroups(data: {
+  activities: Activity[];
+  materials: Material[];
+  plans: OperationalPlan[];
+  planActivities: PlanActivity[];
+  planMaterials: PlanProjectMaterial[];
+  quarterlyProgress: QuarterlyProgress[];
+  year: number;
+  quarters: number[];
+}): DashboardChartGroup[] {
+  const groups: DashboardChartGroup[] = [];
+
+  const materialById = new Map(data.materials.map((item) => [item.id, item]));
+  const approvedPlanIds = new Set(
+    data.plans.filter((plan) => !plan.is_deleted && isApprovedPlanStatus(plan.status)).map((plan) => plan.id)
+  );
+  const approvedPlanActivityIds = new Set(
+    data.planActivities.filter((item) => !item.is_deleted && approvedPlanIds.has(item.plan_id)).map((item) => item.id)
+  );
+  const vegetalTotals = new Map<VegetalIndicatorGroup, { meta: number; entregado: number; sembrado: number }>();
+  const vegetalEntry = (group: VegetalIndicatorGroup) => {
+    const entry = vegetalTotals.get(group) ?? { meta: 0, entregado: 0, sembrado: 0 };
+    vegetalTotals.set(group, entry);
+    return entry;
+  };
+  for (const planMaterial of data.planMaterials) {
+    if (planMaterial.is_deleted || !planMaterial.material_id) continue;
+    if (!approvedPlanActivityIds.has(planMaterial.plan_activity_id)) continue;
+    const group = materialById.get(planMaterial.material_id)?.vegetal_indicator_group;
+    if (!isTrackableVegetalGroup(group)) continue;
+    vegetalEntry(group).meta += Number(planMaterial.quantity ?? 0);
+  }
+  for (const progress of data.quarterlyProgress) {
+    if (progress.is_deleted || progress.year !== data.year) continue;
+    if (progress.quarter != null && !data.quarters.includes(progress.quarter)) continue;
+    if (progress.progress_type !== "vegetal_entrega" && progress.progress_type !== "vegetal_siembra") continue;
+    const group = progress.vegetal_indicator_group;
+    if (!isTrackableVegetalGroup(group)) continue;
+    if (progress.progress_type === "vegetal_entrega") vegetalEntry(group).entregado += Number(progress.progress_quantity ?? 0);
+    else vegetalEntry(group).sembrado += Number(progress.progress_quantity ?? 0);
+  }
+  const vegetalRows = VEGETAL_INDICATOR_GROUPS.filter((group) => vegetalTotals.has(group.key));
+  groups.push({
+    key: "vegetal",
+    title: "Material vegetal",
+    sheetName: "Material vegetal",
+    categoryHeader: "Indicador",
+    categories: vegetalRows.map((group) => `${group.label} (${group.unit})`),
+    series: [
+      { name: "Meta", values: vegetalRows.map((group) => vegetalTotals.get(group.key)?.meta ?? 0) },
+      { name: "Entregado", values: vegetalRows.map((group) => vegetalTotals.get(group.key)?.entregado ?? 0) },
+      { name: "Sembrado", values: vegetalRows.map((group) => vegetalTotals.get(group.key)?.sembrado ?? 0) }
+    ]
+  });
+
+  const summary = buildRestorationStrategySummary({ ...data, progressYear: data.year, progressQuarters: data.quarters });
+  for (const strategy of RESTORATION_STRATEGIES) {
+    const rows = summary.rows.filter((row) => row.strategy === strategy.value);
+    groups.push({
+      key: strategy.value,
+      title: strategy.label,
+      sheetName: strategy.label,
+      categoryHeader: "Actividad",
+      categories: rows.map((row) => `${row.activityName} (${row.unit})`),
+      series: [
+        { name: "Meta", values: rows.map((row) => row.targetTotal) },
+        { name: "Implementado", values: rows.map((row) => row.advanceTotal) }
+      ]
+    });
+  }
+  return groups;
+}
+
+function wrapChartLabel(label: string, maxChars = 16): string[] {
+  const words = label.split(" ");
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    if (`${current} ${word}`.trim().length > maxChars && current) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = `${current} ${word}`.trim();
+    }
+  }
+  if (current) lines.push(current);
+  return lines.slice(0, 3);
+}
+
+function DashboardBarChart({ categories, series }: { categories: string[]; series: DashboardChartSeriesDef[] }) {
+  const topPad = 22;
+  const chartHeight = 220;
+  const labelHeight = 48;
+  const barWidth = 30;
+  const groupWidth = Math.max(120, series.length * (barWidth + 6) + 40);
+  const width = categories.length * groupWidth + 20;
+  const height = topPad + chartHeight + labelHeight;
+  const maxValue = Math.max(1, ...series.flatMap((serie) => serie.values));
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <svg width={width} height={height} role="img">
+        {categories.map((category, catIndex) => {
+          const groupX = 10 + catIndex * groupWidth;
+          const barsWidth = series.length * (barWidth + 6) - 6;
+          const startX = groupX + (groupWidth - barsWidth) / 2;
+          return (
+            <g key={category}>
+              {series.map((serie, serieIndex) => {
+                const value = serie.values[catIndex] ?? 0;
+                const barHeight = Math.round(value / maxValue * chartHeight);
+                const x = startX + serieIndex * (barWidth + 6);
+                const y = topPad + chartHeight - barHeight;
+                return (
+                  <g key={serie.name}>
+                    <rect x={x} y={y} width={barWidth} height={barHeight} fill={DASHBOARD_CHART_COLORS[serieIndex] ?? "#999999"} />
+                    <text x={x + barWidth / 2} y={y - 5} textAnchor="middle" fontSize="10" fontWeight="bold">{formatNumber(value)}</text>
+                  </g>
+                );
+              })}
+              {wrapChartLabel(category).map((line, lineIndex) => (
+                <text key={lineIndex} x={groupX + groupWidth / 2} y={topPad + chartHeight + 14 + lineIndex * 12} textAnchor="middle" fontSize="10">{line}</text>
+              ))}
+            </g>
+          );
+        })}
+        <line x1={0} y1={topPad + chartHeight} x2={width} y2={topPad + chartHeight} stroke="#c5cec7" />
+      </svg>
+      <div style={{ display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap" }}>
+        {series.map((serie, index) => (
+          <span key={serie.name} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+            <span style={{ width: 12, height: 12, background: DASHBOARD_CHART_COLORS[index] ?? "#999999", display: "inline-block" }} />
+            {serie.name}
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -871,6 +1238,8 @@ function buildRestorationStrategySummary(data: {
   plans: OperationalPlan[];
   planActivities: PlanActivity[];
   quarterlyProgress: QuarterlyProgress[];
+  progressYear?: number;
+  progressQuarters?: number[];
 }) {
   const activityById = new Map(data.activities.map((activity) => [activity.id, activity]));
   const approvedPlanById = new Map(
@@ -881,6 +1250,8 @@ function buildRestorationStrategySummary(data: {
   const advanceByPlanActivity = new Map<string, number>();
   for (const progress of data.quarterlyProgress) {
     if (progress.is_deleted || progress.progress_type !== "avance" || !progress.plan_activity_id) continue;
+    if (data.progressYear !== undefined && progress.year !== data.progressYear) continue;
+    if (data.progressQuarters && progress.quarter != null && !data.progressQuarters.includes(progress.quarter)) continue;
     advanceByPlanActivity.set(
       progress.plan_activity_id,
       (advanceByPlanActivity.get(progress.plan_activity_id) ?? 0) + Number(progress.progress_quantity ?? 0)
@@ -902,9 +1273,8 @@ function buildRestorationStrategySummary(data: {
     const plan = approvedPlanById.get(planActivity.plan_id);
     if (!plan) continue;
     const activity = activityById.get(planActivity.activity_id);
-    if (!activity || activity.is_deleted) continue;
+    if (!activity || activity.is_deleted || isAgreementActivity(activity.name)) continue;
     const strategy = normalizeRestorationStrategy(activity.restoration_strategy);
-    if (strategy === "no_aplica") continue;
     const unit = activity.unit || planActivity.unit || "ha";
     const key = `${strategy}-${activity.id}-${normalizeHeader(unit)}`;
     const row = rows.get(key) ?? {
@@ -945,17 +1315,111 @@ function buildRestorationStrategySummary(data: {
   };
 }
 
-function buildRestorationStrategyTotals(rows: RestorationStrategySummaryRow[]) {
-  const totals = new Map<RestorationStrategy, { strategy: RestorationStrategy; targetTotal: number; advanceTotal: number }>();
-  for (const row of rows.filter((item) => isAreaUnit(item.unit))) {
-    const total = totals.get(row.strategy) ?? { strategy: row.strategy, targetTotal: 0, advanceTotal: 0 };
-    total.targetTotal += row.targetTotal;
-    total.advanceTotal += row.advanceTotal;
-    totals.set(row.strategy, total);
+async function exportDashboardChartsExcel(groups: DashboardChartGroup[]) {
+  const included = groups.filter((group) => group.categories.length > 0);
+  if (included.length === 0) return;
+  const ExcelJS = await import("exceljs");
+  const JSZip = (await import("jszip")).default;
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = "Restauracion Admin";
+  workbook.created = new Date();
+  for (const group of included) {
+    const sheet = workbook.addWorksheet(group.sheetName);
+    sheet.addRow([
+      group.categoryHeader,
+      ...group.series.map((serie) => serie.name),
+      ...(group.extraColumns ?? []).map((column) => column.name)
+    ]);
+    group.categories.forEach((category, index) => {
+      sheet.addRow([
+        category,
+        ...group.series.map((serie) => serie.values[index] ?? 0),
+        ...(group.extraColumns ?? []).map((column) => column.values[index] ?? "")
+      ]);
+    });
+    if (group.totalsRow) {
+      const totalRow = sheet.addRow(group.totalsRow);
+      totalRow.font = { bold: true };
+    }
+    stylePlainWorksheetHeader(sheet);
+    sheet.getColumn(1).width = 46;
+    const dataColumns = group.series.length + (group.extraColumns?.length ?? 0);
+    for (let index = 0; index < dataColumns; index += 1) {
+      sheet.getColumn(index + 2).width = 16;
+    }
   }
-  return Array.from(totals.values()).sort((left, right) =>
-    restorationStrategyLabel(left.strategy).localeCompare(restorationStrategyLabel(right.strategy))
-  );
+  // ExcelJS no genera graficas nativas: se inyectan las partes OOXML (chart + drawing) al zip del xlsx
+  const baseBuffer = await workbook.xlsx.writeBuffer();
+  const zip = await JSZip.loadAsync(baseBuffer);
+  let contentTypes = await zip.file("[Content_Types].xml")!.async("string");
+  let overrides = "";
+  for (const [index, group] of included.entries()) {
+    const n = index + 1;
+    overrides += `<Override PartName="/xl/drawings/drawing${n}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>`
+      + `<Override PartName="/xl/charts/chart${n}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>`;
+    zip.file(`xl/charts/chart${n}.xml`, dashboardChartXml(group));
+    zip.file(`xl/drawings/drawing${n}.xml`, dashboardDrawingXml(1 + group.series.length + (group.extraColumns?.length ?? 0) + 1));
+    zip.file(
+      `xl/drawings/_rels/drawing${n}.xml.rels`,
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chart${n}.xml"/></Relationships>`
+    );
+    const sheetPath = `xl/worksheets/sheet${n}.xml`;
+    const sheetXml = await zip.file(sheetPath)!.async("string");
+    zip.file(sheetPath, sheetXml.replace("</worksheet>", `<drawing r:id="rIdChart"/></worksheet>`));
+    const relsPath = `xl/worksheets/_rels/sheet${n}.xml.rels`;
+    const relsFile = zip.file(relsPath);
+    const drawingRel = `<Relationship Id="rIdChart" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing${n}.xml"/>`;
+    if (relsFile) {
+      const existing = await relsFile.async("string");
+      zip.file(relsPath, existing.replace("</Relationships>", `${drawingRel}</Relationships>`));
+    } else {
+      zip.file(
+        relsPath,
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${drawingRel}</Relationships>`
+      );
+    }
+  }
+  zip.file("[Content_Types].xml", contentTypes.replace("</Types>", `${overrides}</Types>`));
+  const blob = await zip.generateAsync({
+    type: "blob",
+    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  });
+  saveBlob(blob, "dashboard-indicadores.xlsx");
+}
+
+function dashboardChartXml(group: DashboardChartGroup) {
+  const sheetRef = group.sheetName.replaceAll("'", "''");
+  const catCount = group.categories.length;
+  const catPts = group.categories.map((category, index) => `<c:pt idx="${index}"><c:v>${escapeHtml(category)}</c:v></c:pt>`).join("");
+  const series = group.series.map((serie, index) => {
+    const col = String.fromCharCode(66 + index);
+    const valPts = serie.values.map((value, valueIndex) => `<c:pt idx="${valueIndex}"><c:v>${value}</c:v></c:pt>`).join("");
+    return `<c:ser><c:idx val="${index}"/><c:order val="${index}"/>`
+      + `<c:tx><c:strRef><c:f>'${sheetRef}'!$${col}$1</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>${escapeHtml(serie.name)}</c:v></c:pt></c:strCache></c:strRef></c:tx>`
+      + `<c:cat><c:strRef><c:f>'${sheetRef}'!$A$2:$A$${catCount + 1}</c:f><c:strCache><c:ptCount val="${catCount}"/>${catPts}</c:strCache></c:strRef></c:cat>`
+      + `<c:val><c:numRef><c:f>'${sheetRef}'!$${col}$2:$${col}$${catCount + 1}</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="${catCount}"/>${valPts}</c:numCache></c:numRef></c:val>`
+      + `</c:ser>`;
+  }).join("");
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`
+    + `<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">`
+    + `<c:chart><c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>${escapeHtml(group.title)}</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title><c:autoTitleDeleted val="0"/>`
+    + `<c:plotArea><c:layout/><c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:varyColors val="0"/>${series}`
+    + `<c:dLbls><c:showLegendKey val="0"/><c:showVal val="1"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/><c:showBubbleSize val="0"/></c:dLbls>`
+    + `<c:gapWidth val="150"/><c:axId val="100000001"/><c:axId val="100000002"/></c:barChart>`
+    + `<c:catAx><c:axId val="100000001"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:crossAx val="100000002"/></c:catAx>`
+    + `<c:valAx><c:axId val="100000002"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:majorGridlines/><c:crossAx val="100000001"/></c:valAx>`
+    + `</c:plotArea><c:legend><c:legendPos val="b"/><c:overlay val="0"/></c:legend><c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/></c:chart></c:chartSpace>`;
+}
+
+function dashboardDrawingXml(fromCol = 6) {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`
+    + `<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">`
+    + `<xdr:twoCellAnchor><xdr:from><xdr:col>${fromCol}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>`
+    + `<xdr:to><xdr:col>${fromCol + 11}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>26</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>`
+    + `<xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="2" name="Grafica dashboard"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr>`
+    + `<xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm>`
+    + `<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rId1"/></a:graphicData></a:graphic>`
+    + `</xdr:graphicFrame><xdr:clientData/></xdr:twoCellAnchor></xdr:wsDr>`;
 }
 
 function normalizeRestorationStrategy(value: string | null | undefined): RestorationStrategy {
