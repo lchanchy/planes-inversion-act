@@ -10455,11 +10455,12 @@ async function drawDeliveryActPdf(doc: PdfDocumentBuilder, context: DeliveryActC
   y += 24;
   y = drawWrappedPdfText(doc, context.introText ?? DefaultDeliveryActIntroText, doc.margin, y, doc.pageWidth - doc.margin * 2, 9, true);
   y += 12;
-  y = drawPdfTable(doc, y, ["#", "Descripcion del articulo", "Cantidad"], context.items.map((item, index) => [
+  y = drawPdfTable(doc, y, ["#", "Descripcion del articulo", "Unidad", "Cantidad"], context.items.map((item, index) => [
     String(index + 1),
     item.material_name,
-    formatQuantity(Number(item.delivered_quantity), item.unit)
-  ]), [40, 350, 130]);
+    item.unit,
+    formatNumber(Number(item.delivered_quantity))
+  ]), [40, 290, 95, 95]);
   y = doc.ensureSpace(y + 10, 100);
   y = drawWrappedPdfText(doc, context.finalText ?? DefaultDeliveryActFinalText, doc.margin, y, doc.pageWidth - doc.margin * 2, 9, true);
   y += 54;
@@ -10533,7 +10534,7 @@ function buildDeliveryActDocxSection(context: DeliveryActContext) {
 }
 
 function buildDocxDeliveryItemsTable(items: MaterialDeliveryItem[]) {
-  const widths = [600, 7200, 2200];
+  const widths = [600, 6200, 1600, 1600];
   return new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
     layout: TableLayoutType.FIXED,
@@ -10542,7 +10543,7 @@ function buildDocxDeliveryItemsTable(items: MaterialDeliveryItem[]) {
     rows: [
       new TableRow({
         tableHeader: true,
-        children: ["#", "DESCRIPCION DEL ARTICULO", "CANTIDAD"].map((header, index) =>
+        children: ["#", "DESCRIPCION DEL ARTICULO", "UNIDAD", "CANTIDAD"].map((header, index) =>
           docxCell(header, { bold: true, fill: "F3F6F1", alignment: AlignmentType.CENTER, width: widths[index] })
         )
       }),
@@ -10550,7 +10551,8 @@ function buildDocxDeliveryItemsTable(items: MaterialDeliveryItem[]) {
         children: [
           docxCell(String(index + 1), { alignment: AlignmentType.CENTER, width: widths[0] }),
           docxCell(item.material_name, { alignment: AlignmentType.CENTER, width: widths[1] }),
-          docxCell(formatQuantity(Number(item.delivered_quantity), item.unit), { alignment: AlignmentType.CENTER, width: widths[2] })
+          docxCell(item.unit, { alignment: AlignmentType.CENTER, width: widths[2] }),
+          docxCell(formatNumber(Number(item.delivered_quantity)), { alignment: AlignmentType.CENTER, width: widths[3] })
         ]
       }))
     ]
