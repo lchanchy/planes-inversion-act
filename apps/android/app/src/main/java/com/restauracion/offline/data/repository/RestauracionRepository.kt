@@ -66,11 +66,13 @@ class RestauracionRepository(
 
     suspend fun createDraftPlan(projectId: String, familyId: String): OperationalPlanEntity {
         db.planDao().editablePlanForFamily(familyId)?.let { return it }
+        val maxVersion = db.planDao().maxVersionForFamily(familyId) ?: 0
         val plan = OperationalPlanEntity(
             projectId = projectId,
             familyId = familyId,
             technicianId = sessionStore.userId,
-            planDate = LocalDate.now().toString()
+            planDate = LocalDate.now().toString(),
+            version = maxVersion + 1
         )
         db.planDao().upsertPlan(plan)
         return plan

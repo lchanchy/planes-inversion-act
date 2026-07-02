@@ -72,6 +72,9 @@ interface PlanDao {
     @Query("select * from operational_plans where familyId = :familyId and status in ('draft','returned') order by planDate desc limit 1")
     suspend fun editablePlanForFamily(familyId: String): OperationalPlanEntity?
 
+    @Query("SELECT MAX(version) FROM operational_plans WHERE familyId = :familyId")
+    suspend fun maxVersionForFamily(familyId: String): Int?
+
     @Query("select * from operational_plans where id = :id limit 1")
     suspend fun planById(id: String): OperationalPlanEntity?
 
