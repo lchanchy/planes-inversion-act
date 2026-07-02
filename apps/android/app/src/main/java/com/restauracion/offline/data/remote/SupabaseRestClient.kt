@@ -64,7 +64,8 @@ class SupabaseRestClient(
                     val refreshResponse: AuthResponse = client.post("$baseUrl/auth/v1/token?grant_type=refresh_token") {
                         header("apikey", anonKey)
                         contentType(ContentType.Application.Json)
-                        setBody(json.encodeToString(mapOf("refresh_token" to sessionStore.refreshToken)))
+                        val refreshToken = sessionStore.refreshToken ?: throw Exception("No refresh token")
+                        setBody(json.encodeToString(RefreshTokenRequest(refreshToken)))
                     }.body()
                     sessionStore.accessToken = refreshResponse.accessToken
                     sessionStore.refreshToken = refreshResponse.refreshToken
@@ -267,6 +268,7 @@ class SupabaseRestClient(
 )
 @Serializable private data class AuthUser(val id: String)
 @Serializable private data class AuthRequest(val email: String, val password: String)
+@Serializable private data class RefreshTokenRequest(@SerialName("refresh_token") val refreshToken: String)
 
 @Serializable
 private data class PlanUploadDto(
