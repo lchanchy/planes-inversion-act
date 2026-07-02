@@ -362,6 +362,9 @@ private fun HomeScreen(
     onLogout: () -> Unit,
     onOpenProject: (ProjectEntity) -> Unit
 ) {
+    // ponytail: auto-actualizar catalogos al entrar a la pantalla principal sin depender del boton manual
+    LaunchedEffect(Unit) { onDownload() }
+    
     val projects by container.repository.projects.collectAsState(initial = emptyList())
     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         AppHeader(chip = "Proyectos")
