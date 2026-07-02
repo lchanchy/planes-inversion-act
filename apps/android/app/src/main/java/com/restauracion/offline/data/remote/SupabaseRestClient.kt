@@ -319,6 +319,18 @@ private data class ProvisionalMaterialUploadDto(
 )
 
 @Serializable
+private data class MaterialCatalogProvisionalUploadDto(
+    val id: String,
+    @SerialName("project_id") val projectId: String,
+    val name: String,
+    val category: String,
+    val unit: String,
+    @SerialName("quoted_unit_price") val quotedUnitPrice: Double,
+    val active: Boolean = true,
+    @SerialName("is_deleted") val isDeleted: Boolean = false
+)
+
+@Serializable
 private data class PlanFamilyCounterpartUploadDto(
     val id: String,
     @SerialName("plan_activity_id") val planActivityId: String,
