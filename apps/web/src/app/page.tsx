@@ -580,6 +580,58 @@ function AdminApp({ session }: { session: Session }) {
     await supabase.auth.signOut();
   }
 
+  const [globalProjectId, setGlobalProjectId] = useState("");
+  useEffect(() => {
+    const stored = window.localStorage.getItem("global_project_filter");
+    if (stored) setGlobalProjectId(stored);
+  }, []);
+  function changeGlobalProject(value: string) {
+    setGlobalProjectId(value);
+    window.localStorage.setItem("global_project_filter", value);
+  }
+
+  // Filtro global de proyecto: se filtra una sola vez aqui y todas las secciones reciben datos ya acotados
+  const scoped = useMemo(() => {
+    if (!globalProjectId || !projects.some((project) => project.id === globalProjectId)) {
+      return {
+        projects, families, properties, activities, materials, plans, planActivities, planMaterials,
+        planCounterparts, provisionalMaterials, procurementBatches, procurementBatchItems,
+        materialDeliveries, materialDeliveryItems, deliveryActs, implementationProgress,
+        quarterlyProgress, maintenanceProgress
+      };
+    }
+    const scopedFamilies = families.filter((item) => item.project_id === globalProjectId);
+    const familyIds = new Set(scopedFamilies.map((item) => item.id));
+    const scopedPlans = plans.filter((item) => item.project_id === globalProjectId);
+    const planIds = new Set(scopedPlans.map((item) => item.id));
+    const scopedPlanActivities = planActivities.filter((item) => planIds.has(item.plan_id));
+    const planActivityIds = new Set(scopedPlanActivities.map((item) => item.id));
+    const scopedBatches = procurementBatches.filter((item) => item.project_id === globalProjectId);
+    const batchIds = new Set(scopedBatches.map((item) => item.id));
+    const scopedDeliveries = materialDeliveries.filter((item) => item.project_id === globalProjectId);
+    const deliveryIds = new Set(scopedDeliveries.map((item) => item.id));
+    return {
+      projects: projects.filter((item) => item.id === globalProjectId),
+      families: scopedFamilies,
+      properties: properties.filter((item) => familyIds.has(item.family_id)),
+      activities: activities.filter((item) => item.project_id === globalProjectId),
+      materials: materials.filter((item) => item.project_id === globalProjectId),
+      plans: scopedPlans,
+      planActivities: scopedPlanActivities,
+      planMaterials: planMaterials.filter((item) => planActivityIds.has(item.plan_activity_id)),
+      planCounterparts: planCounterparts.filter((item) => planActivityIds.has(item.plan_activity_id)),
+      provisionalMaterials: provisionalMaterials.filter((item) => item.project_id === globalProjectId),
+      procurementBatches: scopedBatches,
+      procurementBatchItems: procurementBatchItems.filter((item) => batchIds.has(item.procurement_batch_id)),
+      materialDeliveries: scopedDeliveries,
+      materialDeliveryItems: materialDeliveryItems.filter((item) => deliveryIds.has(item.material_delivery_id)),
+      deliveryActs: deliveryActs.filter((item) => item.project_id === globalProjectId),
+      implementationProgress: implementationProgress.filter((item) => item.project_id === globalProjectId),
+      quarterlyProgress: quarterlyProgress.filter((item) => item.project_id === globalProjectId),
+      maintenanceProgress: maintenanceProgress.filter((item) => item.project_id === globalProjectId)
+    };
+  }, [globalProjectId, projects, families, properties, activities, materials, plans, planActivities, planMaterials, planCounterparts, provisionalMaterials, procurementBatches, procurementBatchItems, materialDeliveries, materialDeliveryItems, deliveryActs, implementationProgress, quarterlyProgress, maintenanceProgress]);
+
   const views: { key: ViewKey; label: string }[] = [
     { key: "dashboard", label: "Dashboard" },
     { key: "projects", label: "Proyectos" },
@@ -627,6 +679,15 @@ function AdminApp({ session }: { session: Session }) {
           <div style={{ flex: 2, textAlign: 'center', fontWeight: 'bold', color: 'var(--brand-dark)', fontSize: '18px' }}>
             Herramienta de seguimiento de proyectos de restauración y medios de vida
           </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 'bold', whiteSpace: 'nowrap' }}>
+            Proyecto
+            <select value={globalProjectId} onChange={(event) => changeGlobalProject(event.target.value)}>
+              <option value="">Todos los proyectos</option>
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>{project.name}</option>
+              ))}
+            </select>
+          </label>
           <div className="form-actions">
             <button className="secondary" onClick={loadAll} type="button" disabled={loading}>
               {loading ? "Cargando..." : "Actualizar"}
@@ -646,19 +707,19 @@ function AdminApp({ session }: { session: Session }) {
           ) : null}
           {view === "dashboard" ? (
             <Dashboard
-              projects={projects}
+              projects={scoped.projects}
               profiles={profiles}
-              families={families}
-              properties={properties}
+              families={scoped.families}
+              properties={scoped.properties}
               municipalities={municipalities}
               villages={villages}
-              activities={activities}
-              materials={materials}
-              plans={plans}
-              planActivities={planActivities}
-              planMaterials={planMaterials}
-              quarterlyProgress={quarterlyProgress}
-              maintenanceProgress={maintenanceProgress}
+              activities={scoped.activities}
+              materials={scoped.materials}
+              plans={scoped.plans}
+              planActivities={scoped.planActivities}
+              planMaterials={scoped.planMaterials}
+              quarterlyProgress={scoped.quarterlyProgress}
+              maintenanceProgress={scoped.maintenanceProgress}
             />
           ) : null}
           {view === "projects" ? (
@@ -691,9 +752,9 @@ function AdminApp({ session }: { session: Session }) {
           ) : null}
           {view === "families" ? (
             <FamiliesCrud
-              families={families}
-              properties={properties}
-              projects={projects}
+              families={scoped.families}
+              properties={scoped.properties}
+              projects={scoped.projects}
               projectMunicipalities={projectMunicipalities}
               projectVillages={projectVillages}
               municipalities={municipalities}
@@ -714,17 +775,17 @@ function AdminApp({ session }: { session: Session }) {
           ) : null}
           {view === "plans" ? (
             <PlansAdmin
-              plans={plans}
-              projects={projects}
-              families={families}
+              plans={scoped.plans}
+              projects={scoped.projects}
+              families={scoped.families}
               municipalities={municipalities}
               villages={villages}
-              activities={activities}
-              materials={materials}
-              planActivities={planActivities}
-              planMaterials={planMaterials}
-              planCounterparts={planCounterparts}
-              provisionalMaterials={provisionalMaterials}
+              activities={scoped.activities}
+              materials={scoped.materials}
+              planActivities={scoped.planActivities}
+              planMaterials={scoped.planMaterials}
+              planCounterparts={scoped.planCounterparts}
+              provisionalMaterials={scoped.provisionalMaterials}
               canReview={canWrite}
               canManageLogos={roleNames.has("admin")}
               currentProfile={profile}
@@ -734,25 +795,25 @@ function AdminApp({ session }: { session: Session }) {
           {selectedPhase5Tab ? (
             <ProcurementDeliveriesActs
               initialTab={selectedPhase5Tab}
-              projects={projects}
-              families={families}
-              properties={properties}
+              projects={scoped.projects}
+              families={scoped.families}
+              properties={scoped.properties}
               municipalities={municipalities}
               villages={villages}
-              activities={activities}
-              materials={materials}
-              plans={plans}
-              planActivities={planActivities}
-              planMaterials={planMaterials}
-              provisionalMaterials={provisionalMaterials}
-              procurementBatches={procurementBatches}
-              procurementBatchItems={procurementBatchItems}
-              materialDeliveries={materialDeliveries}
-              materialDeliveryItems={materialDeliveryItems}
-              deliveryActs={deliveryActs}
-              implementationProgress={implementationProgress}
-              quarterlyProgress={quarterlyProgress}
-              maintenanceProgress={maintenanceProgress}
+              activities={scoped.activities}
+              materials={scoped.materials}
+              plans={scoped.plans}
+              planActivities={scoped.planActivities}
+              planMaterials={scoped.planMaterials}
+              provisionalMaterials={scoped.provisionalMaterials}
+              procurementBatches={scoped.procurementBatches}
+              procurementBatchItems={scoped.procurementBatchItems}
+              materialDeliveries={scoped.materialDeliveries}
+              materialDeliveryItems={scoped.materialDeliveryItems}
+              deliveryActs={scoped.deliveryActs}
+              implementationProgress={scoped.implementationProgress}
+              quarterlyProgress={scoped.quarterlyProgress}
+              maintenanceProgress={scoped.maintenanceProgress}
               phase5SchemaStatus={phase5SchemaStatus}
               maintenanceSchemaStatus={maintenanceSchemaStatus}
               currentProfile={profile}
@@ -6299,7 +6360,9 @@ function ProcurementDeliveriesActs({
           materials,
           provisionalMaterials
         });
-        if (active) setApprovedNeedsFromDb(needs);
+        // La consulta va directo a la BD: acotar al alcance de proyectos recibido (filtro global)
+        const projectIds = new Set(projects.map((project) => project.id));
+        if (active) setApprovedNeedsFromDb(needs.filter((need) => projectIds.has(need.project_id)));
       } catch (error) {
         if (active) setNotice({ type: "error", message: `No fue posible consultar materiales aprobados: ${getErrorMessage(error)}` });
       } finally {
