@@ -87,6 +87,16 @@ const COUNTERPART_TYPES: { value: CounterpartCatalog["type"]; label: string }[] 
   { value: "otro", label: "Otros aportes" }
 ];
 const COUNTERPART_UNITS = ["jornal", "unidad", "kg", "bulto", "metro", "rollo", "paquete", "planta", "arbol", "ha", "hora", "dia"];
+const ROLE_LABELS: Record<string, string> = {
+  super_admin: "Super administrador",
+  admin: "Administrador",
+  project_admin: "Administrador de proyecto",
+  coordinator: "Coordinador",
+  technician: "Técnico",
+  municipal_technician: "Técnico municipal",
+  auditor: "Auditor"
+};
+
 const RESTORATION_STRATEGIES: { value: RestorationStrategy; label: string }[] = [
   { value: "restauracion_ecologica", label: "Restauracion ecologica" },
   { value: "rehabilitacion_ecologica", label: "Rehabilitacion ecologica" },
@@ -331,7 +341,7 @@ function Login() {
               {isResetMode ? "Volver a iniciar sesion" : "¿Olvidaste tu contrasena?"}
             </button>
           </div>
-          {notice ? <div className={`alert ${notice.type}`}>{notice.message}</div> : null}
+          <AlertNotice notice={notice} onClose={() => setNotice(null)} />
         </form>
       </section>
     </main>
@@ -670,16 +680,16 @@ function AdminApp({ session }: { session: Session }) {
       </aside>
       <main className="main">
         <header className="topbar">
-          <div style={{ flex: 1 }}>
+          <div className="topbar-user">
             <strong>{profile?.full_name ?? session.user.email}</strong>
             <div className="muted">
-              {[...roleNames].join(", ") || "Sin perfil/rol asignado"}
+              {[...roleNames].map((name) => ROLE_LABELS[name] ?? name).join(", ") || "Sin perfil/rol asignado"}
             </div>
           </div>
-          <div style={{ flex: 2, textAlign: 'center', fontWeight: 'bold', color: 'var(--brand-dark)', fontSize: '18px' }}>
+          <div className="topbar-title">
             Herramienta de seguimiento de proyectos de restauración y medios de vida
           </div>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 'bold', whiteSpace: 'nowrap' }}>
+          <label className={`topbar-project ${globalProjectId ? "active" : ""}`}>
             Proyecto
             <select value={globalProjectId} onChange={(event) => changeGlobalProject(event.target.value)}>
               <option value="">Todos los proyectos</option>
@@ -699,7 +709,7 @@ function AdminApp({ session }: { session: Session }) {
         </header>
         
           <section className="content">
-          {notice ? <div className={`alert ${notice.type}`}>{notice.message}</div> : null}
+          <AlertNotice notice={notice} onClose={() => setNotice(null)} />
           {!profile ? (
             <div className="alert info">
               No existe perfil para este usuario. Un administrador debe crear un registro en usuarios/perfiles.
@@ -1198,9 +1208,9 @@ function buildDashboardChartGroups(data: {
     ]
   });
 
-  const summary = buildRestorationStrategySummary({ ...data, progressYear: data.year, progressQuarters: data.quarters });
+  const summaryRows = buildRestorationStrategySummary({ ...data, progressYear: data.year, progressQuarters: data.quarters });
   for (const strategy of RESTORATION_STRATEGIES) {
-    const rows = summary.rows.filter((row) => row.strategy === strategy.value);
+    const rows = summaryRows.filter((row) => row.strategy === strategy.value);
     groups.push({
       key: strategy.value,
       title: strategy.label,
@@ -1282,18 +1292,6 @@ function DashboardBarChart({ categories, series }: { categories: string[]; serie
   );
 }
 
-type RestorationStrategySummaryRow = {
-  key: string;
-  strategy: RestorationStrategy;
-  activityName: string;
-  unit: string;
-  targetTotal: number;
-  advanceTotal: number;
-  progressPercent: number;
-  familyCount: number;
-  planCount: number;
-};
-
 function buildRestorationStrategySummary(data: {
   activities: Activity[];
   plans: OperationalPlan[];
@@ -1370,10 +1368,7 @@ function buildRestorationStrategySummary(data: {
     || left.activityName.localeCompare(right.activityName)
   );
 
-  return {
-    rows: summaryRows,
-    nonAreaRows: summaryRows.filter((row) => !isAreaUnit(row.unit)).length
-  };
+  return summaryRows;
 }
 
 async function exportDashboardChartsExcel(groups: DashboardChartGroup[]) {
@@ -1494,11 +1489,6 @@ function normalizeRestorationStrategy(value: string | null | undefined): Restora
 function restorationStrategyLabel(value: string | null | undefined) {
   const strategy = normalizeRestorationStrategy(value);
   return RESTORATION_STRATEGIES.find((item) => item.value === strategy)?.label ?? "No aplica";
-}
-
-function isAreaUnit(unit: string | null | undefined) {
-  const normalized = normalizeHeader(unit ?? "");
-  return ["ha", "has", "hectarea", "hectareas"].includes(normalized);
 }
 
 type CsvRow = Record<string, string>;
@@ -3654,7 +3644,7 @@ function ActivitiesCrud({
       return [{
         project_id: importProjectId || null,
         name,
-        restoration_strategy: normalizeRestorationStrategy(csvValue(row, ["estrategia", "estrategia restauracion", "estrategia restauraciÃ³n"])),
+        restoration_strategy: normalizeRestorationStrategy(csvValue(row, ["estrategia", "estrategia restauracion", "estrategia restauración"])),
         category: csvValue(row, ["categoria", "categoría"]) || null,
         unit,
         requires_baseline: csvBool(csvValue(row, ["requiere linea base", "linea base"]), false),
@@ -5059,7 +5049,7 @@ function PlansAdmin({
         </div>
         <span className="badge">{canReview ? "Revision habilitada" : "Solo lectura"}</span>
       </div>
-      {notice ? <div className={`alert ${notice.type}`}>{notice.message}</div> : null}
+      <AlertNotice notice={notice} onClose={() => setNotice(null)} />
       <form className="panel grid" onSubmit={createManualPlan}>
         <div className="span-12">
           <strong>Crear plan manual de contingencia</strong>
@@ -7411,7 +7401,7 @@ function ProcurementDeliveriesActs({
         </div>
         <span className="badge">{canManageProcurement ? "Operacion habilitada" : "Solo lectura"}</span>
       </div>
-      {notice ? <div className={`alert ${notice.type}`}>{notice.message}</div> : null}
+      <AlertNotice notice={notice} onClose={() => setNotice(null)} />
       <Phase5Filters
         filters={filters}
         projects={projects}
@@ -7784,12 +7774,12 @@ function ProcurementDeliveriesActs({
           <div className="summary-grid compact-summary">
             <Metric label="Familias mantenimiento" value={maintenanceMatrix.rows.length} />
             <Metric label="Actividades mantenimiento" value={maintenanceMatrix.groups.length} />
-            <Metric label="AÃ±o mantenimiento" value={maintenanceYear} />
+            <Metric label="Año mantenimiento" value={maintenanceYear} />
             <Metric label="Trimestres visibles" value={visibleMaintenanceQuarters.length} />
           </div>
           <div className="panel grid compact-tracking-controls">
             <label className="span-2">
-              AÃ±o de mantenimiento
+              Año de mantenimiento
               <input type="number" min="2020" max="2100" value={maintenanceYear} onChange={(event) => setMaintenanceYear(Number(event.target.value || new Date().getFullYear()))} />
             </label>
             <div className="span-6">
@@ -7825,7 +7815,7 @@ function ProcurementDeliveriesActs({
             onTargetChange={saveTrackingTarget}
           />
           <div className="alert info">
-            La matriz toma actividades desde planes operativos aprobados. Las fechas y avances de abonos se guardan por familia, actividad y aÃ±o.
+            La matriz toma actividades desde planes operativos aprobados. Las fechas y avances de abonos se guardan por familia, actividad y año.
           </div>
         </div>
       ) : null}
@@ -8286,7 +8276,7 @@ function MaintenanceMatrixTable({
   }) => Promise<void>;
   onTargetChange?: (planActivityId: string, value: string) => Promise<void>;
 }) {
-  const baseHeaders = ["Codigo Predio", "Familia", "Cedula", "Edad AÃ±os", "Municipio", "Vereda", "Hectareas del predio"];
+  const baseHeaders = ["Codigo Predio", "Familia", "Cedula", "Edad Años", "Municipio", "Vereda", "Hectareas del predio"];
   if (matrix.rows.length === 0) {
     return <div className="panel muted">No hay planes aprobados con actividades de mantenimiento para los filtros seleccionados.</div>;
   }
@@ -10453,7 +10443,7 @@ async function exportMaintenanceMatrixExcel(matrix: MaintenanceMatrix) {
   workbook.created = new Date();
 
   const sheet = workbook.addWorksheet(`MANTENIMIENTO_${matrix.year}`);
-  const baseHeaders = ["Codigo Predio", "Familia", "Cedula", "Edad AÃ±os", "Municipio", "Vereda", "Hectareas del predio"];
+  const baseHeaders = ["Codigo Predio", "Familia", "Cedula", "Edad Años", "Municipio", "Vereda", "Hectareas del predio"];
   baseHeaders.forEach((header, index) => {
     const column = index + 1;
     sheet.getCell(1, column).value = header;
@@ -12481,6 +12471,16 @@ function CrudSection({
       {notice ? <div className={`alert ${notice.type}`}>{notice.message}</div> : null}
       {children}
     </section>
+  );
+}
+
+function AlertNotice({ notice, onClose }: { notice: Notice; onClose: () => void }) {
+  if (!notice) return null;
+  return (
+    <div className={`alert ${notice.type} alert-dismissible`}>
+      <span>{notice.message}</span>
+      <button type="button" className="alert-close" aria-label="Cerrar aviso" onClick={onClose}>×</button>
+    </div>
   );
 }
 
