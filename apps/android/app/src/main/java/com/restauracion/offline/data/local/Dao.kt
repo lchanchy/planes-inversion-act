@@ -105,13 +105,13 @@ interface PlanDao {
     @Query("select * from operational_plans where syncState in ('PENDING_SYNC','ERROR','CONFLICT')")
     suspend fun pendingPlans(): List<OperationalPlanEntity>
 
-    @Query("select * from plan_activities where syncState = 'PENDING_SYNC'")
+    @Query("select * from plan_activities where syncState in ('PENDING_SYNC','ERROR','CONFLICT')")
     suspend fun pendingActivities(): List<PlanActivityEntity>
 
-    @Query("select * from plan_project_materials where syncState = 'PENDING_SYNC'")
+    @Query("select * from plan_project_materials where syncState in ('PENDING_SYNC','ERROR','CONFLICT')")
     suspend fun pendingMaterials(): List<PlanProjectMaterialEntity>
 
-    @Query("select * from plan_family_counterparts where syncState = 'PENDING_SYNC'")
+    @Query("select * from plan_family_counterparts where syncState in ('PENDING_SYNC','ERROR','CONFLICT')")
     suspend fun pendingCounterparts(): List<PlanFamilyCounterpartEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)

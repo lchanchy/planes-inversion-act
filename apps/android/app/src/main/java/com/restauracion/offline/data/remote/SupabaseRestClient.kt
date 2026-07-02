@@ -137,8 +137,10 @@ class SupabaseRestClient(
     }
 
     private suspend fun resolveProfileId(idOrEmail: String): String = withAuth {
-        if (!idOrEmail.contains("@")) return@withAuth idOrEmail
-        val results = client.get("$baseUrl/rest/v1/profiles?email=eq.$idOrEmail&select=id") {
+        // technician_id referencia users_profiles.id, no auth.users.id:
+        // hay que traducir el id de sesion (auth_user_id) al id del perfil.
+        val filter = if (idOrEmail.contains("@")) "email=eq.$idOrEmail" else "auth_user_id=eq.$idOrEmail"
+        val results = client.get("$baseUrl/rest/v1/users_profiles?$filter&select=id") {
             authHeaders()
         }.body<List<UserProfileDto>>()
         results.firstOrNull()?.id ?: idOrEmail
