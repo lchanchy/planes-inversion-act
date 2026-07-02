@@ -1195,7 +1195,15 @@ private fun PlanCaptureScreen(
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     DecimalField("Cantidad", counterpartQuantity, { counterpartQuantity = it }, Modifier.weight(1f))
-                    OutlinedTextField(value = counterpartUnit, onValueChange = { counterpartUnit = it }, label = { Text("Unidad") }, modifier = Modifier.weight(1f))
+                    // La unidad del catalogo es la fuente de verdad definida en la web
+                    val unitLocked = !useProvisionalCounterpart && selectedCounterpart != null
+                    OutlinedTextField(
+                        value = counterpartUnit,
+                        onValueChange = { if (!unitLocked) counterpartUnit = it },
+                        label = { Text(if (unitLocked) "Unidad (del catalogo)" else "Unidad") },
+                        readOnly = unitLocked,
+                        modifier = Modifier.weight(1f)
+                    )
                 }
                 DecimalField("Valor unitario estimado", counterpartUnitValue, { counterpartUnitValue = it }, Modifier.fillMaxWidth())
                 OutlinedTextField(
