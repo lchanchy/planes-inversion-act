@@ -5873,6 +5873,18 @@ function ProcurementDeliveriesActs({
     needs: filteredNeeds,
     deliveryItems: materialDeliveryItems
   }), purchaseFilters), [visibleProcurementBatches, procurementBatchItems, filteredNeeds, materialDeliveryItems, purchaseFilters]);
+  const deliveredByFamilyReport = useMemo(() => {
+    const groups = new Map<string, { familyLabel: string; rows: PurchaseFamilyReportRow[]; totalValue: number }>();
+    for (const row of purchaseFamilyReportRows) {
+      if (row.deliveredQuantity <= 0) continue;
+      const key = `${row.familyCode}-${row.familyName}`;
+      const group = groups.get(key) ?? { familyLabel: `${row.familyCode} - ${row.familyName}`, rows: [], totalValue: 0 };
+      group.rows.push(row);
+      group.totalValue += row.deliveredQuantity * (row.purchaseUnitPrice || row.quotedUnitPrice);
+      groups.set(key, group);
+    }
+    return Array.from(groups.values()).sort((left, right) => left.familyLabel.localeCompare(right.familyLabel));
+  }, [purchaseFamilyReportRows]);
   const etecMatrix = useMemo(() => buildEtecMatrix(filteredNeeds, materials, etecDrafts, etecViewMode, etecBlockFilter), [filteredNeeds, materials, etecDrafts, etecViewMode, etecBlockFilter]);
   const etecBlocks = useMemo(() => buildEtecBlockOptions(materials, etecMatrix.rows, customEtecBlocks), [materials, etecMatrix.rows, customEtecBlocks]);
   const etecTotalPages = Math.max(1, Math.ceil(etecMatrix.rows.length / etecPageSize));
@@ -6995,6 +7007,55 @@ function ProcurementDeliveriesActs({
                 `${formatNumber(need.approvedQuantity)} ${need.unit}`,
                 `${formatNumber(need.pendingQuantity)} ${need.unit}`
               ])}
+            />
+          </details>
+          <details className="collapsible-panel">
+            <summary>Materiales entregados por familia ({deliveredByFamilyReport.reduce((sum, group) => sum + group.rows.length, 0)})</summary>
+            <div className="muted">Incluye todas las compras y todos los planes del proyecto. Use el filtro Familia del panel superior para consultar una sola familia.</div>
+            <div className="form-actions">
+              <button className="secondary" disabled={deliveredByFamilyReport.length === 0} type="button" onClick={() => void exportDeliveredByFamilyExcel(deliveredByFamilyReport.flatMap((group) => group.rows))}>
+                Exportar entregado por familia Excel
+              </button>
+            </div>
+            <DataTable
+              embedded
+              headers={["Familia", "Compra", "Factura", "Proveedor", "Actividad", "Material", "Cantidad", "Unidad", "Vlr. unitario", "Vlr. total"]}
+              emptyMessage="No hay materiales entregados para los filtros seleccionados."
+              rows={[
+                ...deliveredByFamilyReport.flatMap((group) => [
+                  ...group.rows.map((row) => {
+                    const unitPrice = row.purchaseUnitPrice || row.quotedUnitPrice;
+                    return [
+                      `${row.familyCode} - ${row.familyName}`,
+                      row.purchaseLabel,
+                      row.invoiceNumber,
+                      row.supplierName,
+                      row.activityName,
+                      row.materialName,
+                      formatNumber(row.deliveredQuantity),
+                      row.unit,
+                      formatExportMoney(unitPrice),
+                      formatExportMoney(row.deliveredQuantity * unitPrice)
+                    ] as React.ReactNode[];
+                  }),
+                  [
+                    <strong key="label">Total {group.familyLabel}</strong>,
+                    "", "", "", "", "",
+                    <strong key="count">{formatNumber(group.rows.length)} items</strong>,
+                    "", "",
+                    <strong key="value">{formatExportMoney(group.totalValue)}</strong>
+                  ] as React.ReactNode[]
+                ]),
+                ...(deliveredByFamilyReport.length > 1
+                  ? [[
+                      <strong key="label">Total general</strong>,
+                      "", "", "", "", "",
+                      <strong key="count">{formatNumber(deliveredByFamilyReport.reduce((sum, group) => sum + group.rows.length, 0))} items</strong>,
+                      "", "",
+                      <strong key="value">{formatExportMoney(deliveredByFamilyReport.reduce((sum, group) => sum + group.totalValue, 0))}</strong>
+                    ] as React.ReactNode[]]
+                  : [])
+              ]}
             />
           </details>
         </div>
@@ -9434,6 +9495,58 @@ async function exportPurchasesByFamilyExcel(rows: PurchaseFamilyReportRow[]) {
   saveBlob(new Blob([buffer], {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
   }), "compras-por-familia.xlsx");
+}
+
+async function exportDeliveredByFamilyExcel(rows: PurchaseFamilyReportRow[]) {
+  const ExcelJS = await import("exceljs");
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = "Restauracion Admin";
+  workbook.created = new Date();
+  const sheet = workbook.addWorksheet("Entregado por familia");
+  sheet.addRow([
+    "Codigo familia",
+    "Familia",
+    "Municipio",
+    "Vereda",
+    "Compra",
+    "Factura",
+    "Proveedor",
+    "Actividad",
+    "Material",
+    "Unidad",
+    "Cantidad entregada",
+    "Valor unitario facturado",
+    "Valor total entregado"
+  ]);
+  for (const row of rows) {
+    const unitPrice = row.purchaseUnitPrice || row.quotedUnitPrice;
+    sheet.addRow([
+      row.familyCode,
+      row.familyName,
+      row.municipalityName,
+      row.villageName,
+      row.purchaseLabel,
+      row.invoiceNumber,
+      row.supplierName,
+      row.activityName,
+      row.materialName,
+      row.unit,
+      row.deliveredQuantity,
+      unitPrice,
+      row.deliveredQuantity * unitPrice
+    ]);
+  }
+  stylePlainWorksheetHeader(sheet);
+  sheet.autoFilter = "A1:M1";
+  [1, 2, 3, 4, 5, 6, 7, 8, 9].forEach((column) => {
+    sheet.getColumn(column).width = column === 9 ? 42 : 24;
+  });
+  sheet.getColumn(12).numFmt = '"$"#,##0';
+  sheet.getColumn(13).numFmt = '"$"#,##0';
+  const buffer = await workbook.xlsx.writeBuffer();
+  saveBlob(new Blob([buffer], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  }), "entregado-por-familia.xlsx");
 }
 
 function buildIndicatorRows(needs: ApprovedMaterialNeed[], progressRows: ImplementationProgress[]): IndicatorRow[] {
