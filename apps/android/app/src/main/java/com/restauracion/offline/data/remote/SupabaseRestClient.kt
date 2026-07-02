@@ -37,7 +37,7 @@ class SupabaseRestClient(
     private val sessionStore: SessionStore
 ) {
     private val baseUrl = baseUrl.trim().trimEnd('/')
-    private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
+    private val json = Json { ignoreUnknownKeys = true; explicitNulls = false; encodeDefaults = true }
     private val client = HttpClient(OkHttp) {
         install(ContentNegotiation) { json(json) }
         expectSuccess = true
