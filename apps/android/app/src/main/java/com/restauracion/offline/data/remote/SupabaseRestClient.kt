@@ -17,6 +17,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.plugins.ClientRequestException
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -50,77 +51,99 @@ class SupabaseRestClient(
             setBody(json.encodeToString(AuthRequest(email = email, password = password)))
         }.body()
         sessionStore.accessToken = response.accessToken
+        sessionStore.refreshToken = response.refreshToken
         sessionStore.userId = response.user.id
     }
 
-    suspend fun projects(): List<ProjectEntity> {
+    private suspend fun <T> withAuth(block: suspend () -> T): T {
+        return try {
+            block()
+        } catch (e: ClientRequestException) {
+            if (e.response.status.value == 401 && sessionStore.refreshToken != null) {
+                try {
+                    val refreshResponse: AuthResponse = client.post("$baseUrl/auth/v1/token?grant_type=refresh_token") {
+                        header("apikey", anonKey)
+                        contentType(ContentType.Application.Json)
+                        setBody(json.encodeToString(mapOf("refresh_token" to sessionStore.refreshToken)))
+                    }.body()
+                    sessionStore.accessToken = refreshResponse.accessToken
+                    sessionStore.refreshToken = refreshResponse.refreshToken
+                    sessionStore.userId = refreshResponse.user.id
+                    block()
+                } catch (refreshErr: Exception) {
+                    throw e // if refresh fails, throw original 401
+                }
+            } else {
+                throw e
+            }
+        }
+    }
+
+    suspend fun projects(): List<ProjectEntity> = withAuth {
         requireConfigured()
-        return client.get("$baseUrl/rest/v1/projects?select=id,name,code_prefix,status&is_deleted=eq.false") {
+        client.get("$baseUrl/rest/v1/projects?select=id,name,code_prefix,status&is_deleted=eq.false") {
         authHeaders()
         }.body<List<ProjectDto>>().map { it.toEntity() }
     }
 
-    suspend fun families(): List<FamilyEntity> {
+    suspend fun families(): List<FamilyEntity> = withAuth {
         requireConfigured()
-        return client.get("$baseUrl/rest/v1/families?select=id,project_id,family_code,representative_name,document_number,municipality_id,village_id,status&is_deleted=eq.false") {
+        client.get("$baseUrl/rest/v1/families?select=id,project_id,family_code,representative_name,document_number,municipality_id,village_id,status&is_deleted=eq.false") {
         authHeaders()
         }.body<List<FamilyDto>>().map { it.toEntity() }
     }
 
-    suspend fun municipalities(): List<MunicipalityEntity> {
+    suspend fun municipalities(): List<MunicipalityEntity> = withAuth {
         requireConfigured()
-        return client.get("$baseUrl/rest/v1/municipalities?select=id,name") {
+        client.get("$baseUrl/rest/v1/municipalities?select=id,name") {
         authHeaders()
         }.body<List<MunicipalityDto>>().map { it.toEntity() }
     }
 
-    suspend fun villages(): List<VillageEntity> {
+    suspend fun villages(): List<VillageEntity> = withAuth {
         requireConfigured()
-        return client.get("$baseUrl/rest/v1/villages?select=id,municipality_id,name") {
+        client.get("$baseUrl/rest/v1/villages?select=id,municipality_id,name") {
         authHeaders()
         }.body<List<VillageDto>>().map { it.toEntity() }
     }
 
-    suspend fun properties(): List<PropertyEntity> {
+    suspend fun properties(): List<PropertyEntity> = withAuth {
         requireConfigured()
-        return client.get("$baseUrl/rest/v1/properties?select=id,family_id,property_name,total_area_ha&is_deleted=eq.false") {
+        client.get("$baseUrl/rest/v1/properties?select=id,family_id,property_name,total_area_ha&is_deleted=eq.false") {
         authHeaders()
         }.body<List<PropertyDto>>().map { it.toEntity() }
     }
 
-    suspend fun activities(): List<ActivityCatalogEntity> {
+    suspend fun activities(): List<ActivityCatalogEntity> = withAuth {
         requireConfigured()
-        return client.get("$baseUrl/rest/v1/activity_catalog?select=id,project_id,name,unit,requires_baseline,requires_target,active&is_deleted=eq.false") {
+        client.get("$baseUrl/rest/v1/activity_catalog?select=id,project_id,name,unit,requires_baseline,requires_target,active&is_deleted=eq.false") {
         authHeaders()
         }.body<List<ActivityDto>>().map { it.toEntity() }
     }
 
-    suspend fun materials(): List<MaterialCatalogEntity> {
+    suspend fun materials(): List<MaterialCatalogEntity> = withAuth {
         requireConfigured()
-        return client.get("$baseUrl/rest/v1/material_catalog?select=id,project_id,name,category,unit,quoted_unit_price,vegetal_indicator_group,active&is_deleted=eq.false") {
+        client.get("$baseUrl/rest/v1/material_catalog?select=id,project_id,name,category,unit,quoted_unit_price,vegetal_indicator_group,active&is_deleted=eq.false") {
         authHeaders()
         }.body<List<MaterialDto>>().map { it.toEntity() }
     }
 
-    suspend fun counterpartCatalog(): List<CounterpartCatalogEntity> {
+    suspend fun counterpartCatalog(): List<CounterpartCatalogEntity> = withAuth {
         requireConfigured()
-        return client.get("$baseUrl/rest/v1/counterpart_catalog?select=id,project_id,name,type,suggested_unit,active&is_deleted=eq.false") {
+        client.get("$baseUrl/rest/v1/counterpart_catalog?select=id,project_id,name,type,suggested_unit,active&is_deleted=eq.false") {
         authHeaders()
         }.body<List<CounterpartDto>>().map { it.toEntity() }
     }
 
-    private suspend fun resolveProfileId(id: String): String {
-        return try {
-            val profiles: List<UserProfileDto> = client.get("$baseUrl/rest/v1/users_profiles?auth_user_id=eq.$id&select=id") {
-                authHeaders()
-            }.body()
-            profiles.firstOrNull()?.id ?: id
-        } catch (e: Exception) {
-            id
-        }
+    private suspend fun resolveProfileId(idOrEmail: String): String = withAuth {
+        if (!idOrEmail.contains("@")) return@withAuth idOrEmail
+        val results = client.get("$baseUrl/rest/v1/profiles?email=eq.$idOrEmail&select=id") {
+            authHeaders()
+        }.body<List<UserProfileDto>>()
+        results.firstOrNull()?.id ?: idOrEmail
     }
 
-    suspend fun uploadPlan(plan: OperationalPlanEntity) {
+    suspend fun uploadPlan(plan: OperationalPlanEntity) = withAuth {
         requireConfigured()
         val technicianId = resolveProfileId(plan.technicianId ?: sessionStore.userId ?: "")
         client.post("$baseUrl/rest/v1/operational_plans") {
@@ -141,7 +164,7 @@ class SupabaseRestClient(
         }
     }
 
-    suspend fun uploadActivity(item: PlanActivityEntity) {
+    suspend fun uploadActivity(item: PlanActivityEntity) = withAuth {
         requireConfigured()
         client.post("$baseUrl/rest/v1/plan_activities") {
             authHeaders()
@@ -160,7 +183,7 @@ class SupabaseRestClient(
         }
     }
 
-    suspend fun uploadMaterial(item: PlanProjectMaterialEntity) {
+    suspend fun uploadMaterial(item: PlanProjectMaterialEntity) = withAuth {
         requireConfigured()
         client.post("$baseUrl/rest/v1/plan_project_materials") {
             authHeaders()
@@ -180,26 +203,28 @@ class SupabaseRestClient(
         }
     }
 
-    suspend fun uploadProvisionalMaterial(item: PlanProjectMaterialEntity, projectId: String) {
+    suspend fun uploadProvisionalMaterial(item: PlanProjectMaterialEntity, projectId: String) = withAuth {
         requireConfigured()
-        client.post("$baseUrl/rest/v1/provisional_materials") {
+        val name = item.provisionalName ?: error("No hay nombre provisional.")
+        client.post("$baseUrl/rest/v1/material_catalog") {
             authHeaders()
             header("Prefer", "resolution=merge-duplicates")
             contentType(ContentType.Application.Json)
-            val payload = ProvisionalMaterialUploadDto(
-                    id = item.id,
+            val payload = MaterialCatalogProvisionalUploadDto(
+                    id = item.materialId ?: error("Falta UUID para el material provisional"),
                     projectId = projectId,
-                    provisionalName = item.provisionalName.orEmpty(),
-                    suggestedUnit = item.unit,
-                    observation = item.observations,
-                    contributionSide = "project",
-                    status = "pending"
+                    name = name,
+                    category = "Insumos",
+                    unit = item.unit,
+                    quotedUnitPrice = 0.0,
+                    active = true,
+                    isDeleted = false
                 )
             setBody(json.encodeToString(payload))
         }
     }
 
-    suspend fun uploadCounterpart(item: PlanFamilyCounterpartEntity) {
+    suspend fun uploadCounterpart(item: PlanFamilyCounterpartEntity) = withAuth {
         requireConfigured()
         client.post("$baseUrl/rest/v1/plan_family_counterparts") {
             authHeaders()
@@ -235,7 +260,11 @@ class SupabaseRestClient(
     }
 }
 
-@Serializable private data class AuthResponse(@SerialName("access_token") val accessToken: String, val user: AuthUser)
+@Serializable private data class AuthResponse(
+    @SerialName("access_token") val accessToken: String,
+    @SerialName("refresh_token") val refreshToken: String? = null,
+    val user: AuthUser
+)
 @Serializable private data class AuthUser(val id: String)
 @Serializable private data class AuthRequest(val email: String, val password: String)
 

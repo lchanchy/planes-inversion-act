@@ -9,6 +9,10 @@ class SessionStore(context: Context) {
         get() = preferences.getString("access_token", null)
         set(value) = preferences.edit().putString("access_token", value).apply()
 
+    var refreshToken: String?
+        get() = preferences.getString("refresh_token", null)
+        set(value) = preferences.edit().putString("refresh_token", value).apply()
+
     var userId: String?
         get() = preferences.getString("user_id", null)
         set(value) = preferences.edit().putString("user_id", value).apply()
