@@ -72,7 +72,7 @@ class SupabaseRestClient(
                     sessionStore.userId = refreshResponse.user.id
                     block()
                 } catch (refreshErr: Exception) {
-                    throw e // if refresh fails, throw original 401
+                    throw Exception("Fallo al renovar sesion: ${refreshErr.message}", e)
                 }
             } else {
                 throw e
