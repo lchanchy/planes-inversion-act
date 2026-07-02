@@ -624,8 +624,10 @@ function AdminApp({ session }: { session: Session }) {
       projects: projects.filter((item) => item.id === globalProjectId),
       families: scopedFamilies,
       properties: properties.filter((item) => familyIds.has(item.family_id)),
-      activities: activities.filter((item) => item.project_id === globalProjectId),
-      materials: materials.filter((item) => item.project_id === globalProjectId),
+      // Los catalogos son datos de referencia: no se filtran para no romper los cruces
+      // cuando el catalogo quedo registrado bajo otro proyecto
+      activities,
+      materials,
       plans: scopedPlans,
       planActivities: scopedPlanActivities,
       planMaterials: planMaterials.filter((item) => planActivityIds.has(item.plan_activity_id)),
