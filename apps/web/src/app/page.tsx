@@ -8739,7 +8739,7 @@ function buildApprovedMaterialNeeds(data: {
           const provisional = planMaterial.provisional_material_id ? provisionalById.get(planMaterial.provisional_material_id) : undefined;
           const approvedQuantity = Number(planMaterial.quantity);
           const deliveredQuantity = deliveredByPlanMaterial.get(planMaterial.id) ?? 0;
-          const unitPrice = Number(planMaterial.quoted_unit_price);
+          const unitPrice = Number(material?.quoted_unit_price ?? planMaterial.quoted_unit_price);
           return {
             id: planMaterial.id,
             project_id: plan.project_id,
@@ -10736,7 +10736,10 @@ function buildActivityDocx(activity: PlanActivity, index: number, context: PlanE
   const projectMaterials = projectMaterialsForExport(activity, context);
   const familyCounterparts = familyCounterpartsForExport(activity, context);
   const familySubtotal = familyCounterparts.reduce((sum, item) => sum + item.quantity * item.estimated_unit_value, 0);
-  const projectSubtotal = projectMaterials.reduce((sum, item) => sum + item.quantity * item.quoted_unit_price, 0);
+  const projectSubtotal = projectMaterials.reduce((sum, item) => {
+    const official = item.material_id ? context.materials.find((material) => material.id === item.material_id) : null;
+    return sum + item.quantity * (official?.quoted_unit_price ?? item.quoted_unit_price);
+  }, 0);
   const familyRows = familyCounterparts.length > 0
     ? familyCounterparts.map((item) => [
         counterpartExportName(item),
@@ -10751,11 +10754,12 @@ function buildActivityDocx(activity: PlanActivity, index: number, context: PlanE
         const provisional = item.provisional_material_id
           ? context.provisionalMaterials.find((material) => material.id === item.provisional_material_id)
           : null;
+        const price = official?.quoted_unit_price ?? item.quoted_unit_price;
         return [
           `${official?.name ?? provisional?.provisional_name ?? item.observations ?? ""}${provisional?.status === "pending" ? " (pendiente)" : ""}`,
-          formatQuantity(item.quantity, item.unit),
-          formatExportMoney(item.quoted_unit_price),
-          formatExportMoney(item.quantity * item.quoted_unit_price)
+          formatQuantity(item.quantity, official?.unit ?? item.unit),
+          formatExportMoney(price),
+          formatExportMoney(item.quantity * price)
         ];
       })
     : [["Sin materiales del proyecto.", "", "", ""]];
@@ -11031,7 +11035,10 @@ function buildPlanSectionHtml(plan: OperationalPlan, context: PlanExportContext,
   const activitiesForPlan = realActivitiesForPlan.length > 0 ? realActivitiesForPlan : examplePlanActivities(plan.id);
   const projectTotal = activitiesForPlan.reduce((sum, activity) => {
     return sum + projectMaterialsForExport(activity, context)
-      .reduce((partial, material) => partial + material.quantity * material.quoted_unit_price, 0);
+      .reduce((partial, material) => {
+        const official = material.material_id ? context.materials.find((m) => m.id === material.material_id) : null;
+        return partial + material.quantity * (official?.quoted_unit_price ?? material.quoted_unit_price);
+      }, 0);
   }, 0);
   const familyTotal = activitiesForPlan.reduce((sum, activity) => {
     return sum + familyCounterpartsForExport(activity, context)
@@ -11086,7 +11093,10 @@ function buildActivityExportHtml(activity: PlanActivity, index: number, context:
   const projectMaterials = projectMaterialsForExport(activity, context);
   const familyCounterparts = familyCounterpartsForExport(activity, context);
   const familySubtotal = familyCounterparts.reduce((sum, item) => sum + item.quantity * item.estimated_unit_value, 0);
-  const projectSubtotal = projectMaterials.reduce((sum, item) => sum + item.quantity * item.quoted_unit_price, 0);
+  const projectSubtotal = projectMaterials.reduce((sum, item) => {
+    const official = item.material_id ? context.materials.find((material) => material.id === item.material_id) : null;
+    return sum + item.quantity * (official?.quoted_unit_price ?? item.quoted_unit_price);
+  }, 0);
   const familyRows = familyCounterparts.length > 0
     ? familyCounterparts.map((familyItem) => `<tr>
       <td>${escapeHtml(counterpartExportName(familyItem))}</td>
@@ -11103,11 +11113,12 @@ function buildActivityExportHtml(activity: PlanActivity, index: number, context:
     const provisional = projectItem?.provisional_material_id
       ? context.provisionalMaterials.find((item) => item.id === projectItem.provisional_material_id)
       : null;
+    const price = projectMaterial?.quoted_unit_price ?? projectItem.quoted_unit_price;
     return `<tr>
       <td>${escapeHtml(projectMaterial?.name ?? provisional?.provisional_name ?? projectItem.observations ?? "")}${provisional?.status === "pending" ? " (pendiente)" : ""}</td>
-      <td class="qty">${formatQuantity(projectItem.quantity, projectItem.unit)}</td>
-      <td class="number">${formatExportMoney(projectItem.quoted_unit_price)}</td>
-      <td class="number">${formatExportMoney(projectItem.quantity * projectItem.quoted_unit_price)}</td>
+      <td class="qty">${formatQuantity(projectItem.quantity, projectMaterial?.unit ?? projectItem.unit)}</td>
+      <td class="number">${formatExportMoney(price)}</td>
+      <td class="number">${formatExportMoney(projectItem.quantity * price)}</td>
     </tr>`;
   }).join("")
     : `<tr><td colspan="4" class="muted">Sin materiales del proyecto.</td></tr>`;
@@ -11266,16 +11277,20 @@ function drawActivityPdf(doc: PdfDocumentBuilder, activity: PlanActivity, index:
         const provisional = item.provisional_material_id
           ? context.provisionalMaterials.find((material) => material.id === item.provisional_material_id)
           : null;
+        const price = official?.quoted_unit_price ?? item.quoted_unit_price;
         return [
           `${official?.name ?? provisional?.provisional_name ?? item.observations ?? ""}${provisional?.status === "pending" ? " (pendiente)" : ""}`,
           item.quantity.toString(),
-          item.unit,
-          formatExportMoney(item.quoted_unit_price),
-          formatExportMoney(item.quantity * item.quoted_unit_price)
+          official?.unit ?? item.unit,
+          formatExportMoney(price),
+          formatExportMoney(item.quantity * price)
         ];
       })
     : [["Sin materiales del proyecto.", "", "", "", ""]];
-  const projectSubtotal = projectMaterials.reduce((sum, item) => sum + item.quantity * item.quoted_unit_price, 0);
+  const projectSubtotal = projectMaterials.reduce((sum, item) => {
+    const official = item.material_id ? context.materials.find((material) => material.id === item.material_id) : null;
+    return sum + item.quantity * (official?.quoted_unit_price ?? item.quoted_unit_price);
+  }, 0);
   return drawPdfTable(doc, y, ["APORTE DEL PROYECTO", "CANTIDAD", "UNIDAD", "VALOR UNI", "VALOR TOTAL"], [
     ...projectRows,
     ["SUBTOTAL PROYECTO", "", "", "", formatExportMoney(projectSubtotal)]
