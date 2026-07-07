@@ -11979,6 +11979,18 @@ function drawCenteredPdfText(doc: PdfDocumentBuilder, value: string, x: number, 
   doc.text(value, x + Math.max(0, (width - textWidth) / 2), y, size, bold);
 }
 
+// Como drawCenteredPdfText pero reduce la letra hasta que el texto quepa en la columna,
+// para que los nombres largos no se salgan hacia la celda vecina.
+function drawFittedCellText(doc: PdfDocumentBuilder, value: string, x: number, y: number, width: number, size = 8, bold = false, minSize = 5) {
+  const available = width - 4;
+  let fittedSize = size;
+  while (fittedSize > minSize && approximatePdfTextWidth(value, fittedSize) > available) {
+    fittedSize -= 0.5;
+  }
+  const textWidth = approximatePdfTextWidth(value, fittedSize);
+  doc.text(value, x + Math.max(2, (width - textWidth) / 2), y, fittedSize, bold);
+}
+
 function drawJustifiedPdfTextLine(doc: PdfDocumentBuilder, value: string, x: number, y: number, width: number, size = 9) {
   const words = pdfText(value).split(/\s+/).filter(Boolean);
   if (words.length <= 1) {
@@ -12000,7 +12012,7 @@ function drawPdfTable(doc: PdfDocumentBuilder, startY: number, headers: string[]
   let x = doc.margin;
   for (const [index, header] of headers.entries()) {
     doc.rect(x, y, widths[index], rowHeight, "f3f6f1");
-    drawCenteredPdfText(doc, header, x, y + 12, widths[index], 8, true);
+    drawFittedCellText(doc, header, x, y + 12, widths[index], 8, true);
     x += widths[index];
   }
   y += rowHeight;
@@ -12009,7 +12021,7 @@ function drawPdfTable(doc: PdfDocumentBuilder, startY: number, headers: string[]
     x = doc.margin;
     for (const [index, cell] of row.entries()) {
       doc.rect(x, y, widths[index], rowHeight);
-      drawCenteredPdfText(doc, cell, x, y + 12, widths[index], 8);
+      drawFittedCellText(doc, cell, x, y + 12, widths[index], 8);
       x += widths[index];
     }
     y += rowHeight;
