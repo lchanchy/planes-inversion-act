@@ -451,9 +451,9 @@ function AdminApp({ session }: { session: Session }) {
         supabase.from("users_profiles").select("*").order("full_name"),
         supabase.from("families").select("*").eq("is_deleted", false).order("created_at", { ascending: false }),
         supabase.from("properties").select("*").eq("is_deleted", false),
-        supabase.from("activity_catalog").select("*").eq("is_deleted", false).order("name"),
-        supabase.from("material_catalog").select("*").eq("is_deleted", false).order("name"),
-        supabase.from("counterpart_catalog").select("*").eq("is_deleted", false).order("name"),
+        supabase.from("activity_catalog").select("*").order("name"),
+        supabase.from("material_catalog").select("*").order("name"),
+        supabase.from("counterpart_catalog").select("*").order("name"),
         supabase.from("operational_plans").select("*").eq("is_deleted", false).order("created_at", { ascending: false }),
         supabase.from("plan_activities").select("*").eq("is_deleted", false),
         supabase.from("plan_project_materials").select("*").eq("is_deleted", false),
@@ -3537,6 +3537,7 @@ function ActivitiesCrud({
   const [filterStrategy, setFilterStrategy] = useState("");
 
   const filteredActivities = activities.filter((activity) => {
+    if (activity.is_deleted) return false;
     if (searchQuery && !activity.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
     if (filterStrategy && activity.restoration_strategy !== filterStrategy) return false;
     return true;
@@ -4037,6 +4038,7 @@ function MaterialsCrud({
   const [page, setPage] = useState(1);
 
   const filteredMaterials = materials.filter((material) => {
+    if (material.is_deleted) return false;
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       const matchesName = material.name.toLowerCase().includes(q);
@@ -5597,7 +5599,7 @@ function PlanDetail({
               Actividad
               <select disabled={!canEditPlan} required value={activityForm.activity_id} onChange={(event) => setActivityForm({ ...activityForm, activity_id: event.target.value })}>
                 <option value="">Seleccione</option>
-                {activities.map((activity) => <option key={activity.id} value={activity.id}>{activity.name} ({activity.unit})</option>)}
+                {activities.filter((a) => !a.is_deleted).map((activity) => <option key={activity.id} value={activity.id}>{activity.name} ({activity.unit})</option>)}
               </select>
             </label>
             <label className="span-3">
@@ -5632,7 +5634,7 @@ function PlanDetail({
               Material
               <select disabled={!canEditPlan} required value={materialForm.material_id} onChange={(event) => setMaterialForm({ ...materialForm, material_id: event.target.value })}>
                 <option value="">Seleccione</option>
-                {materials.map((material) => <option key={material.id} value={material.id}>{material.name} ({material.unit})</option>)}
+                {materials.filter((m) => !m.is_deleted).map((material) => <option key={material.id} value={material.id}>{material.name} ({material.unit})</option>)}
               </select>
             </label>
             <label className="span-3">
@@ -8580,14 +8582,14 @@ function Phase5Filters({
         Actividad
         <select value={filters.activity_id} onChange={(event) => onChange("activity_id", event.target.value)}>
           <option value="">Todas</option>
-          {activities.map((activity) => <option key={activity.id} value={activity.id}>{activity.name}</option>)}
+          {activities.filter((a) => !a.is_deleted).map((activity) => <option key={activity.id} value={activity.id}>{activity.name}</option>)}
         </select>
       </label>
       <label className="span-3">
         Material
         <select value={filters.material_id} onChange={(event) => onChange("material_id", event.target.value)}>
           <option value="">Todos</option>
-          {materials.map((material) => <option key={material.id} value={material.id}>{material.name}</option>)}
+          {materials.filter((m) => !m.is_deleted).map((material) => <option key={material.id} value={material.id}>{material.name}</option>)}
         </select>
       </label>
     </div>
@@ -11888,9 +11890,9 @@ function drawActivityPdf(doc: PdfDocumentBuilder, activity: PlanActivity, index:
   const familyCounterparts = familyCounterpartsForExport(activity, context);
   y = doc.ensureSpace(y, 120);
   doc.text(`Actividad ${index + 1}: ${catalogActivity?.name ?? exampleActivityName(activity)}`, doc.margin, y, 12, true, ForestPdf);
-  y += 16;
+  y += 15;
   doc.text(`Linea base: ${activity.baseline ?? "N/A"} | Meta: ${activity.target ?? "N/A"} | Unidad: ${activity.unit}`, doc.margin, y, 9);
-  y += 16;
+  y += 12;
   const familyRows = familyCounterparts.length > 0
     ? familyCounterparts.map((item) => [
         counterpartExportName(item),
@@ -12306,6 +12308,7 @@ async function drawPlanPdf(doc: PdfDocumentBuilder, plan: OperationalPlan, conte
     y += 18;
   }
   for (const [activityIndex, activity] of activitiesForPlan.entries()) {
+    if (activityIndex > 0) y += 16;
     const result = drawActivityPdf(doc, activity, activityIndex, context, y);
     y = result;
   }
