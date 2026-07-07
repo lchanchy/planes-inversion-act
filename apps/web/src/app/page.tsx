@@ -5756,7 +5756,7 @@ function PlanDetail({
                         value=""
                       >
                         <option value="">Material oficial...</option>
-                        {materials.map((material) => (
+                        {materials.filter((m) => !m.is_deleted).map((material) => (
                           <option key={material.id} value={material.id}>{material.name}</option>
                         ))}
                       </select>
