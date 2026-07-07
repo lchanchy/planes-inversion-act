@@ -59,9 +59,12 @@ class RestauracionRepository(
         db.catalogDao().upsertMunicipalities(remote.municipalities())
         db.catalogDao().upsertVillages(remote.villages())
         db.catalogDao().upsertProperties(remote.properties())
-        db.catalogDao().upsertActivities(remote.activities())
-        db.catalogDao().upsertMaterials(remote.materials())
-        db.catalogDao().upsertCounterparts(remote.counterpartCatalog())
+        // Los catalogos usan reemplazo (no upsert) para purgar entradas eliminadas en la web:
+        // asi el tecnico no puede seleccionar actividades/materiales viejos en planes nuevos.
+        // remote.*() se evalua antes del reemplazo; si falla la descarga, la BD local no se toca.
+        db.catalogDao().replaceActivities(remote.activities())
+        db.catalogDao().replaceMaterials(remote.materials())
+        db.catalogDao().replaceCounterparts(remote.counterpartCatalog())
     }
 
     suspend fun createDraftPlan(projectId: String, familyId: String): OperationalPlanEntity {
@@ -75,6 +78,40 @@ class RestauracionRepository(
             version = maxVersion + 1
         )
         db.planDao().upsertPlan(plan)
+        
+        val oldPlan = db.planDao().latestPlanForFamily(familyId)
+        if (oldPlan != null && oldPlan.id != plan.id) {
+            val oldActivities = db.planDao().activitiesForPlan(oldPlan.id)
+            for (oldAct in oldActivities) {
+                val newAct = oldAct.copy(
+                    id = java.util.UUID.randomUUID().toString(),
+                    planId = plan.id,
+                    syncState = SyncState.PENDING_SYNC
+                )
+                db.planDao().upsertActivity(newAct)
+                
+                val oldMaterials = db.planDao().materialsForActivity(oldAct.id)
+                for (oldMat in oldMaterials) {
+                    val newMatId = java.util.UUID.randomUUID().toString()
+                    db.planDao().upsertMaterial(oldMat.copy(
+                        id = newMatId,
+                        planActivityId = newAct.id,
+                        materialId = if (oldMat.materialId == oldMat.id) newMatId else oldMat.materialId,
+                        syncState = SyncState.PENDING_SYNC
+                    ))
+                }
+                
+                val oldCounterparts = db.planDao().counterpartsForActivity(oldAct.id)
+                for (oldCpt in oldCounterparts) {
+                    db.planDao().upsertCounterpart(oldCpt.copy(
+                        id = java.util.UUID.randomUUID().toString(),
+                        planActivityId = newAct.id,
+                        syncState = SyncState.PENDING_SYNC
+                    ))
+                }
+            }
+        }
+        
         return plan
     }
 

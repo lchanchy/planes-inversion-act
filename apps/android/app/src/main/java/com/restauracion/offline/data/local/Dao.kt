@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
@@ -56,6 +57,35 @@ interface CatalogDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertCounterparts(items: List<CounterpartCatalogEntity>)
+
+    @Query("delete from activity_catalog")
+    suspend fun deleteAllActivities()
+
+    @Query("delete from material_catalog")
+    suspend fun deleteAllMaterials()
+
+    @Query("delete from counterpart_catalog")
+    suspend fun deleteAllCounterparts()
+
+    // Reemplazo atomico: purga las entradas que ya no estan vigentes en el servidor
+    // para que el tecnico no pueda seleccionar catalogos eliminados en planes nuevos.
+    @Transaction
+    suspend fun replaceActivities(items: List<ActivityCatalogEntity>) {
+        deleteAllActivities()
+        upsertActivities(items)
+    }
+
+    @Transaction
+    suspend fun replaceMaterials(items: List<MaterialCatalogEntity>) {
+        deleteAllMaterials()
+        upsertMaterials(items)
+    }
+
+    @Transaction
+    suspend fun replaceCounterparts(items: List<CounterpartCatalogEntity>) {
+        deleteAllCounterparts()
+        upsertCounterparts(items)
+    }
 }
 
 @Dao
@@ -72,6 +102,9 @@ interface PlanDao {
     @Query("select * from operational_plans where familyId = :familyId and status in ('draft','returned') order by planDate desc limit 1")
     suspend fun editablePlanForFamily(familyId: String): OperationalPlanEntity?
 
+    @Query("SELECT * FROM operational_plans WHERE familyId = :familyId ORDER BY version DESC LIMIT 1")
+    suspend fun latestPlanForFamily(familyId: String): OperationalPlanEntity?
+
     @Query("SELECT MAX(version) FROM operational_plans WHERE familyId = :familyId")
     suspend fun maxVersionForFamily(familyId: String): Int?
 
@@ -83,6 +116,12 @@ interface PlanDao {
 
     @Query("select * from plan_activities where planId = :planId")
     suspend fun activitiesForPlan(planId: String): List<PlanActivityEntity>
+
+    @Query("select * from plan_project_materials where planActivityId = :planActivityId")
+    suspend fun materialsForActivity(planActivityId: String): List<PlanProjectMaterialEntity>
+
+    @Query("select * from plan_family_counterparts where planActivityId = :planActivityId")
+    suspend fun counterpartsForActivity(planActivityId: String): List<PlanFamilyCounterpartEntity>
 
     @Query("select * from plan_activities where id = :id limit 1")
     suspend fun activityById(id: String): PlanActivityEntity?
