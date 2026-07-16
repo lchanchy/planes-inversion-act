@@ -47,11 +47,56 @@ class AppContainer(context: Context) {
         }
     }
 
+    private val migration5To6 = object : Migration(5, 6) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS material_deliveries (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    projectId TEXT NOT NULL,
+                    familyId TEXT NOT NULL,
+                    operationalPlanId TEXT NOT NULL,
+                    deliveryDate TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    observations TEXT,
+                    registeredBy TEXT,
+                    familySignature TEXT,
+                    technicianSignature TEXT,
+                    syncState TEXT NOT NULL,
+                    lastError TEXT
+                )
+                """.trimIndent()
+            )
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS material_delivery_items (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    materialDeliveryId TEXT NOT NULL,
+                    projectId TEXT NOT NULL,
+                    familyId TEXT NOT NULL,
+                    operationalPlanId TEXT NOT NULL,
+                    planActivityId TEXT NOT NULL,
+                    activityId TEXT,
+                    planProjectMaterialId TEXT NOT NULL,
+                    materialId TEXT,
+                    provisionalMaterialId TEXT,
+                    materialName TEXT NOT NULL,
+                    unit TEXT NOT NULL,
+                    approvedQuantity REAL NOT NULL,
+                    deliveredQuantity REAL NOT NULL,
+                    observations TEXT,
+                    syncState TEXT NOT NULL
+                )
+                """.trimIndent()
+            )
+        }
+    }
+
     private val database = Room.databaseBuilder(
         context,
         RestauracionDatabase::class.java,
         "restauracion_offline.db"
-    ).addMigrations(migration1To2, migration2To3, migration3To4, migration4To5).build()
+    ).addMigrations(migration1To2, migration2To3, migration3To4, migration4To5, migration5To6).build()
 
     val sessionStore = SessionStore(context)
 

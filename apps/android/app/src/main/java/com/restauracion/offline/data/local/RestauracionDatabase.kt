@@ -16,9 +16,11 @@ import androidx.room.RoomDatabase
         OperationalPlanEntity::class,
         PlanActivityEntity::class,
         PlanProjectMaterialEntity::class,
-        PlanFamilyCounterpartEntity::class
+        PlanFamilyCounterpartEntity::class,
+        MaterialDeliveryEntity::class,
+        MaterialDeliveryItemEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class RestauracionDatabase : RoomDatabase() {

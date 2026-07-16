@@ -29,13 +29,18 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -68,9 +73,19 @@ import com.restauracion.offline.data.local.PlanActivityEntity
 import com.restauracion.offline.data.local.PlanFamilyCounterpartEntity
 import com.restauracion.offline.data.local.PlanProjectMaterialEntity
 import com.restauracion.offline.data.local.ProjectEntity
+import com.restauracion.offline.data.repository.DeliveryLineInput
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
 import kotlinx.coroutines.launch
+import java.time.LocalDate
 
-private enum class Screen { LOGIN, HOME, FAMILY, PLAN }
+private enum class Screen { LOGIN, HOME, FAMILY, PLAN, DELIVERY }
 
 private val BrandDark = Color(0xFF145F3B)
 private val BrandPrimary = Color(0xFF1F7A4F)
@@ -288,7 +303,28 @@ fun RestauracionApp(container: AppContainer) {
                             project = selectedProject,
                             family = selectedFamily,
                             plan = selectedPlan,
-                            onBack = { screenName = Screen.FAMILY.name }
+                            onBack = { screenName = Screen.FAMILY.name },
+                            onOpenDelivery = { screenName = Screen.DELIVERY.name }
+                        )
+                    }
+                }
+                Screen.DELIVERY -> {
+                    if (selectedProject == null || selectedFamily == null || selectedPlan == null) {
+                        RestoringStateScreen(
+                            onBackHome = {
+                                selectedProjectId = null
+                                selectedFamilyId = null
+                                selectedPlanId = null
+                                screenName = Screen.HOME.name
+                            }
+                        )
+                    } else {
+                        DeliveryCaptureScreen(
+                            container = container,
+                            project = selectedProject,
+                            family = selectedFamily,
+                            plan = selectedPlan,
+                            onBack = { screenName = Screen.PLAN.name }
                         )
                     }
                 }
@@ -590,7 +626,8 @@ private fun PlanCaptureScreen(
     project: ProjectEntity?,
     family: FamilyEntity?,
     plan: OperationalPlanEntity?,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onOpenDelivery: () -> Unit
 ) {
     if (project == null || family == null || plan == null) return
     val scope = rememberCoroutineScope()
@@ -1437,6 +1474,10 @@ private fun PlanCaptureScreen(
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("Marcar listo para revision") }
+                OutlinedButton(
+                    onClick = onOpenDelivery,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Registrar entrega") }
             }
         }
 
@@ -1945,4 +1986,280 @@ private fun sameCatalogCounterpart(catalog: CounterpartCatalogEntity, item: Plan
     return catalog.name == item.name &&
         catalog.contributionType == item.contributionType &&
         catalog.suggestedUnit == item.unit
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DeliveryCaptureScreen(
+    container: AppContainer,
+    project: ProjectEntity?,
+    family: FamilyEntity?,
+    plan: OperationalPlanEntity?,
+    onBack: () -> Unit
+) {
+    if (project == null || family == null || plan == null) return
+    val scope = rememberCoroutineScope()
+    val planMaterials by container.repository.planMaterialsTotal(plan.id).collectAsState(initial = emptyList())
+    val planActivities by container.repository.planActivities(plan.id).collectAsState(initial = emptyList())
+    val materials by container.repository.materials(project.id).collectAsState(initial = emptyList())
+    val deliveries by container.repository.deliveriesForPlan(plan.id).collectAsState(initial = emptyList())
+
+    // Saldo pendiente por material (aprobado - ya entregado).
+    var pending by remember { mutableStateOf<Map<String, Double>>(emptyMap()) }
+    LaunchedEffect(planMaterials, deliveries) {
+        val map = mutableMapOf<String, Double>()
+        for (material in planMaterials) {
+            map[material.id] = container.repository.pendingQuantityForPlanMaterial(material.id, material.quantity)
+        }
+        pending = map
+    }
+
+    val quantities = remember { mutableStateMapOf<String, String>() }
+    var deliveryDate by remember { mutableStateOf(LocalDate.now().toString()) }
+    var showDatePicker by remember { mutableStateOf(false) }
+    var observations by remember { mutableStateOf("") }
+    var familySignature by remember { mutableStateOf<String?>(null) }
+    var technicianSignature by remember { mutableStateOf<String?>(null) }
+    var message by remember { mutableStateOf<String?>(null) }
+    var saving by remember { mutableStateOf(false) }
+
+    val materialName: (PlanProjectMaterialEntity) -> String = { material ->
+        material.materialId?.let { id -> materials.firstOrNull { it.id == id }?.name } ?: material.provisionalName ?: "Material"
+    }
+    // Se muestran TODOS los materiales del plan; los ya entregados salen con saldo 0 ("Entregado").
+    val deliverableMaterials = planMaterials
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onBack) { Text("Volver al plan") }
+                OutlinedButton(onClick = {
+                    scope.launch {
+                        runCatching { container.repository.discardLocalDeliveries(plan.id) }
+                            .onSuccess {
+                                quantities.clear()
+                                message = "Entrega local descartada. Saldos restablecidos."
+                            }
+                            .onFailure { message = it.message ?: "No fue posible descartar la entrega local." }
+                    }
+                }) { Text("Descartar entrega local") }
+            }
+            Text("Registrar entrega", style = MaterialTheme.typography.titleLarge, color = BrandDark)
+            Text("${family.familyCode} - ${family.representativeName}")
+        }
+        item {
+            OutlinedButton(onClick = { showDatePicker = true }, modifier = Modifier.fillMaxWidth()) {
+                Text("Fecha de entrega: $deliveryDate")
+            }
+        }
+        item {
+            Text("Materiales del plan", style = MaterialTheme.typography.titleMedium, color = BrandDark)
+            if (deliverableMaterials.isEmpty()) {
+                Text("Este plan no tiene materiales del proyecto.")
+            } else {
+                Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                    Text("Material", modifier = Modifier.weight(2f), fontWeight = FontWeight.Bold)
+                    Text("Cantidad", modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold)
+                    Text("Entregar", modifier = Modifier.weight(1.2f), fontWeight = FontWeight.Bold)
+                }
+                HorizontalDivider()
+            }
+        }
+        items(deliverableMaterials, key = { it.id }) { material ->
+            val saldo = pending[material.id] ?: material.quantity
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(materialName(material), modifier = Modifier.weight(2f))
+                Text("${formatDeliveryNumber(saldo)} ${material.unit}", modifier = Modifier.weight(1f))
+                if (saldo > 0.0) {
+                    OutlinedTextField(
+                        value = quantities[material.id] ?: "",
+                        onValueChange = { quantities[material.id] = it },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        modifier = Modifier.weight(1.2f)
+                    )
+                } else {
+                    Text("Entregado", modifier = Modifier.weight(1.2f), color = BrandPrimary)
+                }
+            }
+            HorizontalDivider()
+        }
+        item {
+            OutlinedTextField(
+                value = observations,
+                onValueChange = { observations = it },
+                label = { Text("Observaciones (opcional)") },
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+        item {
+            SignaturePad("Firma del representante de la familia") { familySignature = it }
+        }
+        item {
+            SignaturePad("Firma del tecnico") { technicianSignature = it }
+        }
+        item {
+            Button(
+                enabled = !saving,
+                onClick = {
+                    val lines = mutableListOf<DeliveryLineInput>()
+                    var invalid: String? = null
+                    for (material in deliverableMaterials) {
+                        val raw = quantities[material.id]?.trim().orEmpty()
+                        if (raw.isBlank()) continue
+                        val qty = raw.toDoubleOrNull()
+                        val saldo = pending[material.id] ?: material.quantity
+                        when {
+                            qty == null || qty <= 0 -> invalid = "Cantidad invalida en ${materialName(material)}."
+                            qty > saldo + 0.0001 -> invalid = "La cantidad de ${materialName(material)} supera el saldo pendiente."
+                            else -> {
+                                val activityId = planActivities.firstOrNull { it.id == material.planActivityId }?.activityId
+                                lines += DeliveryLineInput(
+                                    planProjectMaterialId = material.id,
+                                    planActivityId = material.planActivityId,
+                                    activityId = activityId,
+                                    materialId = material.materialId,
+                                    provisionalMaterialId = if (material.materialId == null) material.id else null,
+                                    materialName = materialName(material),
+                                    unit = material.unit,
+                                    approvedQuantity = material.quantity,
+                                    deliveredQuantity = qty
+                                )
+                            }
+                        }
+                    }
+                    when {
+                        invalid != null -> message = invalid
+                        lines.isEmpty() -> message = "Ingrese la cantidad de al menos un material."
+                        familySignature == null -> message = "Falta la firma del representante de la familia."
+                        technicianSignature == null -> message = "Falta la firma del tecnico."
+                        else -> {
+                            saving = true
+                            scope.launch {
+                                runCatching {
+                                    container.repository.registerDelivery(
+                                        plan = plan,
+                                        deliveryDate = deliveryDate,
+                                        observations = observations.ifBlank { null },
+                                        familySignature = familySignature,
+                                        technicianSignature = technicianSignature,
+                                        lines = lines
+                                    )
+                                }.onSuccess {
+                                    message = "Entrega guardada localmente. Sincronice para enviarla."
+                                    quantities.clear()
+                                }.onFailure {
+                                    message = it.message ?: "No fue posible guardar la entrega."
+                                }
+                                saving = false
+                            }
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text(if (saving) "Guardando..." else "Guardar entrega") }
+            message?.let {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(it, color = MaterialTheme.colorScheme.primary)
+            }
+        }
+    }
+
+    if (showDatePicker) {
+        val datePickerState = rememberDatePickerState()
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    datePickerState.selectedDateMillis?.let { millis ->
+                        deliveryDate = java.time.Instant.ofEpochMilli(millis)
+                            .atZone(java.time.ZoneOffset.UTC)
+                            .toLocalDate()
+                            .toString()
+                    }
+                    showDatePicker = false
+                }) { Text("Aceptar") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) { Text("Cancelar") }
+            }
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
+}
+
+@Composable
+private fun SignaturePad(label: String, onSignatureChanged: (String?) -> Unit) {
+    val strokes = remember { mutableStateListOf<MutableList<Offset>>() }
+    var canvasSize by remember { mutableStateOf(IntSize.Zero) }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(label, style = MaterialTheme.typography.titleSmall)
+        Canvas(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(140.dp)
+                .background(Color.White, AppCardShape)
+                .border(1.dp, GlassBorder, AppCardShape)
+                .onSizeChanged { canvasSize = it }
+                .pointerInput(Unit) {
+                    detectDragGestures(
+                        // cada trazo es una lista observable para que el dibujo se vea en vivo
+                        onDragStart = { offset -> strokes.add(mutableStateListOf(offset)) },
+                        onDrag = { change, _ ->
+                            strokes.lastOrNull()?.add(change.position)
+                            change.consume()
+                        },
+                        onDragEnd = { onSignatureChanged(exportSignatureToDataUrl(strokes, canvasSize)) }
+                    )
+                }
+        ) {
+            for (stroke in strokes) {
+                for (index in 1 until stroke.size) {
+                    drawLine(
+                        color = Color.Black,
+                        start = stroke[index - 1],
+                        end = stroke[index],
+                        strokeWidth = 5f
+                    )
+                }
+            }
+        }
+        OutlinedButton(onClick = {
+            strokes.clear()
+            onSignatureChanged(null)
+        }) { Text("Borrar firma") }
+    }
+}
+
+private fun exportSignatureToDataUrl(strokes: List<List<Offset>>, size: IntSize): String? {
+    if (strokes.all { it.size < 2 } || size.width <= 0 || size.height <= 0) return null
+    val bitmap = android.graphics.Bitmap.createBitmap(size.width, size.height, android.graphics.Bitmap.Config.ARGB_8888)
+    val canvas = android.graphics.Canvas(bitmap)
+    canvas.drawColor(android.graphics.Color.WHITE)
+    val paint = android.graphics.Paint().apply {
+        color = android.graphics.Color.BLACK
+        strokeWidth = 5f
+        isAntiAlias = true
+        style = android.graphics.Paint.Style.STROKE
+    }
+    for (stroke in strokes) {
+        for (index in 1 until stroke.size) {
+            canvas.drawLine(stroke[index - 1].x, stroke[index - 1].y, stroke[index].x, stroke[index].y, paint)
+        }
+    }
+    val stream = java.io.ByteArrayOutputStream()
+    bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream)
+    val base64 = android.util.Base64.encodeToString(stream.toByteArray(), android.util.Base64.NO_WRAP)
+    return "data:image/png;base64,$base64"
+}
+
+private fun formatDeliveryNumber(value: Double): String {
+    return if (value == value.toLong().toDouble()) value.toLong().toString() else String.format("%.2f", value)
 }

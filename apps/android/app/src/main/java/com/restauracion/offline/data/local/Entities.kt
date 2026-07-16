@@ -133,3 +133,39 @@ data class PlanFamilyCounterpartEntity(
     val observations: String?,
     val syncState: SyncState = SyncState.PENDING_SYNC
 )
+
+@Entity(tableName = "material_deliveries")
+data class MaterialDeliveryEntity(
+    @PrimaryKey val id: String = UUID.randomUUID().toString(),
+    val projectId: String,
+    val familyId: String,
+    val operationalPlanId: String,
+    val deliveryDate: String,
+    val status: String,                    // entregado_parcial | entregado_total
+    val observations: String?,
+    val registeredBy: String?,             // users_profiles id (resuelto al sincronizar)
+    val familySignature: String?,          // data URI PNG dibujado en campo
+    val technicianSignature: String?,
+    val syncState: SyncState = SyncState.PENDING_SYNC,
+    val lastError: String? = null
+)
+
+@Entity(tableName = "material_delivery_items")
+data class MaterialDeliveryItemEntity(
+    @PrimaryKey val id: String = UUID.randomUUID().toString(),
+    val materialDeliveryId: String,
+    val projectId: String,
+    val familyId: String,
+    val operationalPlanId: String,
+    val planActivityId: String,
+    val activityId: String?,
+    val planProjectMaterialId: String,
+    val materialId: String?,
+    val provisionalMaterialId: String?,
+    val materialName: String,
+    val unit: String,
+    val approvedQuantity: Double,
+    val deliveredQuantity: Double,
+    val observations: String?,
+    val syncState: SyncState = SyncState.PENDING_SYNC
+)

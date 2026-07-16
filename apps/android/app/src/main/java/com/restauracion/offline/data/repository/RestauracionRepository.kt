@@ -1,6 +1,8 @@
 package com.restauracion.offline.data.repository
 
 import com.restauracion.offline.data.SessionStore
+import com.restauracion.offline.data.local.MaterialDeliveryEntity
+import com.restauracion.offline.data.local.MaterialDeliveryItemEntity
 import com.restauracion.offline.data.local.OperationalPlanEntity
 import com.restauracion.offline.data.local.PlanActivityEntity
 import com.restauracion.offline.data.local.PlanFamilyCounterpartEntity
@@ -9,6 +11,7 @@ import com.restauracion.offline.data.local.RestauracionDatabase
 import com.restauracion.offline.data.local.SyncState
 import com.restauracion.offline.data.remote.SupabaseRestClient
 import java.time.LocalDate
+import java.util.UUID
 
 class RestauracionRepository(
     private val db: RestauracionDatabase,
@@ -32,6 +35,8 @@ class RestauracionRepository(
     fun planCounterparts(activityId: String) = db.planDao().counterparts(activityId)
     fun planMaterialsTotal(planId: String) = db.planDao().materialsForPlan(planId)
     fun planCounterpartsTotal(planId: String) = db.planDao().counterpartsForPlan(planId)
+    fun deliveriesForPlan(planId: String) = db.planDao().deliveriesForPlan(planId)
+    fun deliveryItemsForPlan(planId: String) = db.planDao().deliveryItemsForPlan(planId)
     fun hasSession() = sessionStore.hasSession
     fun lastScreen() = sessionStore.lastScreen
     fun lastProjectId() = sessionStore.lastProjectId
@@ -65,6 +70,80 @@ class RestauracionRepository(
         db.catalogDao().replaceActivities(remote.activities())
         db.catalogDao().replaceMaterials(remote.materials())
         db.catalogDao().replaceCounterparts(remote.counterpartCatalog())
+        // Estado de aprobacion de los planes desde el servidor (para habilitar entregas).
+        remote.operationalPlanStatuses().forEach { (id, status) -> db.planDao().updateSyncedPlanStatus(id, status) }
+        // Entregas existentes (web u otro tecnico) para calcular saldos pendientes correctos.
+        remote.deliveries().forEach { db.planDao().upsertDelivery(it) }
+        remote.deliveryItems().forEach { db.planDao().upsertDeliveryItem(it) }
+    }
+
+    // Descarta las entregas locales aun no sincronizadas de un plan (corrige capturas erroneas).
+    suspend fun discardLocalDeliveries(planId: String) {
+        db.planDao().deleteLocalDeliveryItemsForPlan(planId)
+        db.planDao().deleteLocalDeliveriesForPlan(planId)
+    }
+
+    // Saldo pendiente de un material del plan: aprobado - ya entregado (local + descargado).
+    suspend fun pendingQuantityForPlanMaterial(planProjectMaterialId: String, approvedQuantity: Double): Double {
+        val delivered = db.planDao().deliveredQuantityForPlanMaterial(planProjectMaterialId)
+        return (approvedQuantity - delivered).coerceAtLeast(0.0)
+    }
+
+    suspend fun registerDelivery(
+        plan: OperationalPlanEntity,
+        deliveryDate: String,
+        observations: String?,
+        familySignature: String?,
+        technicianSignature: String?,
+        lines: List<DeliveryLineInput>
+    ): MaterialDeliveryEntity {
+        require(lines.isNotEmpty()) { "Seleccione al menos un material a entregar." }
+        require(lines.all { it.deliveredQuantity > 0 }) { "Las cantidades entregadas deben ser mayores que cero." }
+        val deliveryId = UUID.randomUUID().toString()
+        // Estado: total si todo el plan queda sin saldo tras esta entrega; parcial en caso contrario.
+        var allComplete = true
+        for (material in db.planDao().materialsForPlanOnce(plan.id)) {
+            val alreadyDelivered = db.planDao().deliveredQuantityForPlanMaterial(material.id)
+            val nowDelivered = lines.firstOrNull { it.planProjectMaterialId == material.id }?.deliveredQuantity ?: 0.0
+            if (alreadyDelivered + nowDelivered + 0.0001 < material.quantity) {
+                allComplete = false
+                break
+            }
+        }
+        val delivery = MaterialDeliveryEntity(
+            id = deliveryId,
+            projectId = plan.projectId,
+            familyId = plan.familyId,
+            operationalPlanId = plan.id,
+            deliveryDate = deliveryDate,
+            status = if (allComplete) "entregado_total" else "entregado_parcial",
+            observations = observations,
+            registeredBy = sessionStore.userId,
+            familySignature = familySignature,
+            technicianSignature = technicianSignature
+        )
+        db.planDao().upsertDelivery(delivery)
+        for (line in lines) {
+            db.planDao().upsertDeliveryItem(
+                MaterialDeliveryItemEntity(
+                    materialDeliveryId = deliveryId,
+                    projectId = plan.projectId,
+                    familyId = plan.familyId,
+                    operationalPlanId = plan.id,
+                    planActivityId = line.planActivityId,
+                    activityId = line.activityId,
+                    planProjectMaterialId = line.planProjectMaterialId,
+                    materialId = line.materialId,
+                    provisionalMaterialId = line.provisionalMaterialId,
+                    materialName = line.materialName,
+                    unit = line.unit,
+                    approvedQuantity = line.approvedQuantity,
+                    deliveredQuantity = line.deliveredQuantity,
+                    observations = null
+                )
+            )
+        }
+        return delivery
     }
 
     suspend fun createDraftPlan(projectId: String, familyId: String): OperationalPlanEntity {
@@ -257,14 +336,41 @@ class RestauracionRepository(
     suspend fun syncPending() {
         val planDao = db.planDao()
         val errors = mutableListOf<String>()
+        // Estados en el servidor: si un plan ya fue aprobado/cerrado en la web, NO se debe re-subir
+        // con el estado local "draft" (eso pisaba la aprobacion y hacia rebotar las entregas).
+        val serverStatuses = runCatching { remote.operationalPlanStatuses() }.getOrDefault(emptyMap())
         for (plan in planDao.pendingPlans()) {
-            try {
-                if (plan.status == "approved" || plan.status == "closed") continue
-                remote.uploadPlan(plan)
-                planDao.updatePlan(plan.copy(syncState = SyncState.SYNCED, lastError = null))
-            } catch (error: Exception) {
-                planDao.updatePlan(plan.copy(syncState = SyncState.ERROR, lastError = error.message))
-                errors += error.message ?: "Error sincronizando plan."
+            val serverStatus = serverStatuses[plan.id]
+            if (serverStatus == "approved" || serverStatus == "aprobado" || serverStatus == "closed") {
+                planDao.updatePlan(plan.copy(status = serverStatus, syncState = SyncState.SYNCED, lastError = null))
+                continue
+            }
+            if (plan.status == "approved" || plan.status == "closed") continue
+            var current = plan
+            var uploaded = false
+            var lastError: Exception? = null
+            var attempts = 0
+            // Ante un choque de version (project_id, family_id, version), sube la version y reintenta.
+            while (!uploaded && attempts < 5) {
+                try {
+                    remote.uploadPlan(current)
+                    uploaded = true
+                } catch (error: Exception) {
+                    lastError = error
+                    if (isVersionConflict(error)) {
+                        current = current.copy(version = current.version + 1)
+                        planDao.updatePlan(current)
+                        attempts++
+                    } else {
+                        break
+                    }
+                }
+            }
+            if (uploaded) {
+                planDao.updatePlan(current.copy(syncState = SyncState.SYNCED, lastError = null))
+            } else {
+                planDao.updatePlan(current.copy(syncState = SyncState.ERROR, lastError = lastError?.message))
+                errors += lastError?.message ?: "Error sincronizando plan."
             }
         }
         planDao.pendingActivities().forEach { item ->
@@ -299,6 +405,25 @@ class RestauracionRepository(
                 errors += it.message ?: "Error sincronizando contrapartida."
             }
         }
+        // Entregas primero (padre), luego sus items (respeta la llave foranea).
+        planDao.pendingDeliveries().forEach { delivery ->
+            runCatching {
+                remote.uploadDelivery(delivery)
+                planDao.updateDelivery(delivery.copy(syncState = SyncState.SYNCED, lastError = null))
+            }.onFailure {
+                planDao.updateDelivery(delivery.copy(syncState = SyncState.ERROR, lastError = it.message))
+                errors += it.message ?: "Error sincronizando entrega."
+            }
+        }
+        planDao.pendingDeliveryItems().forEach { item ->
+            runCatching {
+                remote.uploadDeliveryItem(item)
+                planDao.updateDeliveryItem(item.copy(syncState = SyncState.SYNCED))
+            }.onFailure {
+                planDao.updateDeliveryItem(item.copy(syncState = SyncState.ERROR))
+                errors += it.message ?: "Error sincronizando item de entrega."
+            }
+        }
         if (errors.isNotEmpty()) {
             error(errors.distinct().joinToString(separator = "\n"))
         }
@@ -306,3 +431,23 @@ class RestauracionRepository(
 
     fun logout() = sessionStore.clear()
 }
+
+// Detecta el 409 de version duplicada (constraint operational_plans_one_active_version / codigo 23505).
+private fun isVersionConflict(error: Throwable): Boolean {
+    val message = error.message ?: return false
+    return message.contains("operational_plans_one_active_version") ||
+        (message.contains("23505") && message.contains("version", ignoreCase = true))
+}
+
+// Linea de entrega capturada en la UI (Fase 2).
+data class DeliveryLineInput(
+    val planProjectMaterialId: String,
+    val planActivityId: String,
+    val activityId: String?,
+    val materialId: String?,
+    val provisionalMaterialId: String?,
+    val materialName: String,
+    val unit: String,
+    val approvedQuantity: Double,
+    val deliveredQuantity: Double
+)

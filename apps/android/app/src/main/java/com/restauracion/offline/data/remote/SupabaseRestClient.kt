@@ -5,6 +5,8 @@ import com.restauracion.offline.data.local.ActivityCatalogEntity
 import com.restauracion.offline.data.local.CounterpartCatalogEntity
 import com.restauracion.offline.data.local.FamilyEntity
 import com.restauracion.offline.data.local.MaterialCatalogEntity
+import com.restauracion.offline.data.local.MaterialDeliveryEntity
+import com.restauracion.offline.data.local.MaterialDeliveryItemEntity
 import com.restauracion.offline.data.local.MunicipalityEntity
 import com.restauracion.offline.data.local.OperationalPlanEntity
 import com.restauracion.offline.data.local.PlanActivityEntity
@@ -12,6 +14,7 @@ import com.restauracion.offline.data.local.PlanFamilyCounterpartEntity
 import com.restauracion.offline.data.local.PlanProjectMaterialEntity
 import com.restauracion.offline.data.local.PropertyEntity
 import com.restauracion.offline.data.local.ProjectEntity
+import com.restauracion.offline.data.local.SyncState
 import com.restauracion.offline.data.local.VillageEntity
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
@@ -26,6 +29,8 @@ import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -42,6 +47,9 @@ class SupabaseRestClient(
         install(ContentNegotiation) { json(json) }
         expectSuccess = true
     }
+    // Serializa la renovacion de sesion: evita que varias peticiones renueven a la vez
+    // con el mismo refresh token (Supabase los rota, y el segundo uso da 'refresh_token_already_used').
+    private val refreshMutex = Mutex()
 
     suspend fun login(email: String, password: String) {
         requireConfigured()
@@ -60,20 +68,27 @@ class SupabaseRestClient(
             block()
         } catch (e: ClientRequestException) {
             if (e.response.status.value == 401 && sessionStore.refreshToken != null) {
-                try {
-                    val refreshResponse: AuthResponse = client.post("$baseUrl/auth/v1/token?grant_type=refresh_token") {
-                        header("apikey", anonKey)
-                        contentType(ContentType.Application.Json)
-                        val refreshToken = sessionStore.refreshToken ?: throw Exception("No refresh token")
-                        setBody(json.encodeToString(RefreshTokenRequest(refreshToken)))
-                    }.body()
-                    sessionStore.accessToken = refreshResponse.accessToken
-                    sessionStore.refreshToken = refreshResponse.refreshToken
-                    sessionStore.userId = refreshResponse.user.id
-                    block()
-                } catch (refreshErr: Exception) {
-                    throw Exception("Fallo al renovar sesion: ${refreshErr.message}", e)
+                val tokenBeforeRefresh = sessionStore.accessToken
+                refreshMutex.withLock {
+                    // Si otra corrutina ya renovo la sesion mientras esperabamos el lock,
+                    // no renovar de nuevo (evita el 'refresh_token_already_used'): usar el token nuevo.
+                    if (sessionStore.accessToken == tokenBeforeRefresh) {
+                        try {
+                            val refreshToken = sessionStore.refreshToken ?: throw Exception("No refresh token")
+                            val refreshResponse: AuthResponse = client.post("$baseUrl/auth/v1/token?grant_type=refresh_token") {
+                                header("apikey", anonKey)
+                                contentType(ContentType.Application.Json)
+                                setBody(json.encodeToString(RefreshTokenRequest(refreshToken)))
+                            }.body()
+                            sessionStore.accessToken = refreshResponse.accessToken
+                            sessionStore.refreshToken = refreshResponse.refreshToken
+                            sessionStore.userId = refreshResponse.user.id
+                        } catch (refreshErr: Exception) {
+                            throw Exception("Fallo al renovar sesion: ${refreshErr.message}", e)
+                        }
+                    }
                 }
+                block()
             } else {
                 throw e
             }
@@ -248,6 +263,80 @@ class SupabaseRestClient(
         }
     }
 
+    // Estado (aprobado, etc.) de los planes en el servidor, para reflejarlo en la app.
+    suspend fun operationalPlanStatuses(): Map<String, String> = withAuth {
+        requireConfigured()
+        client.get("$baseUrl/rest/v1/operational_plans?select=id,status&is_deleted=eq.false") {
+            authHeaders()
+        }.body<List<PlanStatusDto>>().associate { it.id to it.status }
+    }
+
+    // --- Entregas (Fase 2) ---
+
+    suspend fun deliveries(): List<MaterialDeliveryEntity> = withAuth {
+        requireConfigured()
+        client.get("$baseUrl/rest/v1/material_deliveries?select=id,project_id,family_id,operational_plan_id,delivery_date,status,observations,registered_by,family_signature,technician_signature&is_deleted=eq.false") {
+            authHeaders()
+        }.body<List<MaterialDeliveryDto>>().map { it.toEntity() }
+    }
+
+    suspend fun deliveryItems(): List<MaterialDeliveryItemEntity> = withAuth {
+        requireConfigured()
+        client.get("$baseUrl/rest/v1/material_delivery_items?select=id,material_delivery_id,project_id,family_id,operational_plan_id,plan_activity_id,activity_id,plan_project_material_id,material_id,provisional_material_id,material_name,unit,approved_quantity,delivered_quantity,observations&is_deleted=eq.false") {
+            authHeaders()
+        }.body<List<MaterialDeliveryItemDto>>().map { it.toEntity() }
+    }
+
+    suspend fun uploadDelivery(item: MaterialDeliveryEntity) = withAuth {
+        requireConfigured()
+        val registeredBy = resolveProfileId(item.registeredBy ?: sessionStore.userId ?: "")
+        client.post("$baseUrl/rest/v1/material_deliveries") {
+            authHeaders()
+            header("Prefer", "resolution=merge-duplicates")
+            contentType(ContentType.Application.Json)
+            val payload = MaterialDeliveryUploadDto(
+                    id = item.id,
+                    projectId = item.projectId,
+                    familyId = item.familyId,
+                    operationalPlanId = item.operationalPlanId,
+                    deliveryDate = item.deliveryDate,
+                    status = item.status,
+                    observations = item.observations,
+                    registeredBy = registeredBy,
+                    familySignature = item.familySignature,
+                    technicianSignature = item.technicianSignature
+                )
+            setBody(json.encodeToString(payload))
+        }
+    }
+
+    suspend fun uploadDeliveryItem(item: MaterialDeliveryItemEntity) = withAuth {
+        requireConfigured()
+        client.post("$baseUrl/rest/v1/material_delivery_items") {
+            authHeaders()
+            header("Prefer", "resolution=merge-duplicates")
+            contentType(ContentType.Application.Json)
+            val payload = MaterialDeliveryItemUploadDto(
+                    id = item.id,
+                    materialDeliveryId = item.materialDeliveryId,
+                    projectId = item.projectId,
+                    familyId = item.familyId,
+                    operationalPlanId = item.operationalPlanId,
+                    planActivityId = item.planActivityId,
+                    activityId = item.activityId,
+                    planProjectMaterialId = item.planProjectMaterialId,
+                    materialId = item.materialId,
+                    provisionalMaterialId = item.provisionalMaterialId,
+                    materialName = item.materialName,
+                    unit = item.unit,
+                    approvedQuantity = item.approvedQuantity,
+                    deliveredQuantity = item.deliveredQuantity,
+                    observations = item.observations
+                )
+            setBody(json.encodeToString(payload))
+        }
+    }
+
     private fun io.ktor.client.request.HttpRequestBuilder.authHeaders() {
         header("apikey", anonKey)
         sessionStore.accessToken?.let { bearerAuth(it) }
@@ -347,6 +436,108 @@ private data class PlanFamilyCounterpartUploadDto(
     val observations: String? = null,
     @SerialName("is_deleted") val isDeleted: Boolean = false
 )
+
+@Serializable
+private data class MaterialDeliveryUploadDto(
+    val id: String,
+    @SerialName("project_id") val projectId: String,
+    @SerialName("family_id") val familyId: String,
+    @SerialName("operational_plan_id") val operationalPlanId: String,
+    @SerialName("delivery_date") val deliveryDate: String,
+    val status: String,
+    val observations: String?,
+    @SerialName("registered_by") val registeredBy: String?,
+    @SerialName("family_signature") val familySignature: String?,
+    @SerialName("technician_signature") val technicianSignature: String?,
+    @SerialName("is_deleted") val isDeleted: Boolean = false
+)
+
+@Serializable
+private data class MaterialDeliveryItemUploadDto(
+    val id: String,
+    @SerialName("material_delivery_id") val materialDeliveryId: String,
+    @SerialName("project_id") val projectId: String,
+    @SerialName("family_id") val familyId: String,
+    @SerialName("operational_plan_id") val operationalPlanId: String,
+    @SerialName("plan_activity_id") val planActivityId: String,
+    @SerialName("activity_id") val activityId: String?,
+    @SerialName("plan_project_material_id") val planProjectMaterialId: String,
+    @SerialName("material_id") val materialId: String?,
+    @SerialName("provisional_material_id") val provisionalMaterialId: String?,
+    @SerialName("material_name") val materialName: String,
+    val unit: String,
+    @SerialName("approved_quantity") val approvedQuantity: Double,
+    @SerialName("delivered_quantity") val deliveredQuantity: Double,
+    val observations: String?,
+    @SerialName("is_deleted") val isDeleted: Boolean = false
+)
+
+@Serializable private data class PlanStatusDto(val id: String, val status: String)
+
+@Serializable private data class MaterialDeliveryDto(
+    val id: String,
+    @SerialName("project_id") val projectId: String,
+    @SerialName("family_id") val familyId: String,
+    @SerialName("operational_plan_id") val operationalPlanId: String,
+    @SerialName("delivery_date") val deliveryDate: String,
+    val status: String,
+    val observations: String? = null,
+    @SerialName("registered_by") val registeredBy: String? = null,
+    @SerialName("family_signature") val familySignature: String? = null,
+    @SerialName("technician_signature") val technicianSignature: String? = null
+) {
+    fun toEntity() = MaterialDeliveryEntity(
+        id = id,
+        projectId = projectId,
+        familyId = familyId,
+        operationalPlanId = operationalPlanId,
+        deliveryDate = deliveryDate,
+        status = status,
+        observations = observations,
+        registeredBy = registeredBy,
+        familySignature = familySignature,
+        technicianSignature = technicianSignature,
+        syncState = SyncState.SYNCED,
+        lastError = null
+    )
+}
+
+@Serializable private data class MaterialDeliveryItemDto(
+    val id: String,
+    @SerialName("material_delivery_id") val materialDeliveryId: String,
+    @SerialName("project_id") val projectId: String,
+    @SerialName("family_id") val familyId: String,
+    @SerialName("operational_plan_id") val operationalPlanId: String,
+    @SerialName("plan_activity_id") val planActivityId: String,
+    @SerialName("activity_id") val activityId: String? = null,
+    @SerialName("plan_project_material_id") val planProjectMaterialId: String,
+    @SerialName("material_id") val materialId: String? = null,
+    @SerialName("provisional_material_id") val provisionalMaterialId: String? = null,
+    @SerialName("material_name") val materialName: String,
+    val unit: String,
+    @SerialName("approved_quantity") val approvedQuantity: Double = 0.0,
+    @SerialName("delivered_quantity") val deliveredQuantity: Double,
+    val observations: String? = null
+) {
+    fun toEntity() = MaterialDeliveryItemEntity(
+        id = id,
+        materialDeliveryId = materialDeliveryId,
+        projectId = projectId,
+        familyId = familyId,
+        operationalPlanId = operationalPlanId,
+        planActivityId = planActivityId,
+        activityId = activityId,
+        planProjectMaterialId = planProjectMaterialId,
+        materialId = materialId,
+        provisionalMaterialId = provisionalMaterialId,
+        materialName = materialName,
+        unit = unit,
+        approvedQuantity = approvedQuantity,
+        deliveredQuantity = deliveredQuantity,
+        observations = observations,
+        syncState = SyncState.SYNCED
+    )
+}
 
 @Serializable private data class ProjectDto(
     val id: String,

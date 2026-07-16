@@ -135,6 +135,9 @@ interface PlanDao {
     @Query("select m.* from plan_project_materials m inner join plan_activities a on a.id = m.planActivityId where a.planId = :planId")
     fun materialsForPlan(planId: String): Flow<List<PlanProjectMaterialEntity>>
 
+    @Query("select m.* from plan_project_materials m inner join plan_activities a on a.id = m.planActivityId where a.planId = :planId")
+    suspend fun materialsForPlanOnce(planId: String): List<PlanProjectMaterialEntity>
+
     @Query("select * from plan_family_counterparts where planActivityId = :activityId")
     fun counterparts(activityId: String): Flow<List<PlanFamilyCounterpartEntity>>
 
@@ -194,4 +197,49 @@ interface PlanDao {
 
     @Query("delete from plan_family_counterparts where planActivityId = :activityId")
     suspend fun deleteCounterpartsForActivity(activityId: String)
+
+    // --- Entregas (Fase 2) ---
+
+    @Query("select * from material_deliveries where operationalPlanId = :planId order by deliveryDate desc")
+    fun deliveriesForPlan(planId: String): Flow<List<MaterialDeliveryEntity>>
+
+    @Query("select i.* from material_delivery_items i inner join material_deliveries d on d.id = i.materialDeliveryId where d.operationalPlanId = :planId")
+    fun deliveryItemsForPlan(planId: String): Flow<List<MaterialDeliveryItemEntity>>
+
+    // Cantidad ya entregada (todas las entregas no eliminadas) de un material del plan, para el saldo pendiente.
+    @Query("select coalesce(sum(deliveredQuantity), 0) from material_delivery_items where planProjectMaterialId = :planProjectMaterialId")
+    suspend fun deliveredQuantityForPlanMaterial(planProjectMaterialId: String): Double
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertDelivery(item: MaterialDeliveryEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertDeliveryItem(item: MaterialDeliveryItemEntity)
+
+    @Update
+    suspend fun updateDelivery(item: MaterialDeliveryEntity)
+
+    @Update
+    suspend fun updateDeliveryItem(item: MaterialDeliveryItemEntity)
+
+    @Query("select * from material_deliveries where syncState in ('PENDING_SYNC','ERROR','CONFLICT')")
+    suspend fun pendingDeliveries(): List<MaterialDeliveryEntity>
+
+    @Query("select * from material_delivery_items where syncState in ('PENDING_SYNC','ERROR','CONFLICT')")
+    suspend fun pendingDeliveryItems(): List<MaterialDeliveryItemEntity>
+
+    @Query("select * from material_delivery_items where materialDeliveryId = :deliveryId")
+    suspend fun itemsForDelivery(deliveryId: String): List<MaterialDeliveryItemEntity>
+
+    // Descartar entregas locales aun no sincronizadas de un plan (para corregir capturas erroneas).
+    @Query("delete from material_delivery_items where materialDeliveryId in (select id from material_deliveries where operationalPlanId = :planId and syncState <> 'SYNCED')")
+    suspend fun deleteLocalDeliveryItemsForPlan(planId: String)
+
+    @Query("delete from material_deliveries where operationalPlanId = :planId and syncState <> 'SYNCED'")
+    suspend fun deleteLocalDeliveriesForPlan(planId: String)
+
+    // Actualiza el estado (ej. aprobado) desde el servidor, solo en planes ya sincronizados
+    // (no pisa ediciones locales pendientes).
+    @Query("update operational_plans set status = :status where id = :id and syncState = 'SYNCED'")
+    suspend fun updateSyncedPlanStatus(id: String, status: String)
 }
