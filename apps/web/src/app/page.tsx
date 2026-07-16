@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, createContext, useContext } from "react";
+import { useEffect, useMemo, useState, useCallback, createContext, useContext } from "react";
 import {
   AlignmentType,
   BorderStyle,
@@ -4859,9 +4859,12 @@ function PlansAdmin({
   const [page, setPage] = useState(1);
   const [isExporting, setIsExporting] = useState(false);
 
-  useEffect(() => {
-    setProjectLogos(loadProjectLogos());
+  const refreshProjectLogos = useCallback(async () => {
+    setProjectLogos(await loadProjectLogos());
   }, []);
+  useEffect(() => {
+    void refreshProjectLogos();
+  }, [refreshProjectLogos]);
 
   const selectedPlan = plans.find((plan) => plan.id === selectedPlanId) ?? null;
   const filteredPlans = plans.filter((plan) => {
@@ -4918,39 +4921,44 @@ function PlansAdmin({
       return;
     }
     const dataUrl = await fileToDataUrl(file);
-    const nextLogos = {
-      ...projectLogos,
-      [logoProjectId]: [
-        ...(projectLogos[logoProjectId] ?? []),
-        { id: crypto.randomUUID(), dataUrl, position: logoPosition, name: file.name, size: clampLogoSize(Number(logoSize)) }
-      ]
-    };
-    setProjectLogos(nextLogos);
-    saveProjectLogos(nextLogos);
+    const { error } = await supabase.from("project_logos").insert({
+      project_id: logoProjectId,
+      data_url: dataUrl,
+      position: logoPosition,
+      name: file.name,
+      size: clampLogoSize(Number(logoSize))
+    });
+    if (error) {
+      setNotice({ type: "error", message: `No fue posible guardar el logo: ${error.message}` });
+      return;
+    }
+    await refreshProjectLogos();
     setNotice({ type: "info", message: "Logo agregado para el proyecto seleccionado." });
     event.target.value = "";
   }
 
-  function removeLogo(logoId: string) {
-    if (!logoProjectId) return;
-    const nextLogos = { ...projectLogos };
-    nextLogos[logoProjectId] = (nextLogos[logoProjectId] ?? []).filter((logo) => logo.id !== logoId);
-    if (nextLogos[logoProjectId].length === 0) delete nextLogos[logoProjectId];
-    setProjectLogos(nextLogos);
-    saveProjectLogos(nextLogos);
+  async function removeLogo(logoId: string) {
+    const { error } = await supabase.from("project_logos").update({ is_deleted: true }).eq("id", logoId);
+    if (error) {
+      setNotice({ type: "error", message: `No fue posible retirar el logo: ${error.message}` });
+      return;
+    }
+    await refreshProjectLogos();
     setNotice({ type: "info", message: "Logo retirado." });
   }
 
-  function updateLogo(logoId: string, updates: Partial<ProjectLogoConfig>) {
-    if (!logoProjectId) return;
-    const nextLogos = {
-      ...projectLogos,
-      [logoProjectId]: (projectLogos[logoProjectId] ?? []).map((logo) =>
-        logo.id === logoId ? { ...logo, ...updates } : logo
-      )
-    };
-    setProjectLogos(nextLogos);
-    saveProjectLogos(nextLogos);
+  async function updateLogo(logoId: string, updates: Partial<ProjectLogoConfig>) {
+    const payload: Record<string, unknown> = {};
+    if (updates.position !== undefined) payload.position = updates.position;
+    if (updates.size !== undefined) payload.size = clampLogoSize(updates.size);
+    if (updates.name !== undefined) payload.name = updates.name;
+    if (Object.keys(payload).length === 0) return;
+    const { error } = await supabase.from("project_logos").update(payload).eq("id", logoId);
+    if (error) {
+      setNotice({ type: "error", message: `No fue posible actualizar el logo: ${error.message}` });
+      return;
+    }
+    await refreshProjectLogos();
   }
 
   async function createManualPlan(event: React.FormEvent) {
@@ -7331,7 +7339,7 @@ function ProcurementDeliveriesActs({
         activities,
         materialDeliveryItems,
         technician: currentProfile,
-        projectLogos: loadProjectLogos()
+        projectLogos: await loadProjectLogos()
       });
       context.introText = actIntroText;
       context.finalText = actFinalText;
@@ -7368,11 +7376,12 @@ function ProcurementDeliveriesActs({
         const blob = await buildDeliveryActsExcel(actExportRecords, actTechnicianName);
         saveBlob(blob, `actas-entrega-${actDeliveryDate}.xlsx`);
       } else {
+        const logos = await loadProjectLogos();
         const contexts = actExportRecords.map((record) => buildDeliveryActContextFromRecord({
           record,
           activities,
           technician: currentProfile,
-          projectLogos: loadProjectLogos(),
+          projectLogos: logos,
           introText: actIntroText,
           finalText: actFinalText,
           technicianName: actTechnicianName,
@@ -12423,25 +12432,24 @@ function actLogosForProject(logos: Record<string, ProjectLogoConfig[]>, projectI
     .sort((left, right) => positionOrder[left.position] - positionOrder[right.position]);
 }
 
-function loadProjectLogos(): Record<string, ProjectLogoConfig[]> {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = JSON.parse(window.localStorage.getItem("project_export_logos") ?? "{}") as Record<string, string | ProjectLogoConfig[]>;
-    return Object.fromEntries(
-      Object.entries(raw).map(([projectId, value]) => [
-        projectId,
-        Array.isArray(value)
-          ? value.map((logo) => ({ ...logo, size: clampLogoSize(logo.size) }))
-          : [{ id: crypto.randomUUID(), dataUrl: value, position: "right", name: "Logo", size: 90 }]
-      ])
-    ) as Record<string, ProjectLogoConfig[]>;
-  } catch {
-    return {};
+// Logos por proyecto, ahora en Supabase (tabla project_logos) para que servidor y app los compartan.
+async function loadProjectLogos(): Promise<Record<string, ProjectLogoConfig[]>> {
+  const { data, error } = await supabase
+    .from("project_logos")
+    .select("id, project_id, data_url, position, name, size")
+    .eq("is_deleted", false);
+  if (error || !data) return {};
+  const result: Record<string, ProjectLogoConfig[]> = {};
+  for (const row of data as Array<{ id: string; project_id: string; data_url: string; position: ProjectLogoPosition; name: string | null; size: number }>) {
+    (result[row.project_id] ??= []).push({
+      id: row.id,
+      dataUrl: row.data_url,
+      position: row.position,
+      name: row.name ?? "Logo",
+      size: clampLogoSize(row.size)
+    });
   }
-}
-
-function saveProjectLogos(logos: Record<string, ProjectLogoConfig[]>) {
-  window.localStorage.setItem("project_export_logos", JSON.stringify(logos));
+  return result;
 }
 
 function fileToDataUrl(file: File): Promise<string> {
