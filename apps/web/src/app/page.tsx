@@ -5171,11 +5171,10 @@ function PlansAdmin({
           Ancho doc.
           <input
             disabled={!canManageLogos}
-            min="40"
-            max="360"
-            type="number"
+            type="text"
+            inputMode="numeric"
             value={logoSize}
-            onChange={(event) => setLogoSize(event.target.value)}
+            onChange={(event) => setLogoSize(event.target.value.replace(/[^0-9]/g, ""))}
           />
         </label>
         {logoProjectId && (projectLogos[logoProjectId] ?? []).length > 0 ? (
@@ -5204,14 +5203,16 @@ function PlansAdmin({
                   <input
                     key={`logo-size-${logo.id}`}
                     disabled={!canManageLogos}
-                    min="40"
-                    max="360"
-                    type="number"
+                    type="text"
                     inputMode="numeric"
-                    defaultValue={logo.size}
+                    defaultValue={String(logo.size)}
+                    onChange={(event) => {
+                      // Deja escribir libre solo digitos (numpad o fila superior), sin recortar mientras editas.
+                      const digits = event.target.value.replace(/[^0-9]/g, "")
+                      if (digits !== event.target.value) event.target.value = digits
+                    }}
                     onBlur={(event) => {
-                      // Guarda solo al salir del campo (antes recortaba y grababa en cada tecla,
-                      // por eso el numero brincaba y no se podia fijar).
+                      // Valida el rango (40-360) y guarda solo al salir del campo.
                       const next = clampLogoSize(Number(event.target.value))
                       event.target.value = String(next)
                       if (next !== logo.size) updateLogo(logo.id, { size: next })
