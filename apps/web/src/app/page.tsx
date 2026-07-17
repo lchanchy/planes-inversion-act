@@ -5307,6 +5307,8 @@ function PlansAdmin({
               activities={activities}
               materials={materials}
               planActivities={selectedPlanActivities}
+              allPlans={plans}
+              allPlanActivities={planActivities}
               planMaterials={planMaterials}
               planCounterparts={planCounterparts}
               provisionalMaterials={provisionalMaterials}
@@ -5337,6 +5339,8 @@ function PlanDetail({
   activities,
   materials,
   planActivities,
+  allPlans,
+  allPlanActivities,
   planMaterials,
   planCounterparts,
   provisionalMaterials,
@@ -5357,6 +5361,8 @@ function PlanDetail({
   activities: Activity[];
   materials: Material[];
   planActivities: PlanActivity[];
+  allPlans: OperationalPlan[];
+  allPlanActivities: PlanActivity[];
   planMaterials: PlanProjectMaterial[];
   planCounterparts: PlanFamilyCounterpart[];
   provisionalMaterials: ProvisionalMaterial[];
@@ -5379,6 +5385,24 @@ function PlanDetail({
   const [planNotice, setPlanNotice] = useState<Notice>(null);
   const [activityForm, setActivityForm] = useState({ id: "", activity_id: "", baseline: "", target: "", observations: "" });
   const [materialForm, setMaterialForm] = useState({ id: "", plan_activity_id: "", material_id: "", quantity: "", observations: "" });
+  // Reasignacion de un material a otra familia (mueve el item cambiando su actividad).
+  const [reassign, setReassign] = useState<{ item: PlanProjectMaterial; targetFamilyId: string; targetActivityId: string } | null>(null);
+
+  async function confirmReassign() {
+    if (!reassign || !reassign.targetActivityId) return;
+    if (!confirmPlanMutation("Reasignar un material a otra familia")) return;
+    const { error } = await supabase
+      .from("plan_project_materials")
+      .update({ plan_activity_id: reassign.targetActivityId })
+      .eq("id", reassign.item.id);
+    if (error) {
+      setPlanNotice({ type: "error", message: `No fue posible reasignar: ${error.message}` });
+      return;
+    }
+    setReassign(null);
+    setPlanNotice({ type: "info", message: "Material reasignado a la otra familia. Compras e indicadores se actualizan solos." });
+    await onChange();
+  }
   const [counterpartForm, setCounterpartForm] = useState({
     id: "",
     plan_activity_id: "",
@@ -5790,6 +5814,14 @@ function PlanDetail({
                       >
                         Editar
                       </button>
+                      <button
+                        className="secondary"
+                        disabled={!canEditPlan || !item.material_id}
+                        type="button"
+                        onClick={() => setReassign({ item, targetFamilyId: "", targetActivityId: "" })}
+                      >
+                        Reasignar
+                      </button>
                       <button className="danger super-admin-only" disabled={!canEditPlan} type="button" onClick={() => void deletePlanMaterial(item)}>Eliminar</button>
                     </div>
                   ];
@@ -5831,6 +5863,48 @@ function PlanDetail({
           );
         })
       )}
+      {reassign ? (() => {
+        const targetFamilies = families.filter((f) => f.project_id === plan.project_id && f.id !== plan.family_id && !f.is_deleted);
+        const targetPlanIds = new Set(allPlans.filter((p) => p.family_id === reassign.targetFamilyId && !p.is_deleted).map((p) => p.id));
+        const targetActivities = allPlanActivities.filter((pa) => targetPlanIds.has(pa.plan_id) && !pa.is_deleted);
+        const materialName = materials.find((m) => m.id === reassign.item.material_id)?.name ?? "Material";
+        return (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 16 }}>
+            <div className="panel grid" style={{ maxWidth: 520, width: "100%", background: "var(--panel-bg, #ffffff)" }}>
+              <div className="span-12"><strong>Reasignar material a otra familia</strong></div>
+              <p className="span-12 muted">
+                Se mueve <strong>{materialName}</strong> ({formatNumber(reassign.item.quantity)} {reassign.item.unit}) de esta familia a la que elijas. Compras e indicadores se actualizan solos.
+              </p>
+              <label className="span-12">
+                Familia destino
+                <select value={reassign.targetFamilyId} onChange={(e) => setReassign({ ...reassign, targetFamilyId: e.target.value, targetActivityId: "" })}>
+                  <option value="">Seleccione</option>
+                  {targetFamilies.map((f) => <option key={f.id} value={f.id}>{f.family_code} - {f.representative_name}</option>)}
+                </select>
+              </label>
+              {reassign.targetFamilyId ? (
+                targetActivities.length > 0 ? (
+                  <label className="span-12">
+                    Actividad de esa familia (a donde va el material)
+                    <select value={reassign.targetActivityId} onChange={(e) => setReassign({ ...reassign, targetActivityId: e.target.value })}>
+                      <option value="">Seleccione</option>
+                      {targetActivities.map((pa) => (
+                        <option key={pa.id} value={pa.id}>{activities.find((a) => a.id === pa.activity_id)?.name ?? "Actividad"}</option>
+                      ))}
+                    </select>
+                  </label>
+                ) : (
+                  <p className="span-12 muted">Esa familia no tiene actividades en su plan. Elige otra o crea la actividad primero.</p>
+                )
+              ) : null}
+              <div className="span-12 form-actions">
+                <button type="button" disabled={!reassign.targetActivityId} onClick={() => void confirmReassign()}>Reasignar</button>
+                <button className="secondary" type="button" onClick={() => setReassign(null)}>Cancelar</button>
+              </div>
+            </div>
+          </div>
+        );
+      })() : null}
     </div>
   );
 }
