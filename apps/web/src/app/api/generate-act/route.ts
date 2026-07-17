@@ -12,9 +12,10 @@ export async function POST(request: Request) {
   let deliveryId: string;
   try {
     const body = await request.json();
-    deliveryId = String(body?.deliveryId ?? "");
+    // Acepta { deliveryId } (llamada directa) o el payload de un Database Webhook de Supabase ({ record: { id } }).
+    deliveryId = String(body?.deliveryId ?? body?.record?.id ?? "");
   } catch {
-    return NextResponse.json({ error: "Cuerpo invalido; se espera { deliveryId }." }, { status: 400 });
+    return NextResponse.json({ error: "Cuerpo invalido; se espera { deliveryId } o un webhook de Supabase." }, { status: 400 });
   }
   if (!deliveryId) return NextResponse.json({ error: "Falta deliveryId." }, { status: 400 });
 
@@ -33,6 +34,12 @@ export async function POST(request: Request) {
     .single();
   if (deliveryError || !delivery) {
     return NextResponse.json({ error: `Entrega no encontrada: ${deliveryError?.message ?? deliveryId}` }, { status: 404 });
+  }
+
+  // Solo se genera acta firmada para entregas capturadas en campo (con firmas).
+  // Las entregas registradas desde la web usan su propio flujo de actas.
+  if (!delivery.family_signature && !delivery.technician_signature) {
+    return NextResponse.json({ ok: true, skipped: "La entrega no tiene firmas; no se genera acta firmada." });
   }
 
   const { data: items } = await supabase
