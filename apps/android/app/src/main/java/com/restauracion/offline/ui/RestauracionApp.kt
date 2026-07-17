@@ -274,14 +274,22 @@ fun RestauracionApp(container: AppContainer) {
                             },
                             onEditSentPlan = { plan ->
                                 scope.launch {
-                                    container.repository.saveDraftOffline(plan)
-                                    selectedFamilyId = plan.familyId
-                                    selectedPlanId = plan.id
-                                    screenName = Screen.PLAN.name
+                                    // saveDraftOffline rechaza planes aprobados/cerrados; sin capturar,
+                                    // la excepcion mataba la app al tocar Editar.
+                                    runCatching { container.repository.saveDraftOffline(plan) }
+                                        .onSuccess {
+                                            selectedFamilyId = plan.familyId
+                                            selectedPlanId = plan.id
+                                            screenName = Screen.PLAN.name
+                                        }
+                                        .onFailure { message = it.message ?: "No fue posible editar el plan." }
                                 }
                             },
                             onDeletePlan = { plan ->
-                                scope.launch { container.repository.deletePlan(plan.id) }
+                                scope.launch {
+                                    runCatching { container.repository.deletePlan(plan.id) }
+                                        .onFailure { message = it.message ?: "No fue posible eliminar el plan." }
+                                }
                             }
                         )
                     }
