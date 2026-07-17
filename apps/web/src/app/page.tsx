@@ -4953,12 +4953,22 @@ function PlansAdmin({
     if (updates.size !== undefined) payload.size = clampLogoSize(updates.size);
     if (updates.name !== undefined) payload.name = updates.name;
     if (Object.keys(payload).length === 0) return;
+    // Actualiza la vista de inmediato y en su sitio (no recarga la lista): asi el +/- es
+    // instantaneo y el foco no salta a otro logo. La escritura va en segundo plano.
+    setProjectLogos((prev) => {
+      const next: Record<string, ProjectLogoConfig[]> = {};
+      for (const [projectId, logos] of Object.entries(prev)) {
+        next[projectId] = logos.map((logo) =>
+          logo.id === logoId ? { ...logo, ...updates, size: updates.size !== undefined ? clampLogoSize(updates.size) : logo.size } : logo
+        );
+      }
+      return next;
+    });
     const { error } = await supabase.from("project_logos").update(payload).eq("id", logoId);
     if (error) {
       setNotice({ type: "error", message: `No fue posible actualizar el logo: ${error.message}` });
-      return;
+      await refreshProjectLogos(); // revertir a lo del servidor si fallo
     }
-    await refreshProjectLogos();
   }
 
   async function createManualPlan(event: React.FormEvent) {
@@ -12432,7 +12442,8 @@ async function loadProjectLogos(): Promise<Record<string, ProjectLogoConfig[]>> 
     .from("project_logos")
     .select("id, project_id, data_url, position, name, size")
     .eq("is_deleted", false)
-    .order("created_at");
+    .order("created_at")
+    .order("id");
   if (error || !data) return {};
   const result: Record<string, ProjectLogoConfig[]> = {};
   for (const row of data as Array<{ id: string; project_id: string; data_url: string; position: ProjectLogoPosition; name: string | null; size: number }>) {
