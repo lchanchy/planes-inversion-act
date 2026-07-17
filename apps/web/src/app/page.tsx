@@ -5200,23 +5200,10 @@ function PlansAdmin({
                 </label>
                 <label>
                   Ancho doc.
-                  <input
-                    key={`logo-size-${logo.id}`}
+                  <LogoSizeInput
+                    value={logo.size}
                     disabled={!canManageLogos}
-                    type="text"
-                    inputMode="numeric"
-                    defaultValue={String(logo.size)}
-                    onChange={(event) => {
-                      // Deja escribir libre solo digitos (numpad o fila superior), sin recortar mientras editas.
-                      const digits = event.target.value.replace(/[^0-9]/g, "")
-                      if (digits !== event.target.value) event.target.value = digits
-                    }}
-                    onBlur={(event) => {
-                      // Valida el rango (40-360) y guarda solo al salir del campo.
-                      const next = clampLogoSize(Number(event.target.value))
-                      event.target.value = String(next)
-                      if (next !== logo.size) updateLogo(logo.id, { size: next })
-                    }}
+                    onCommit={(size) => updateLogo(logo.id, { size })}
                   />
                 </label>
                 <button className="secondary" type="button" disabled={!canManageLogos} onClick={() => removeLogo(logo.id)}>
@@ -12506,6 +12493,27 @@ function CrudSection({
       {notice ? <div className={`alert ${notice.type}`}>{notice.message}</div> : null}
       {children}
     </section>
+  );
+}
+
+// Campo de ancho del logo con estado LOCAL: al teclear no re-dibuja la lista,
+// asi el foco no salta de un logo a otro. Guarda (con rango 40-360) solo al salir.
+function LogoSizeInput({ value, disabled, onCommit }: { value: number; disabled: boolean; onCommit: (size: number) => void }) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => { setDraft(String(value)); }, [value]);
+  return (
+    <input
+      disabled={disabled}
+      type="text"
+      inputMode="numeric"
+      value={draft}
+      onChange={(event) => setDraft(event.target.value.replace(/[^0-9]/g, ""))}
+      onBlur={() => {
+        const next = clampLogoSize(Number(draft));
+        setDraft(String(next));
+        if (next !== value) onCommit(next);
+      }}
+    />
   );
 }
 
