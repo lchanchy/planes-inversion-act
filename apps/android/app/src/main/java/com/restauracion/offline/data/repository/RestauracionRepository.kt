@@ -78,21 +78,34 @@ class RestauracionRepository(
         // bloquea el SELECT, no debe romper la descarga de catalogos (lo critico). IGNORE en el DAO
         // -> no pisa lo capturado localmente; el reflejo solo toca filas ya sincronizadas.
         runCatching {
-            db.planDao().insertPlansIfNew(remote.operationalPlans())
-            db.planDao().insertActivitiesIfNew(remote.planActivities())
+            val serverPlans = remote.operationalPlans()
+            val serverPlanIds = serverPlans.mapTo(HashSet()) { it.id }
+            // Solo actividades/materiales de planes vigentes (no de un plan eliminado en la web).
+            val serverActivities = remote.planActivities().filter { it.planId in serverPlanIds }
+            val liveActivityIds = serverActivities.mapTo(HashSet()) { it.id }
             // Excluir materiales con borrado local pendiente (fusion offline aun no sincronizada),
             // para no re-insertarlos desde el servidor donde todavia figuran.
             val pendingDeletions = db.planDao().pendingMaterialDeletions().toHashSet()
-            val serverMaterials = remote.planProjectMaterials().filterNot { it.id in pendingDeletions }
+            val serverMaterials = remote.planProjectMaterials()
+                .filterNot { it.id in pendingDeletions }
+                .filter { it.planActivityId in liveActivityIds }
+
+            db.planDao().insertPlansIfNew(serverPlans)
+            db.planDao().insertActivitiesIfNew(serverActivities)
             // Materiales de otras familias como referencia para reasignar (detectar duplicados).
             db.planDao().insertMaterialsIfNew(serverMaterials)
             // Reasignacion/fusion en la web: actualizar actividad y cantidad de los materiales SYNCED.
             serverMaterials.forEach { db.planDao().updateSyncedMaterial(it.id, it.planActivityId, it.quantity) }
-            // Materiales que la web elimino o fusiono (ya no estan en el servidor) se quitan tambien
-            // en la app. Guardado: solo si el servidor devolvio datos, para no borrar por una lista vacia.
+            // Quitar de la app lo que ya no esta vigente en el servidor (borrado/fusion/orfandad),
+            // solo en filas ya sincronizadas (no toca ediciones locales pendientes). Guardado: solo
+            // si el servidor devolvio datos, para no borrar por una respuesta vacia.
             if (serverMaterials.isNotEmpty()) {
-                val serverIds = serverMaterials.mapTo(HashSet()) { it.id }
-                db.planDao().syncedMaterialIds().filterNot { it in serverIds }.forEach { db.planDao().deleteMaterial(it) }
+                val serverMaterialIds = serverMaterials.mapTo(HashSet()) { it.id }
+                db.planDao().syncedMaterialIds().filterNot { it in serverMaterialIds }.forEach { db.planDao().deleteMaterial(it) }
+            }
+            // Planes eliminados en la web: borrarlos en la app (con sus actividades/materiales/contrapartidas).
+            if (serverPlans.isNotEmpty()) {
+                db.planDao().syncedPlanIds().filterNot { it in serverPlanIds }.forEach { deletePlan(it) }
             }
         }
         // Entregas existentes (web u otro tecnico) para calcular saldos pendientes correctos.

@@ -286,4 +286,9 @@ interface PlanDao {
     // (ya no estan en el servidor) y quitarlos tambien en la app.
     @Query("select id from plan_project_materials where syncState = 'SYNCED'")
     suspend fun syncedMaterialIds(): List<String>
+
+    // Ids de planes ya sincronizados, para detectar los que la web elimino (ya no estan en el
+    // servidor) y borrarlos tambien en la app. No toca planes con ediciones locales pendientes.
+    @Query("select id from operational_plans where syncState = 'SYNCED'")
+    suspend fun syncedPlanIds(): List<String>
 }
