@@ -141,18 +141,21 @@ async function drawBottomLogos(ctx: Ctx, logos: DeliveryActLogo[]) {
 
 function drawMeta(ctx: Ctx, rows: [string, string][]) {
   const size = 9;
+  const rowHeight = 18;
   for (const [label, value] of rows) {
-    ensureSpace(ctx, 14);
+    ensureSpace(ctx, rowHeight);
     drawText(ctx, `${label}: `, MARGIN, size, true);
     const labelWidth = textWidth(ctx, `${label}: `, size, true);
     drawText(ctx, value, MARGIN + labelWidth, size);
+    // Linea separadora DEBAJO del texto (antes se dibujaba encima y cruzaba las letras).
+    const lineTop = ctx.top + size + 4;
     ctx.page.drawLine({
-      start: { x: MARGIN, y: toY(ctx.top + 3) },
-      end: { x: PAGE_WIDTH - MARGIN, y: toY(ctx.top + 3) },
+      start: { x: MARGIN, y: toY(lineTop) },
+      end: { x: PAGE_WIDTH - MARGIN, y: toY(lineTop) },
       thickness: 0.5,
       color: rgb(0.87, 0.87, 0.87)
     });
-    ctx.top += 14;
+    ctx.top += rowHeight;
   }
 }
 
@@ -233,7 +236,7 @@ export async function generateDeliveryActPdf(input: DeliveryActInput): Promise<U
   await drawTopLogos(ctx, input.logos);
 
   drawText(ctx, "ACTA DE ENTREGA DE INSUMOS Y MATERIALES", MARGIN, 15, true, FOREST);
-  ctx.top += 26;
+  ctx.top += 32;
 
   drawMeta(ctx, [
     ["Entrega No.", input.actNumber],
