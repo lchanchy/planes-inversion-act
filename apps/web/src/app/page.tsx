@@ -5169,12 +5169,10 @@ function PlansAdmin({
         </label>
         <label className="span-2">
           Ancho doc.
-          <input
+          <LogoSizeInput
+            value={clampLogoSize(Number(logoSize))}
             disabled={!canManageLogos}
-            type="text"
-            inputMode="numeric"
-            value={logoSize}
-            onChange={(event) => setLogoSize(event.target.value.replace(/[^0-9]/g, ""))}
+            onCommit={(size) => setLogoSize(String(size))}
           />
         </label>
         {logoProjectId && (projectLogos[logoProjectId] ?? []).length > 0 ? (
@@ -12496,24 +12494,20 @@ function CrudSection({
   );
 }
 
-// Campo de ancho del logo con estado LOCAL: al teclear no re-dibuja la lista,
-// asi el foco no salta de un logo a otro. Guarda (con rango 40-360) solo al salir.
+// Ancho del logo con botones -/+ (sin teclado): ajusta de a 10 con clics del mouse.
+// Elimina los problemas de teclado fisico/NumLock y el salto de foco entre logos.
 function LogoSizeInput({ value, disabled, onCommit }: { value: number; disabled: boolean; onCommit: (size: number) => void }) {
-  const [draft, setDraft] = useState(String(value));
-  useEffect(() => { setDraft(String(value)); }, [value]);
+  const step = 10;
+  const change = (delta: number) => {
+    const next = clampLogoSize(value + delta);
+    if (!disabled && next !== value) onCommit(next);
+  };
   return (
-    <input
-      disabled={disabled}
-      type="text"
-      inputMode="numeric"
-      value={draft}
-      onChange={(event) => setDraft(event.target.value.replace(/[^0-9]/g, ""))}
-      onBlur={() => {
-        const next = clampLogoSize(Number(draft));
-        setDraft(String(next));
-        if (next !== value) onCommit(next);
-      }}
-    />
+    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+      <button type="button" className="secondary" disabled={disabled || value <= 40} onClick={() => change(-step)}>−</button>
+      <span style={{ minWidth: "40px", textAlign: "center", fontWeight: 600 }}>{value}</span>
+      <button type="button" className="secondary" disabled={disabled || value >= 360} onClick={() => change(step)}>+</button>
+    </div>
   );
 }
 
