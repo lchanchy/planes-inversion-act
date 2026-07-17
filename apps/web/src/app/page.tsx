@@ -799,7 +799,7 @@ function AdminApp({ session }: { session: Session }) {
               planCounterparts={scoped.planCounterparts}
               provisionalMaterials={scoped.provisionalMaterials}
               canReview={canWrite}
-              canManageLogos={roleNames.has("admin")}
+              canManageLogos={roleNames.has("admin") || roleNames.has("super_admin") || roleNames.has("project_admin") || roleNames.has("coordinator")}
               currentProfile={profile}
               onChange={loadAll}
             />
