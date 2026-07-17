@@ -5202,12 +5202,19 @@ function PlansAdmin({
                 <label>
                   Ancho doc.
                   <input
+                    key={`logo-size-${logo.id}-${logo.size}`}
                     disabled={!canManageLogos}
                     min="40"
                     max="360"
                     type="number"
-                    value={logo.size}
-                    onChange={(event) => updateLogo(logo.id, { size: clampLogoSize(Number(event.target.value)) })}
+                    defaultValue={logo.size}
+                    onBlur={(event) => {
+                      // Guarda solo al salir del campo (antes recortaba y grababa en cada tecla,
+                      // por eso el numero brincaba y no se podia fijar).
+                      const next = clampLogoSize(Number(event.target.value))
+                      event.target.value = String(next)
+                      if (next !== logo.size) updateLogo(logo.id, { size: next })
+                    }}
                   />
                 </label>
                 <button className="secondary" type="button" disabled={!canManageLogos} onClick={() => removeLogo(logo.id)}>
