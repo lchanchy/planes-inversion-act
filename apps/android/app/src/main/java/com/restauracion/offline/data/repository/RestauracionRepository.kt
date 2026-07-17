@@ -110,7 +110,11 @@ class RestauracionRepository(
     // existente y la fila movida se elimina (localmente y, al sincronizar, tambien en el servidor).
     suspend fun reassignMaterial(materialId: String, targetPlanActivityId: String) {
         val material = db.planDao().materialById(materialId) ?: error("No se encontro el material a reasignar.")
-        val existing = db.planDao().materialsForActivity(targetPlanActivityId).firstOrNull { candidate ->
+        // Buscar el mismo material en cualquier actividad del plan de la familia destino (no solo
+        // en la actividad elegida), para sumar en vez de duplicar.
+        val targetActivity = db.planDao().activityById(targetPlanActivityId) ?: error("No se encontro la actividad destino.")
+        val targetPlan = db.planDao().planById(targetActivity.planId) ?: error("No se encontro el plan destino.")
+        val existing = db.planDao().materialsForFamily(targetPlan.familyId).firstOrNull { candidate ->
             candidate.id != material.id && candidate.materialId != null && candidate.materialId == material.materialId
         }
         if (existing != null) {

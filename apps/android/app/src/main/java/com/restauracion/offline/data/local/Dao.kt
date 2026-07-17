@@ -133,6 +133,10 @@ interface PlanDao {
     @Query("select pa.* from plan_activities pa inner join operational_plans p on p.id = pa.planId where p.familyId = :familyId")
     suspend fun planActivitiesForFamily(familyId: String): List<PlanActivityEntity>
 
+    // Materiales de todas las actividades de una familia (para detectar duplicados al reasignar).
+    @Query("select m.* from plan_project_materials m inner join plan_activities a on a.id = m.planActivityId inner join operational_plans p on p.id = a.planId where p.familyId = :familyId")
+    suspend fun materialsForFamily(familyId: String): List<PlanProjectMaterialEntity>
+
     @Query("select * from plan_activities where planId = :planId and activityId = :activityId limit 1")
     suspend fun activityByCatalog(planId: String, activityId: String): PlanActivityEntity?
 

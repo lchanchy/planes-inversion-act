@@ -5392,19 +5392,23 @@ function PlanDetail({
     if (!reassign || !reassign.targetActivityId) return;
     if (!confirmPlanMutation("Reasignar un material a otra familia")) return;
     const item = reassign.item;
-    // Si la actividad destino ya tiene el mismo material, se suman las cantidades en vez de
-    // dejar dos filas repetidas.
+    // Si la familia destino ya tiene el mismo material (en cualquiera de sus actividades), se
+    // suman las cantidades en esa fila en vez de dejar dos filas repetidas.
     let existing: { id: string; quantity: number } | null = null;
     if (item.material_id) {
-      const { data } = await supabase
-        .from("plan_project_materials")
-        .select("id, quantity")
-        .eq("plan_activity_id", reassign.targetActivityId)
-        .eq("material_id", item.material_id)
-        .eq("is_deleted", false)
-        .neq("id", item.id)
-        .limit(1);
-      existing = data?.[0] ?? null;
+      const targetPlanIds = new Set(allPlans.filter((p) => p.family_id === reassign.targetFamilyId && !p.is_deleted).map((p) => p.id));
+      const targetActivityIds = allPlanActivities.filter((pa) => targetPlanIds.has(pa.plan_id) && !pa.is_deleted).map((pa) => pa.id);
+      if (targetActivityIds.length > 0) {
+        const { data } = await supabase
+          .from("plan_project_materials")
+          .select("id, quantity")
+          .in("plan_activity_id", targetActivityIds)
+          .eq("material_id", item.material_id)
+          .eq("is_deleted", false)
+          .neq("id", item.id)
+          .limit(1);
+        existing = data?.[0] ?? null;
+      }
     }
     let error: { message: string } | null = null;
     if (existing) {
