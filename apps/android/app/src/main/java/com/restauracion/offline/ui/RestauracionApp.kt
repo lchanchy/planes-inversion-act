@@ -285,6 +285,13 @@ fun RestauracionApp(container: AppContainer) {
                                         .onFailure { message = it.message ?: "No fue posible editar el plan." }
                                 }
                             },
+                            onRegisterDelivery = { plan ->
+                                // Plan aprobado: se abre la entrega directo, sin pasar por editar
+                                // (editar lo devolveria a borrador y las entregas exigen plan aprobado).
+                                selectedFamilyId = plan.familyId
+                                selectedPlanId = plan.id
+                                screenName = Screen.DELIVERY.name
+                            },
                             onDeletePlan = { plan ->
                                 scope.launch {
                                     runCatching { container.repository.deletePlan(plan.id) }
@@ -311,8 +318,7 @@ fun RestauracionApp(container: AppContainer) {
                             project = selectedProject,
                             family = selectedFamily,
                             plan = selectedPlan,
-                            onBack = { screenName = Screen.FAMILY.name },
-                            onOpenDelivery = { screenName = Screen.DELIVERY.name }
+                            onBack = { screenName = Screen.FAMILY.name }
                         )
                     }
                 }
@@ -332,7 +338,7 @@ fun RestauracionApp(container: AppContainer) {
                             project = selectedProject,
                             family = selectedFamily,
                             plan = selectedPlan,
-                            onBack = { screenName = Screen.PLAN.name }
+                            onBack = { screenName = Screen.FAMILY.name }
                         )
                     }
                 }
@@ -443,6 +449,7 @@ private fun FamilyScreen(
     onBack: () -> Unit,
     onCreatePlan: (FamilyEntity) -> Unit,
     onEditSentPlan: (OperationalPlanEntity) -> Unit,
+    onRegisterDelivery: (OperationalPlanEntity) -> Unit,
     onDeletePlan: (OperationalPlanEntity) -> Unit
 ) {
     if (project == null) return
@@ -571,11 +578,14 @@ private fun FamilyScreen(
                     } else {
                         displayedPlans.forEach { sentPlan ->
                             val fam = familiesById[sentPlan.familyId]
+                            // Los planes aprobados no se editan (regla de negocio): sobre ellos
+                            // se registran las entregas. Los demas si se pueden editar.
+                            val aprobado = sentPlan.status == "approved" || sentPlan.status == "aprobado"
                             androidx.compose.foundation.layout.Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .glassmorphism()
-                                    .clickable { onEditSentPlan(sentPlan) }
+                                    .clickable { if (aprobado) onRegisterDelivery(sentPlan) else onEditSentPlan(sentPlan) }
                             ) {
                                 Column(modifier = Modifier.padding(12.dp)) {
                                     Text(fam?.familyCode ?: "Desconocido", style = MaterialTheme.typography.titleSmall)
@@ -587,11 +597,20 @@ private fun FamilyScreen(
                                     }
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        OutlinedButton(
-                                            onClick = { onEditSentPlan(sentPlan) },
-                                            modifier = Modifier.weight(1f)
-                                        ) {
-                                            Text("Editar")
+                                        if (aprobado) {
+                                            OutlinedButton(
+                                                onClick = { onRegisterDelivery(sentPlan) },
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Text("Registrar entrega")
+                                            }
+                                        } else {
+                                            OutlinedButton(
+                                                onClick = { onEditSentPlan(sentPlan) },
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Text("Editar")
+                                            }
                                         }
                                         OutlinedButton(
                                             onClick = { planToDelete = sentPlan },
@@ -634,8 +653,7 @@ private fun PlanCaptureScreen(
     project: ProjectEntity?,
     family: FamilyEntity?,
     plan: OperationalPlanEntity?,
-    onBack: () -> Unit,
-    onOpenDelivery: () -> Unit
+    onBack: () -> Unit
 ) {
     if (project == null || family == null || plan == null) return
     val scope = rememberCoroutineScope()
@@ -1482,10 +1500,6 @@ private fun PlanCaptureScreen(
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("Marcar listo para revision") }
-                OutlinedButton(
-                    onClick = onOpenDelivery,
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Registrar entrega") }
             }
         }
 
@@ -2043,7 +2057,7 @@ private fun DeliveryCaptureScreen(
     ) {
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onBack) { Text("Volver al plan") }
+                OutlinedButton(onClick = onBack) { Text("Volver") }
                 OutlinedButton(onClick = {
                     scope.launch {
                         runCatching { container.repository.discardLocalDeliveries(plan.id) }
