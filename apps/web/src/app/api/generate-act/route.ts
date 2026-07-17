@@ -6,6 +6,17 @@ import type { DeliveryActInput, DeliveryActLogo } from "@/lib/delivery-act/types
 // pdf-lib y Buffer requieren el runtime Node (no Edge).
 export const runtime = "nodejs";
 
+// Nombres seguros para rutas de Storage: sin acentos ni caracteres especiales.
+function sanitizeStorageName(value: string): string {
+  // normalize("NFD") separa los acentos y el filtro siguiente los descarta junto con
+  // cualquier caracter no seguro para una ruta de Storage.
+  return value
+    .normalize("NFD")
+    .replace(/[^a-zA-Z0-9 _-]/g, "")
+    .replace(/\s+/g, " ")
+    .trim() || "sin-nombre";
+}
+
 // Fase 1/3: genera el acta firmada de una entrega y la guarda en Supabase Storage (bucket "actas").
 // La subida a SharePoint (Fase 5) se conecta despues, aislada, cuando TI entregue el registro de Azure.
 export async function POST(request: Request) {
@@ -113,7 +124,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: `No fue posible generar el PDF: ${(error as Error).message}` }, { status: 500 });
   }
 
-  const storagePath = `${delivery.project_id}/${deliveryId}.pdf`;
+  // Nombre legible: Proyecto / "CodigoPredial - Representante - <id corto>.pdf".
+  // El id corto mantiene el nombre unico (una familia puede tener varias entregas parciales)
+  // y estable (al regenerar, sobreescribe el mismo archivo en vez de duplicarlo).
+  const projectFolder = sanitizeStorageName(project?.name ?? delivery.project_id);
+  const familyLabel = sanitizeStorageName(
+    [family?.family_code, family?.representative_name].filter(Boolean).join(" - ") || "sin-familia"
+  );
+  const storagePath = `${projectFolder}/${familyLabel} - ${deliveryId.slice(0, 8)}.pdf`;
   const { error: uploadError } = await supabase.storage
     .from("actas")
     .upload(storagePath, pdfBytes, { contentType: "application/pdf", upsert: true });
