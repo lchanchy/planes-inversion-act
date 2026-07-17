@@ -169,3 +169,10 @@ data class MaterialDeliveryItemEntity(
     val observations: String?,
     val syncState: SyncState = SyncState.PENDING_SYNC
 )
+
+// Cola durable de materiales por eliminar en el servidor (fusion de reasignacion hecha offline).
+// La fila local ya se borro; aqui queda solo el id para propagar el borrado al sincronizar.
+@Entity(tableName = "pending_material_deletions")
+data class PendingMaterialDeletionEntity(
+    @PrimaryKey val id: String
+)

@@ -2340,6 +2340,7 @@ private fun ReassignScreen(
     var targetFamilyId by remember { mutableStateOf("") }
     var targetActivityId by remember { mutableStateOf("") }
     var targetActivities by remember { mutableStateOf<List<PlanActivityEntity>>(emptyList()) }
+    var loadingActivities by remember { mutableStateOf(false) }
 
     val materialName: (PlanProjectMaterialEntity) -> String = { m ->
         m.materialId?.let { id -> materials.firstOrNull { it.id == id }?.name } ?: m.provisionalName ?: "Material"
@@ -2386,30 +2387,48 @@ private fun ReassignScreen(
                     modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Text("Familia destino", style = MaterialTheme.typography.titleSmall)
-                    families.filter { it.id != plan.familyId }.forEach { fam ->
-                        OutlinedButton(
-                            onClick = {
-                                targetFamilyId = fam.id
-                                targetActivityId = ""
-                                scope.launch { targetActivities = container.repository.planActivitiesForFamily(fam.id) }
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("${fam.familyCode} - ${fam.representativeName}" + if (fam.id == targetFamilyId) "  ✓" else "")
-                        }
-                    }
-                    if (targetFamilyId.isNotBlank()) {
-                        Text("Actividad de esa familia", style = MaterialTheme.typography.titleSmall)
-                        if (targetActivities.isEmpty()) {
-                            Text("Esa familia no tiene plan en este dispositivo. Elige otra.")
-                        }
-                        targetActivities.forEach { pa ->
+                    if (targetFamilyId.isBlank()) {
+                        // Paso 1: elegir la familia destino.
+                        Text("1. Elige la familia destino", style = MaterialTheme.typography.titleSmall)
+                        families.filter { it.id != plan.familyId }.forEach { fam ->
                             OutlinedButton(
-                                onClick = { targetActivityId = pa.id },
+                                onClick = {
+                                    targetFamilyId = fam.id
+                                    targetActivityId = ""
+                                    targetActivities = emptyList()
+                                    loadingActivities = true
+                                    scope.launch {
+                                        targetActivities = container.repository.planActivitiesForFamily(fam.id)
+                                        loadingActivities = false
+                                    }
+                                },
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text((activitiesCatalog.firstOrNull { it.id == pa.activityId }?.name ?: "Actividad") + if (pa.id == targetActivityId) "  ✓" else "")
+                                Text("${fam.familyCode} - ${fam.representativeName}")
+                            }
+                        }
+                    } else {
+                        // Paso 2: elegir la actividad de la familia ya seleccionada.
+                        val fam = families.firstOrNull { it.id == targetFamilyId }
+                        Text("Familia destino: ${fam?.familyCode ?: ""} - ${fam?.representativeName ?: ""}", style = MaterialTheme.typography.titleSmall)
+                        androidx.compose.material3.TextButton(onClick = {
+                            targetFamilyId = ""
+                            targetActivityId = ""
+                            targetActivities = emptyList()
+                        }) { Text("← Cambiar familia") }
+                        Text("2. Elige la actividad de esa familia", style = MaterialTheme.typography.titleSmall)
+                        if (loadingActivities) {
+                            Text("Cargando actividades...")
+                        } else if (targetActivities.isEmpty()) {
+                            Text("Esa familia no tiene plan en este dispositivo. Elige otra.")
+                        } else {
+                            targetActivities.forEach { pa ->
+                                OutlinedButton(
+                                    onClick = { targetActivityId = pa.id },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text((activitiesCatalog.firstOrNull { it.id == pa.activityId }?.name ?: "Actividad") + if (pa.id == targetActivityId) "  ✓" else "")
+                                }
                             }
                         }
                     }

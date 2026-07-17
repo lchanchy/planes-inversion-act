@@ -92,11 +92,17 @@ class AppContainer(context: Context) {
         }
     }
 
+    private val migration6To7 = object : Migration(6, 7) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("CREATE TABLE IF NOT EXISTS pending_material_deletions (id TEXT NOT NULL PRIMARY KEY)")
+        }
+    }
+
     private val database = Room.databaseBuilder(
         context,
         RestauracionDatabase::class.java,
         "restauracion_offline.db"
-    ).addMigrations(migration1To2, migration2To3, migration3To4, migration4To5, migration5To6).build()
+    ).addMigrations(migration1To2, migration2To3, migration3To4, migration4To5, migration5To6, migration6To7).build()
 
     val sessionStore = SessionStore(context)
 

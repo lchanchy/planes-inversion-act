@@ -169,6 +169,18 @@ interface PlanDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertActivity(item: PlanActivityEntity)
 
+    // Fase 4: descarga de planes/actividades de otras familias como destino de reasignacion.
+    // IGNORE: inserta solo los que no existen; nunca pisa un plan/actividad capturado o
+    // editado localmente (que pueda estar PENDING_SYNC).
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertPlansIfNew(items: List<OperationalPlanEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertActivitiesIfNew(items: List<PlanActivityEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertMaterialsIfNew(items: List<PlanProjectMaterialEntity>)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertMaterial(item: PlanProjectMaterialEntity)
 
@@ -201,6 +213,17 @@ interface PlanDao {
 
     @Query("delete from plan_project_materials where planActivityId = :activityId")
     suspend fun deleteMaterialsForActivity(activityId: String)
+
+    // Cola de borrados de materiales pendientes de enviar al servidor (fusion de reasignacion
+    // hecha offline: la fila movida se elimina y su cantidad queda sumada en el material destino).
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun enqueueMaterialDeletion(item: PendingMaterialDeletionEntity)
+
+    @Query("select id from pending_material_deletions")
+    suspend fun pendingMaterialDeletions(): List<String>
+
+    @Query("delete from pending_material_deletions where id = :id")
+    suspend fun clearMaterialDeletion(id: String)
 
     @Query("delete from plan_family_counterparts where planActivityId = :activityId")
     suspend fun deleteCounterpartsForActivity(activityId: String)
@@ -249,4 +272,14 @@ interface PlanDao {
     // (no pisa ediciones locales pendientes).
     @Query("update operational_plans set status = :status where id = :id and syncState = 'SYNCED'")
     suspend fun updateSyncedPlanStatus(id: String, status: String)
+
+    // Refleja en la app (solo materiales ya SYNCED) lo que se cambio en la web: reasignacion
+    // (planActivityId) y fusion (quantity). No pisa una edicion local aun pendiente de subir.
+    @Query("update plan_project_materials set planActivityId = :planActivityId, quantity = :quantity where id = :id and syncState = 'SYNCED'")
+    suspend fun updateSyncedMaterial(id: String, planActivityId: String, quantity: Double)
+
+    // Ids de materiales ya sincronizados, para detectar los que la web elimino o fusiono
+    // (ya no estan en el servidor) y quitarlos tambien en la app.
+    @Query("select id from plan_project_materials where syncState = 'SYNCED'")
+    suspend fun syncedMaterialIds(): List<String>
 }

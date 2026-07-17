@@ -4,6 +4,7 @@ import com.restauracion.offline.data.SessionStore
 import com.restauracion.offline.data.local.MaterialDeliveryEntity
 import com.restauracion.offline.data.local.MaterialDeliveryItemEntity
 import com.restauracion.offline.data.local.OperationalPlanEntity
+import com.restauracion.offline.data.local.PendingMaterialDeletionEntity
 import com.restauracion.offline.data.local.PlanActivityEntity
 import com.restauracion.offline.data.local.PlanFamilyCounterpartEntity
 import com.restauracion.offline.data.local.PlanProjectMaterialEntity
@@ -72,6 +73,28 @@ class RestauracionRepository(
         db.catalogDao().replaceCounterparts(remote.counterpartCatalog())
         // Estado de aprobacion de los planes desde el servidor (para habilitar entregas).
         remote.operationalPlanStatuses().forEach { (id, status) -> db.planDao().updateSyncedPlanStatus(id, status) }
+        // Fase 4 (best-effort): planes/actividades de las demas familias para elegirlas como
+        // destino de reasignacion, y reflejar en la app lo hecho en la web (Web -> App). Si RLS
+        // bloquea el SELECT, no debe romper la descarga de catalogos (lo critico). IGNORE en el DAO
+        // -> no pisa lo capturado localmente; el reflejo solo toca filas ya sincronizadas.
+        runCatching {
+            db.planDao().insertPlansIfNew(remote.operationalPlans())
+            db.planDao().insertActivitiesIfNew(remote.planActivities())
+            // Excluir materiales con borrado local pendiente (fusion offline aun no sincronizada),
+            // para no re-insertarlos desde el servidor donde todavia figuran.
+            val pendingDeletions = db.planDao().pendingMaterialDeletions().toHashSet()
+            val serverMaterials = remote.planProjectMaterials().filterNot { it.id in pendingDeletions }
+            // Materiales de otras familias como referencia para reasignar (detectar duplicados).
+            db.planDao().insertMaterialsIfNew(serverMaterials)
+            // Reasignacion/fusion en la web: actualizar actividad y cantidad de los materiales SYNCED.
+            serverMaterials.forEach { db.planDao().updateSyncedMaterial(it.id, it.planActivityId, it.quantity) }
+            // Materiales que la web elimino o fusiono (ya no estan en el servidor) se quitan tambien
+            // en la app. Guardado: solo si el servidor devolvio datos, para no borrar por una lista vacia.
+            if (serverMaterials.isNotEmpty()) {
+                val serverIds = serverMaterials.mapTo(HashSet()) { it.id }
+                db.planDao().syncedMaterialIds().filterNot { it in serverIds }.forEach { db.planDao().deleteMaterial(it) }
+            }
+        }
         // Entregas existentes (web u otro tecnico) para calcular saldos pendientes correctos.
         remote.deliveries().forEach { db.planDao().upsertDelivery(it) }
         remote.deliveryItems().forEach { db.planDao().upsertDeliveryItem(it) }
@@ -83,9 +106,23 @@ class RestauracionRepository(
     // Reasigna un material a otra familia moviendolo a una actividad de esa familia.
     // Al cambiar la actividad, el material queda en el plan de la otra familia (y sale del actual);
     // compras e indicadores lo siguen solos en la web al sincronizar.
+    // Si la actividad destino ya tiene el mismo material, se suman las cantidades en la fila
+    // existente y la fila movida se elimina (localmente y, al sincronizar, tambien en el servidor).
     suspend fun reassignMaterial(materialId: String, targetPlanActivityId: String) {
         val material = db.planDao().materialById(materialId) ?: error("No se encontro el material a reasignar.")
-        db.planDao().updateMaterial(material.copy(planActivityId = targetPlanActivityId, syncState = SyncState.PENDING_SYNC))
+        val existing = db.planDao().materialsForActivity(targetPlanActivityId).firstOrNull { candidate ->
+            candidate.id != material.id && candidate.materialId != null && candidate.materialId == material.materialId
+        }
+        if (existing != null) {
+            db.planDao().updateMaterial(
+                existing.copy(quantity = existing.quantity + material.quantity, syncState = SyncState.PENDING_SYNC)
+            )
+            // Encolar el borrado en el servidor antes de quitar la fila local (para no perder el id).
+            db.planDao().enqueueMaterialDeletion(PendingMaterialDeletionEntity(material.id))
+            db.planDao().deleteMaterial(material.id)
+        } else {
+            db.planDao().updateMaterial(material.copy(planActivityId = targetPlanActivityId, syncState = SyncState.PENDING_SYNC))
+        }
     }
 
     // Descarta las entregas locales aun no sincronizadas de un plan (corrige capturas erroneas).
@@ -405,6 +442,15 @@ class RestauracionRepository(
             }.onFailure {
                 planDao.updateMaterial(item.copy(syncState = SyncState.ERROR))
                 errors += it.message ?: "Error sincronizando material."
+            }
+        }
+        // Fusion de reasignacion: propagar al servidor el borrado de las filas movidas.
+        planDao.pendingMaterialDeletions().forEach { id ->
+            runCatching {
+                remote.softDeleteMaterial(id)
+                planDao.clearMaterialDeletion(id)
+            }.onFailure {
+                errors += it.message ?: "Error eliminando material reasignado."
             }
         }
         planDao.pendingCounterparts().forEach { item ->

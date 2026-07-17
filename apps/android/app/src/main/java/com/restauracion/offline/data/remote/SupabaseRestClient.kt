@@ -24,6 +24,7 @@ import io.ktor.client.plugins.ClientRequestException
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.patch
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
@@ -273,6 +274,43 @@ class SupabaseRestClient(
         }.body<List<PlanStatusDto>>().associate { it.id to it.status }
     }
 
+    // Fase 4: materiales de todos los planes del proyecto. Sirven para (a) tener los materiales de
+    // otras familias como referencia al reasignar (detectar y fusionar duplicados) y (b) reflejar en
+    // la app las reasignaciones/fusiones hechas desde la web (actividad, cantidad, borrado).
+    suspend fun planProjectMaterials(): List<PlanProjectMaterialEntity> = withAuth {
+        requireConfigured()
+        client.get("$baseUrl/rest/v1/plan_project_materials?select=id,plan_activity_id,material_id,quantity,unit,quoted_unit_price,observations&is_deleted=eq.false") {
+            authHeaders()
+        }.body<List<PlanMaterialSyncDto>>().map { it.toEntity() }
+    }
+
+    // Fase 4: marca un material como eliminado en el servidor (al fusionar una reasignacion,
+    // la fila movida se elimina y su cantidad queda sumada en el material destino).
+    suspend fun softDeleteMaterial(id: String) = withAuth {
+        requireConfigured()
+        client.patch("$baseUrl/rest/v1/plan_project_materials?id=eq.$id") {
+            authHeaders()
+            contentType(ContentType.Application.Json)
+            setBody("{\"is_deleted\":true}")
+        }
+    }
+
+    // Fase 4: planes y actividades de otras familias del proyecto, para poder elegirlas como
+    // destino de una reasignacion desde el campo. Se insertan sin pisar los planes locales.
+    suspend fun operationalPlans(): List<OperationalPlanEntity> = withAuth {
+        requireConfigured()
+        client.get("$baseUrl/rest/v1/operational_plans?select=id,project_id,family_id,technician_id,plan_date,status,version&is_deleted=eq.false") {
+            authHeaders()
+        }.body<List<PlanRowDto>>().map { it.toEntity() }
+    }
+
+    suspend fun planActivities(): List<PlanActivityEntity> = withAuth {
+        requireConfigured()
+        client.get("$baseUrl/rest/v1/plan_activities?select=id,plan_id,activity_id,baseline,target,unit,observations&is_deleted=eq.false") {
+            authHeaders()
+        }.body<List<PlanActivityRowDto>>().map { it.toEntity() }
+    }
+
     // Fase 3: pide al aplicativo web que genere el acta firmada de una entrega ya subida
     // (con sus items). Es best-effort: si no hay URL configurada, no hace nada.
     suspend fun requestActGeneration(deliveryId: String) {
@@ -487,6 +525,71 @@ private data class MaterialDeliveryItemUploadDto(
 @Serializable private data class GenerateActRequest(val deliveryId: String)
 
 @Serializable private data class PlanStatusDto(val id: String, val status: String)
+
+@Serializable private data class PlanMaterialSyncDto(
+    val id: String,
+    @SerialName("plan_activity_id") val planActivityId: String,
+    @SerialName("material_id") val materialId: String? = null,
+    val quantity: Double,
+    val unit: String,
+    @SerialName("quoted_unit_price") val quotedUnitPrice: Double = 0.0,
+    val observations: String? = null
+) {
+    fun toEntity() = PlanProjectMaterialEntity(
+        id = id,
+        planActivityId = planActivityId,
+        materialId = materialId,
+        provisionalName = null,
+        quantity = quantity,
+        unit = unit,
+        quotedUnitPrice = quotedUnitPrice,
+        observations = observations,
+        syncState = SyncState.SYNCED
+    )
+}
+
+@Serializable private data class PlanRowDto(
+    val id: String,
+    @SerialName("project_id") val projectId: String,
+    @SerialName("family_id") val familyId: String,
+    @SerialName("technician_id") val technicianId: String? = null,
+    @SerialName("plan_date") val planDate: String,
+    val status: String,
+    val version: Int = 1
+) {
+    fun toEntity() = OperationalPlanEntity(
+        id = id,
+        projectId = projectId,
+        familyId = familyId,
+        technicianId = technicianId,
+        planDate = planDate,
+        status = status,
+        version = version,
+        syncState = SyncState.SYNCED,
+        lastError = null
+    )
+}
+
+@Serializable private data class PlanActivityRowDto(
+    val id: String,
+    @SerialName("plan_id") val planId: String,
+    @SerialName("activity_id") val activityId: String,
+    val baseline: Double? = null,
+    val target: Double? = null,
+    val unit: String,
+    val observations: String? = null
+) {
+    fun toEntity() = PlanActivityEntity(
+        id = id,
+        planId = planId,
+        activityId = activityId,
+        baseline = baseline,
+        target = target,
+        unit = unit,
+        observations = observations,
+        syncState = SyncState.SYNCED
+    )
+}
 
 @Serializable private data class MaterialDeliveryDto(
     val id: String,
