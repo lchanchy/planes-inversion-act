@@ -403,6 +403,9 @@ function AdminApp({ session }: { session: Session }) {
   useEffect(() => {
     if (roleNames.has("super_admin")) document.body.classList.add("is-super-admin");
     else document.body.classList.remove("is-super-admin");
+    // Borrado de planes operativos habilitado para admin y super_admin.
+    if (roleNames.has("super_admin") || roleNames.has("admin")) document.body.classList.add("can-delete-plans");
+    else document.body.classList.remove("can-delete-plans");
   }, [roleNames]);
 
   const canManageProfiles = roleNames.has("super_admin") || roleNames.has("admin") || roleNames.has("project_admin");
@@ -5020,7 +5023,7 @@ function PlansAdmin({
 
   
   async function deleteOperationalPlan(planId: string) {
-    if (!document.body.classList.contains("is-super-admin")) return;
+    if (!document.body.classList.contains("can-delete-plans")) return;
     if (!window.confirm("¿Estás seguro de que deseas eliminar este plan operativo? Esta acción no se puede deshacer.")) return;
     setNotice(null);
     const { error } = await supabase.from("operational_plans").update({ is_deleted: true, status: "draft" }).eq("id", planId);
@@ -5294,7 +5297,7 @@ function PlansAdmin({
                 municipality?.name ?? "",
                 village?.name ?? "",
                 <span className="badge" key="status">{planStatusLabel(plan.status)}</span>,
-                <button className="danger super-admin-only" key="delete" type="button" onClick={() => void deleteOperationalPlan(plan.id)}>Eliminar</button>
+                <button className="danger plan-deleter-only" key="delete" type="button" onClick={() => void deleteOperationalPlan(plan.id)}>Eliminar</button>
               ];
             })}
           />

@@ -1111,3 +1111,7 @@ th {
 /* ponytail: CSS over JS for role-based visibility */
 .super-admin-only { display: none !important; }
 body.is-super-admin .super-admin-only { display: inline-block !important; }
+
+/* Borrado de planes operativos: admin y super_admin */
+.plan-deleter-only { display: none !important; }
+body.can-delete-plans .plan-deleter-only { display: inline-block !important; }
