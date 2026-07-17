@@ -5,6 +5,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -85,7 +87,7 @@ import androidx.compose.ui.unit.IntSize
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 
-private enum class Screen { LOGIN, HOME, FAMILY, PLAN, DELIVERY }
+private enum class Screen { LOGIN, HOME, FAMILY, PLAN, DELIVERY, REASSIGN }
 
 private val BrandDark = Color(0xFF145F3B)
 private val BrandPrimary = Color(0xFF1F7A4F)
@@ -292,6 +294,11 @@ fun RestauracionApp(container: AppContainer) {
                                 selectedPlanId = plan.id
                                 screenName = Screen.DELIVERY.name
                             },
+                            onReassignItems = { plan ->
+                                selectedFamilyId = plan.familyId
+                                selectedPlanId = plan.id
+                                screenName = Screen.REASSIGN.name
+                            },
                             onDeletePlan = { plan ->
                                 scope.launch {
                                     runCatching { container.repository.deletePlan(plan.id) }
@@ -337,6 +344,25 @@ fun RestauracionApp(container: AppContainer) {
                             container = container,
                             project = selectedProject,
                             family = selectedFamily,
+                            plan = selectedPlan,
+                            onBack = { screenName = Screen.FAMILY.name }
+                        )
+                    }
+                }
+                Screen.REASSIGN -> {
+                    if (selectedProject == null || selectedFamily == null || selectedPlan == null) {
+                        RestoringStateScreen(
+                            onBackHome = {
+                                selectedProjectId = null
+                                selectedFamilyId = null
+                                selectedPlanId = null
+                                screenName = Screen.HOME.name
+                            }
+                        )
+                    } else {
+                        ReassignScreen(
+                            container = container,
+                            project = selectedProject,
                             plan = selectedPlan,
                             onBack = { screenName = Screen.FAMILY.name }
                         )
@@ -450,6 +476,7 @@ private fun FamilyScreen(
     onCreatePlan: (FamilyEntity) -> Unit,
     onEditSentPlan: (OperationalPlanEntity) -> Unit,
     onRegisterDelivery: (OperationalPlanEntity) -> Unit,
+    onReassignItems: (OperationalPlanEntity) -> Unit,
     onDeletePlan: (OperationalPlanEntity) -> Unit
 ) {
     if (project == null) return
@@ -617,6 +644,14 @@ private fun FamilyScreen(
                                             modifier = Modifier.weight(1f)
                                         ) {
                                             Text("Eliminar", color = MaterialTheme.colorScheme.error)
+                                        }
+                                    }
+                                    if (aprobado) {
+                                        OutlinedButton(
+                                            onClick = { onReassignItems(sentPlan) },
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Text("Reasignar items a otra familia")
                                         }
                                     }
                                 }
@@ -2284,4 +2319,120 @@ private fun exportSignatureToDataUrl(strokes: List<List<Offset>>, size: IntSize)
 
 private fun formatDeliveryNumber(value: Double): String {
     return if (value == value.toLong().toDouble()) value.toLong().toString() else String.format("%.2f", value)
+}
+
+@Composable
+private fun ReassignScreen(
+    container: AppContainer,
+    project: ProjectEntity?,
+    plan: OperationalPlanEntity?,
+    onBack: () -> Unit
+) {
+    if (project == null || plan == null) return
+    val scope = rememberCoroutineScope()
+    val planMaterials by container.repository.planMaterialsTotal(plan.id).collectAsState(initial = emptyList())
+    val materials by container.repository.materials(project.id).collectAsState(initial = emptyList())
+    val families by container.repository.families(project.id).collectAsState(initial = emptyList())
+    val activitiesCatalog by container.repository.activities(project.id).collectAsState(initial = emptyList())
+    var message by remember { mutableStateOf<String?>(null) }
+
+    var reassignMaterial by remember { mutableStateOf<PlanProjectMaterialEntity?>(null) }
+    var targetFamilyId by remember { mutableStateOf("") }
+    var targetActivityId by remember { mutableStateOf("") }
+    var targetActivities by remember { mutableStateOf<List<PlanActivityEntity>>(emptyList()) }
+
+    val materialName: (PlanProjectMaterialEntity) -> String = { m ->
+        m.materialId?.let { id -> materials.firstOrNull { it.id == id }?.name } ?: m.provisionalName ?: "Material"
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            OutlinedButton(onClick = onBack) { Text("Volver") }
+            Text("Reasignar items a otra familia", style = MaterialTheme.typography.titleLarge, color = BrandDark)
+            Text("El item se mueve al plan de la familia que elijas. Sincroniza para enviarlo.")
+        }
+        if (planMaterials.isEmpty()) {
+            item { Text("Este plan no tiene materiales.") }
+        }
+        items(planMaterials, key = { it.id }) { m ->
+            GlassPanel {
+                Text(materialName(m), style = MaterialTheme.typography.titleSmall)
+                Text("${formatDeliveryNumber(m.quantity)} ${m.unit}")
+                OutlinedButton(onClick = {
+                    reassignMaterial = m
+                    targetFamilyId = ""
+                    targetActivityId = ""
+                    targetActivities = emptyList()
+                }, modifier = Modifier.fillMaxWidth()) { Text("Reasignar este item") }
+            }
+        }
+        item {
+            message?.let {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(it, color = MaterialTheme.colorScheme.primary)
+            }
+        }
+    }
+
+    reassignMaterial?.let { m ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { reassignMaterial = null },
+            title = { Text("Reasignar: ${materialName(m)}") },
+            text = {
+                Column(
+                    modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text("Familia destino", style = MaterialTheme.typography.titleSmall)
+                    families.filter { it.id != plan.familyId }.forEach { fam ->
+                        OutlinedButton(
+                            onClick = {
+                                targetFamilyId = fam.id
+                                targetActivityId = ""
+                                scope.launch { targetActivities = container.repository.planActivitiesForFamily(fam.id) }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("${fam.familyCode} - ${fam.representativeName}" + if (fam.id == targetFamilyId) "  ✓" else "")
+                        }
+                    }
+                    if (targetFamilyId.isNotBlank()) {
+                        Text("Actividad de esa familia", style = MaterialTheme.typography.titleSmall)
+                        if (targetActivities.isEmpty()) {
+                            Text("Esa familia no tiene plan en este dispositivo. Elige otra.")
+                        }
+                        targetActivities.forEach { pa ->
+                            OutlinedButton(
+                                onClick = { targetActivityId = pa.id },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text((activitiesCatalog.firstOrNull { it.id == pa.activityId }?.name ?: "Actividad") + if (pa.id == targetActivityId) "  ✓" else "")
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(
+                    enabled = targetActivityId.isNotBlank(),
+                    onClick = {
+                        scope.launch {
+                            runCatching { container.repository.reassignMaterial(m.id, targetActivityId) }
+                                .onSuccess {
+                                    message = "Item reasignado. Sincronice para enviarlo."
+                                    reassignMaterial = null
+                                }
+                                .onFailure { message = it.message ?: "No fue posible reasignar." }
+                        }
+                    }
+                ) { Text("Reasignar") }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { reassignMaterial = null }) { Text("Cancelar") }
+            }
+        )
+    }
 }

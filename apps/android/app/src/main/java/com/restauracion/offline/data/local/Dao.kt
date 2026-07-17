@@ -126,6 +126,13 @@ interface PlanDao {
     @Query("select * from plan_activities where id = :id limit 1")
     suspend fun activityById(id: String): PlanActivityEntity?
 
+    @Query("select * from plan_project_materials where id = :id limit 1")
+    suspend fun materialById(id: String): PlanProjectMaterialEntity?
+
+    // Actividades de OTRA familia que estan en este dispositivo (para reasignar un material alli).
+    @Query("select pa.* from plan_activities pa inner join operational_plans p on p.id = pa.planId where p.familyId = :familyId")
+    suspend fun planActivitiesForFamily(familyId: String): List<PlanActivityEntity>
+
     @Query("select * from plan_activities where planId = :planId and activityId = :activityId limit 1")
     suspend fun activityByCatalog(planId: String, activityId: String): PlanActivityEntity?
 

@@ -77,6 +77,17 @@ class RestauracionRepository(
         remote.deliveryItems().forEach { db.planDao().upsertDeliveryItem(it) }
     }
 
+    // Fase 4: actividades (con su plan) que otra familia tiene en este dispositivo, para reasignar.
+    suspend fun planActivitiesForFamily(familyId: String) = db.planDao().planActivitiesForFamily(familyId)
+
+    // Reasigna un material a otra familia moviendolo a una actividad de esa familia.
+    // Al cambiar la actividad, el material queda en el plan de la otra familia (y sale del actual);
+    // compras e indicadores lo siguen solos en la web al sincronizar.
+    suspend fun reassignMaterial(materialId: String, targetPlanActivityId: String) {
+        val material = db.planDao().materialById(materialId) ?: error("No se encontro el material a reasignar.")
+        db.planDao().updateMaterial(material.copy(planActivityId = targetPlanActivityId, syncState = SyncState.PENDING_SYNC))
+    }
+
     // Descarta las entregas locales aun no sincronizadas de un plan (corrige capturas erroneas).
     suspend fun discardLocalDeliveries(planId: String) {
         db.planDao().deleteLocalDeliveryItemsForPlan(planId)
