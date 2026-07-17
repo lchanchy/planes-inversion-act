@@ -39,9 +39,11 @@ import kotlinx.serialization.json.Json
 class SupabaseRestClient(
     baseUrl: String,
     private val anonKey: String,
-    private val sessionStore: SessionStore
+    private val sessionStore: SessionStore,
+    webAppUrl: String = ""
 ) {
     private val baseUrl = baseUrl.trim().trimEnd('/')
+    private val webAppUrl = webAppUrl.trim().trimEnd('/')
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false; encodeDefaults = true }
     private val client = HttpClient(OkHttp) {
         install(ContentNegotiation) { json(json) }
@@ -271,6 +273,16 @@ class SupabaseRestClient(
         }.body<List<PlanStatusDto>>().associate { it.id to it.status }
     }
 
+    // Fase 3: pide al aplicativo web que genere el acta firmada de una entrega ya subida
+    // (con sus items). Es best-effort: si no hay URL configurada, no hace nada.
+    suspend fun requestActGeneration(deliveryId: String) {
+        if (webAppUrl.isBlank()) return
+        client.post("$webAppUrl/api/generate-act") {
+            contentType(ContentType.Application.Json)
+            setBody(json.encodeToString(GenerateActRequest(deliveryId)))
+        }
+    }
+
     // --- Entregas (Fase 2) ---
 
     suspend fun deliveries(): List<MaterialDeliveryEntity> = withAuth {
@@ -471,6 +483,8 @@ private data class MaterialDeliveryItemUploadDto(
     val observations: String?,
     @SerialName("is_deleted") val isDeleted: Boolean = false
 )
+
+@Serializable private data class GenerateActRequest(val deliveryId: String)
 
 @Serializable private data class PlanStatusDto(val id: String, val status: String)
 

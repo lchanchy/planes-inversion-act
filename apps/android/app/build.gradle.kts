@@ -54,8 +54,13 @@ android {
             "SUPABASE_ANON_KEY no fue leida desde local.properties o no es la Legacy anon key. Revise apps/android/local.properties."
         }
 
+        // URL del aplicativo web (Vercel). Opcional: si esta vacia, la app no pide la
+        // generacion del acta firmada y todo lo demas sigue funcionando igual.
+        val webAppUrl = secretProperty("WEB_APP_URL")
+
         buildConfigField("String", "SUPABASE_URL", "\"${escapedBuildConfigString(supabaseUrl)}\"")
         buildConfigField("String", "SUPABASE_ANON_KEY", "\"${escapedBuildConfigString(supabaseAnonKey)}\"")
+        buildConfigField("String", "WEB_APP_URL", "\"${escapedBuildConfigString(webAppUrl)}\"")
     }
 
     buildFeatures {

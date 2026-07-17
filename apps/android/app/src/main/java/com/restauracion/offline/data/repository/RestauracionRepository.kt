@@ -406,10 +406,12 @@ class RestauracionRepository(
             }
         }
         // Entregas primero (padre), luego sus items (respeta la llave foranea).
+        val deliveriesJustSynced = mutableListOf<String>()
         planDao.pendingDeliveries().forEach { delivery ->
             runCatching {
                 remote.uploadDelivery(delivery)
                 planDao.updateDelivery(delivery.copy(syncState = SyncState.SYNCED, lastError = null))
+                deliveriesJustSynced += delivery.id
             }.onFailure {
                 planDao.updateDelivery(delivery.copy(syncState = SyncState.ERROR, lastError = it.message))
                 errors += it.message ?: "Error sincronizando entrega."
@@ -423,6 +425,11 @@ class RestauracionRepository(
                 planDao.updateDeliveryItem(item.copy(syncState = SyncState.ERROR))
                 errors += it.message ?: "Error sincronizando item de entrega."
             }
+        }
+        // Fase 3: con la entrega y sus items ya arriba, pedir el acta firmada.
+        // Best-effort: si falla, la entrega ya quedo sincronizada y el acta se puede regenerar.
+        deliveriesJustSynced.forEach { deliveryId ->
+            runCatching { remote.requestActGeneration(deliveryId) }
         }
         if (errors.isNotEmpty()) {
             error(errors.distinct().joinToString(separator = "\n"))

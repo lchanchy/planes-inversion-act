@@ -103,7 +103,8 @@ class AppContainer(context: Context) {
     private val remote = SupabaseRestClient(
         baseUrl = BuildConfig.SUPABASE_URL,
         anonKey = BuildConfig.SUPABASE_ANON_KEY,
-        sessionStore = sessionStore
+        sessionStore = sessionStore,
+        webAppUrl = BuildConfig.WEB_APP_URL
     )
 
     val repository = RestauracionRepository(
