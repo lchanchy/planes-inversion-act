@@ -5202,11 +5202,12 @@ function PlansAdmin({
                 <label>
                   Ancho doc.
                   <input
-                    key={`logo-size-${logo.id}-${logo.size}`}
+                    key={`logo-size-${logo.id}`}
                     disabled={!canManageLogos}
                     min="40"
                     max="360"
                     type="number"
+                    inputMode="numeric"
                     defaultValue={logo.size}
                     onBlur={(event) => {
                       // Guarda solo al salir del campo (antes recortaba y grababa en cada tecla,
@@ -12444,7 +12445,8 @@ async function loadProjectLogos(): Promise<Record<string, ProjectLogoConfig[]>> 
   const { data, error } = await supabase
     .from("project_logos")
     .select("id, project_id, data_url, position, name, size")
-    .eq("is_deleted", false);
+    .eq("is_deleted", false)
+    .order("created_at");
   if (error || !data) return {};
   const result: Record<string, ProjectLogoConfig[]> = {};
   for (const row of data as Array<{ id: string; project_id: string; data_url: string; position: ProjectLogoPosition; name: string | null; size: number }>) {
