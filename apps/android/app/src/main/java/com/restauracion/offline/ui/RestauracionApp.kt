@@ -1256,6 +1256,16 @@ private fun PlanCaptureScreen(
                         OutlinedButton(onClick = { counterpartVegetalGroup = "forestales_nativos" }) { Text("Forestales nativos") }
                         OutlinedButton(onClick = { counterpartVegetalGroup = "otro" }) { Text("Otro vegetal") }
                     }
+                    Text("Semillas", style = MaterialTheme.typography.labelMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                        OutlinedButton(onClick = { counterpartVegetalGroup = "semilla_frijol" }) { Text("Frijol") }
+                        OutlinedButton(onClick = { counterpartVegetalGroup = "semilla_maiz" }) { Text("Maiz") }
+                        OutlinedButton(onClick = { counterpartVegetalGroup = "semilla_yuca" }) { Text("Yuca") }
+                        OutlinedButton(onClick = { counterpartVegetalGroup = "semilla_sandia" }) { Text("Sandia") }
+                        OutlinedButton(onClick = { counterpartVegetalGroup = "semilla_ahuyama" }) { Text("Ahuyama") }
+                        OutlinedButton(onClick = { counterpartVegetalGroup = "semilla_cana" }) { Text("Cana") }
+                        OutlinedButton(onClick = { counterpartVegetalGroup = "semilla_bore" }) { Text("Bore") }
+                    }
                     Text("Seleccionado: ${vegetalGroupLabel(counterpartVegetalGroup)}")
                 }
                 if (!useProvisionalCounterpart) {
@@ -2004,6 +2014,13 @@ private fun vegetalGroupLabel(value: String): String {
         "frutales" -> "Frutales"
         "forestales_nativos" -> "Forestales nativos"
         "otro" -> "Otro vegetal"
+        "semilla_frijol" -> "Semilla de frijol"
+        "semilla_maiz" -> "Semilla de maiz"
+        "semilla_yuca" -> "Semilla de yuca"
+        "semilla_sandia" -> "Semilla de sandia"
+        "semilla_ahuyama" -> "Semilla de ahuyama"
+        "semilla_cana" -> "Semilla de cana"
+        "semilla_bore" -> "Semilla de bore"
         else -> "No seleccionado"
     }
 }

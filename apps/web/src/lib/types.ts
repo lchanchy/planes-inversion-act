@@ -234,7 +234,7 @@ export type PlanFamilyCounterpart = {
   unit: string;
   estimated_unit_value: number;
   estimated_total: number;
-  vegetal_indicator_group: "colinos" | "cacao" | "frutales" | "forestales_nativos" | "otro" | null;
+  vegetal_indicator_group: "colinos" | "cacao" | "frutales" | "forestales_nativos" | "otro" | VegetalSeed | null;
   observations: string | null;
   is_deleted: boolean;
 };
@@ -376,13 +376,24 @@ export type ImplementationProgress = {
   is_deleted: boolean;
 };
 
+// Semillas de contrapartida (categorias vegetales adicionales a colinos/cacao/frutales/forestales).
+export type VegetalSeed =
+  | "semilla_frijol"
+  | "semilla_maiz"
+  | "semilla_yuca"
+  | "semilla_sandia"
+  | "semilla_ahuyama"
+  | "semilla_cana"
+  | "semilla_bore";
+
 export type QuarterlyProgressType =
   | "avance"
   | "entregados"
   | "sembrados"
   | "cumplimiento_acuerdo"
   | "vegetal_entrega"
-  | "vegetal_siembra";
+  | "vegetal_siembra"
+  | "contrapartida_siembra";
 
 export type QuarterlyProgress = {
   id: string;
@@ -396,7 +407,7 @@ export type QuarterlyProgress = {
   target_quantity: number;
   progress_quantity: number;
   progress_type: QuarterlyProgressType;
-  vegetal_indicator_group: "colinos" | "cacao" | "frutales" | "forestales_nativos" | null;
+  vegetal_indicator_group: "colinos" | "cacao" | "frutales" | "forestales_nativos" | VegetalSeed | null;
   observations: string | null;
   is_deleted: boolean;
 };

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback, createContext, useContext } from "react";
+import { useEffect, useMemo, useState, useCallback, createContext, useContext, Fragment } from "react";
 import {
   AlignmentType,
   BorderStyle,
@@ -55,6 +55,7 @@ import type {
   QuarterlyProgressType,
   Role,
   UserMunicipalityAssignment,
+  VegetalSeed,
   Village
 } from "@/lib/types";
 
@@ -820,6 +821,7 @@ function AdminApp({ session }: { session: Session }) {
               plans={scoped.plans}
               planActivities={scoped.planActivities}
               planMaterials={scoped.planMaterials}
+              planCounterparts={scoped.planCounterparts}
               provisionalMaterials={scoped.provisionalMaterials}
               procurementBatches={scoped.procurementBatches}
               procurementBatchItems={scoped.procurementBatchItems}
@@ -5747,6 +5749,13 @@ function PlanDetail({
                 <option value="cacao">Cacao</option>
                 <option value="frutales">Frutales</option>
                 <option value="forestales_nativos">Forestales nativos</option>
+                <option value="semilla_frijol">Semilla de frijol</option>
+                <option value="semilla_maiz">Semilla de maiz</option>
+                <option value="semilla_yuca">Semilla de yuca</option>
+                <option value="semilla_sandia">Semilla de sandia</option>
+                <option value="semilla_ahuyama">Semilla de ahuyama</option>
+                <option value="semilla_cana">Semilla de cana</option>
+                <option value="semilla_bore">Semilla de bore</option>
                 <option value="otro">Otro vegetal</option>
               </select>
             </label>
@@ -6013,6 +6022,34 @@ const VEGETAL_INDICATOR_GROUPS: Array<{ key: VegetalIndicatorGroup; label: strin
   { key: "cacao", label: "Cacao", unit: "unidad" },
   { key: "frutales", label: "Frutales", unit: "unidad" },
   { key: "forestales_nativos", label: "Forestales nativos", unit: "unidad" }
+];
+
+// Categorias del reporte "Material vegetal de contrapartida de familias" (Meta del plan + Sembrado
+// manual por familia/trimestre). Colinos ya agrupa pina + platano/pildoro/banano.
+type CounterpartVegetalCategory =
+  | "forestales_nativos"
+  | "colinos"
+  | "frutales"
+  | "cacao"
+  | VegetalSeed;
+
+const COUNTERPART_VEGETAL_SEEDS: CounterpartVegetalCategory[] = [
+  "semilla_frijol",
+  "semilla_maiz",
+  "semilla_yuca",
+  "semilla_sandia",
+  "semilla_ahuyama",
+  "semilla_cana",
+  "semilla_bore"
+];
+
+// Orden de las filas del reporte: primero las 4 categorias base, luego la seccion de semillas.
+const COUNTERPART_VEGETAL_CATEGORIES: Array<{ key: CounterpartVegetalCategory; label: string; isSeed: boolean }> = [
+  { key: "forestales_nativos", label: "Arboles forestales nativos", isSeed: false },
+  { key: "colinos", label: "Colinos (pina + platano/pildoro/banano)", isSeed: false },
+  { key: "frutales", label: "Frutales", isSeed: false },
+  { key: "cacao", label: "Cacao", isSeed: false },
+  ...COUNTERPART_VEGETAL_SEEDS.map((key) => ({ key, label: vegetalIndicatorGroupLabel(key), isSeed: true }))
 ];
 
 type ProcurementFilters = {
@@ -6354,6 +6391,7 @@ function ProcurementDeliveriesActs({
   plans,
   planActivities,
   planMaterials,
+  planCounterparts,
   provisionalMaterials,
   procurementBatches,
   procurementBatchItems,
@@ -6383,6 +6421,7 @@ function ProcurementDeliveriesActs({
   plans: OperationalPlan[];
   planActivities: PlanActivity[];
   planMaterials: PlanProjectMaterial[];
+  planCounterparts: PlanFamilyCounterpart[];
   provisionalMaterials: ProvisionalMaterial[];
   procurementBatches: ProcurementBatch[];
   procurementBatchItems: ProcurementBatchItem[];
@@ -7834,6 +7873,16 @@ function ProcurementDeliveriesActs({
 
       {!phase5Blocked && activeTab === "indicators" ? (
         <div className="section tracking-section">
+          <CounterpartVegetalIndicators
+            families={families}
+            plans={plans}
+            planActivities={planActivities}
+            planCounterparts={planCounterparts}
+            quarterlyProgress={quarterlyProgress}
+            year={trackingYear}
+            canEdit={canEditImplementation}
+            onSaved={onChange}
+          />
           <div className="summary-grid compact-summary">
             <Metric label="Familias seguimiento" value={trackingMatrix.rows.length} />
             <Metric label="Actividades aprobadas" value={trackingMatrix.groups.length} />
@@ -9068,7 +9117,7 @@ async function upsertQuarterlyProgress(payload: {
   target_quantity: number;
   progress_quantity: number;
   progress_type: QuarterlyProgressType;
-  vegetal_indicator_group?: VegetalIndicatorGroup | null;
+  vegetal_indicator_group?: VegetalIndicatorGroup | VegetalSeed | null;
 }) {
   let query = supabase
     .from("quarterly_progress")
@@ -9097,6 +9146,244 @@ async function upsertQuarterlyProgress(payload: {
     ? await supabase.from("quarterly_progress").update(payload).eq("id", existingId)
     : await supabase.from("quarterly_progress").insert(payload);
   if (result.error) throw result.error;
+}
+
+// Seccion "Material vegetal de contrapartida de familias": Meta (contrapartida del plan aprobado)
+// por categoria + Sembrado manual por familia y trimestre (progress_type 'contrapartida_siembra').
+function CounterpartVegetalIndicators({
+  families,
+  plans,
+  planActivities,
+  planCounterparts,
+  quarterlyProgress,
+  year,
+  canEdit,
+  onSaved
+}: {
+  families: Family[];
+  plans: OperationalPlan[];
+  planActivities: PlanActivity[];
+  planCounterparts: PlanFamilyCounterpart[];
+  quarterlyProgress: QuarterlyProgress[];
+  year: number;
+  canEdit: boolean;
+  onSaved: () => Promise<void> | void;
+}) {
+  const [quarter, setQuarter] = useState<number>(1);
+  const [expanded, setExpanded] = useState<CounterpartVegetalCategory | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const familyById = useMemo(() => new Map(families.map((item) => [item.id, item])), [families]);
+
+  // Meta por familia y categoria (solo planes aprobados) + unidad representativa por categoria.
+  const meta = useMemo(() => {
+    const approvedPlanById = new Map(
+      plans.filter((plan) => !plan.is_deleted && isApprovedPlanStatus(plan.status)).map((plan) => [plan.id, plan])
+    );
+    const activityFamily = new Map<string, string>();
+    for (const activity of planActivities) {
+      if (activity.is_deleted) continue;
+      const plan = approvedPlanById.get(activity.plan_id);
+      if (plan) activityFamily.set(activity.id, plan.family_id);
+    }
+    const byFamilyCategory = new Map<string, number>();
+    const unitByCategory = new Map<CounterpartVegetalCategory, string>();
+    const totalByCategory = new Map<CounterpartVegetalCategory, number>();
+    for (const counterpart of planCounterparts) {
+      if (counterpart.is_deleted) continue;
+      const group = counterpart.vegetal_indicator_group as CounterpartVegetalCategory | null;
+      if (!group || !COUNTERPART_VEGETAL_CATEGORIES.some((category) => category.key === group)) continue;
+      const familyId = activityFamily.get(counterpart.plan_activity_id);
+      if (!familyId) continue;
+      const quantity = Number(counterpart.quantity ?? 0);
+      byFamilyCategory.set(`${familyId}|${group}`, (byFamilyCategory.get(`${familyId}|${group}`) ?? 0) + quantity);
+      totalByCategory.set(group, (totalByCategory.get(group) ?? 0) + quantity);
+      if (counterpart.unit && !unitByCategory.has(group)) unitByCategory.set(group, counterpart.unit);
+    }
+    return { byFamilyCategory, unitByCategory, totalByCategory };
+  }, [plans, planActivities, planCounterparts]);
+
+  // Sembrado guardado por familia/categoria para el trimestre y anio elegidos.
+  const sembradoByFamilyCategory = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const progress of quarterlyProgress) {
+      if (progress.is_deleted || progress.progress_type !== "contrapartida_siembra") continue;
+      if (progress.year !== year || progress.quarter !== quarter || !progress.vegetal_indicator_group) continue;
+      map.set(`${progress.family_id}|${progress.vegetal_indicator_group}`, Number(progress.progress_quantity ?? 0));
+    }
+    return map;
+  }, [quarterlyProgress, year, quarter]);
+
+  // Familias a listar por categoria: las que tienen meta en esa categoria (o sembrado ya capturado).
+  const familiesByCategory = useMemo(() => {
+    const map = new Map<CounterpartVegetalCategory, string[]>();
+    const seen = new Map<CounterpartVegetalCategory, Set<string>>();
+    const add = (category: CounterpartVegetalCategory, familyId: string) => {
+      if (!seen.has(category)) seen.set(category, new Set());
+      const set = seen.get(category)!;
+      if (set.has(familyId)) return;
+      set.add(familyId);
+      if (!map.has(category)) map.set(category, []);
+      map.get(category)!.push(familyId);
+    };
+    for (const key of meta.byFamilyCategory.keys()) {
+      const [familyId, category] = key.split("|") as [string, CounterpartVegetalCategory];
+      add(category, familyId);
+    }
+    for (const key of sembradoByFamilyCategory.keys()) {
+      const [familyId, category] = key.split("|") as [string, CounterpartVegetalCategory];
+      add(category, familyId);
+    }
+    for (const list of map.values()) {
+      list.sort((left, right) => {
+        const leftLabel = `${familyById.get(left)?.family_code ?? ""} ${familyById.get(left)?.representative_name ?? ""}`;
+        const rightLabel = `${familyById.get(right)?.family_code ?? ""} ${familyById.get(right)?.representative_name ?? ""}`;
+        return leftLabel.localeCompare(rightLabel);
+      });
+    }
+    return map;
+  }, [meta, sembradoByFamilyCategory, familyById]);
+
+  const draftKey = (familyId: string, category: CounterpartVegetalCategory) => `${familyId}|${category}|${quarter}`;
+  const sembradoValue = (familyId: string, category: CounterpartVegetalCategory) => {
+    const key = draftKey(familyId, category);
+    if (key in drafts) return drafts[key];
+    return String(sembradoByFamilyCategory.get(`${familyId}|${category}`) ?? "");
+  };
+  const sembradoTotal = (category: CounterpartVegetalCategory) => {
+    const families = familiesByCategory.get(category) ?? [];
+    return families.reduce((sum, familyId) => sum + (Number(sembradoValue(familyId, category)) || 0), 0);
+  };
+
+  async function save() {
+    const entries = Object.entries(drafts).filter(([, value]) => value.trim() !== "");
+    if (entries.length === 0) return;
+    setSaving(true);
+    setMessage(null);
+    try {
+      for (const [key, value] of entries) {
+        const [familyId, category, draftQuarter] = key.split("|") as [string, CounterpartVegetalCategory, string];
+        const family = familyById.get(familyId);
+        if (!family) continue;
+        await upsertQuarterlyProgress({
+          project_id: family.project_id,
+          family_id: familyId,
+          operational_plan_id: null,
+          plan_activity_id: null,
+          activity_id: null,
+          year,
+          quarter: Number(draftQuarter),
+          target_quantity: 0,
+          progress_quantity: Number(value) || 0,
+          progress_type: "contrapartida_siembra",
+          vegetal_indicator_group: category
+        });
+      }
+      setDrafts({});
+      await onSaved();
+      setMessage("Sembrado guardado.");
+    } catch (error) {
+      setMessage(`No fue posible guardar: ${(error as Error).message}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const pendingCount = Object.values(drafts).filter((value) => value.trim() !== "").length;
+
+  return (
+    <div className="panel grid" style={{ marginBottom: 16 }}>
+      <div className="span-12"><strong>Material vegetal de contrapartida de familias</strong></div>
+      <p className="span-12 muted">
+        Meta = cantidad de la contrapartida en los planes operativos aprobados. Sembrado = reporte manual por familia y trimestre.
+      </p>
+      <label className="span-3">
+        Trimestre del sembrado
+        <select value={quarter} onChange={(event) => { setQuarter(Number(event.target.value)); setExpanded(null); }}>
+          <option value={1}>Trimestre 1</option>
+          <option value={2}>Trimestre 2</option>
+          <option value={3}>Trimestre 3</option>
+          <option value={4}>Trimestre 4</option>
+        </select>
+      </label>
+      <div className="span-9 form-actions" style={{ alignItems: "end", justifyContent: "flex-end" }}>
+        <button disabled={!canEdit || saving || pendingCount === 0} type="button" onClick={() => void save()}>
+          Guardar sembrado {pendingCount > 0 ? `(${pendingCount})` : ""}
+        </button>
+      </div>
+      {message ? <div className="span-12 muted">{message}</div> : null}
+      <div className="span-12" style={{ overflowX: "auto" }}>
+        <table>
+          <thead>
+            <tr>
+              <th>Categoria</th>
+              <th>Unidad</th>
+              <th style={{ textAlign: "right" }}>Meta</th>
+              <th style={{ textAlign: "right" }}>Sembrado (T{quarter})</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {COUNTERPART_VEGETAL_CATEGORIES.map((category, index) => {
+              const previous = COUNTERPART_VEGETAL_CATEGORIES[index - 1];
+              const showSeedHeader = category.isSeed && (!previous || !previous.isSeed);
+              const familiesList = familiesByCategory.get(category.key) ?? [];
+              const unit = meta.unitByCategory.get(category.key) ?? "";
+              const isOpen = expanded === category.key;
+              return (
+                <Fragment key={category.key}>
+                  {showSeedHeader ? (
+                    <tr><td colSpan={5} style={{ fontWeight: 600, background: "var(--panel-bg, #f4f6f4)" }}>Semillas</td></tr>
+                  ) : null}
+                  <tr>
+                    <td>{category.label}</td>
+                    <td>{unit}</td>
+                    <td style={{ textAlign: "right" }}>{formatNumber(meta.totalByCategory.get(category.key) ?? 0)}</td>
+                    <td style={{ textAlign: "right" }}>{formatNumber(sembradoTotal(category.key))}</td>
+                    <td>
+                      <button
+                        className="secondary"
+                        type="button"
+                        disabled={familiesList.length === 0}
+                        onClick={() => setExpanded(isOpen ? null : category.key)}
+                      >
+                        {isOpen ? "Ocultar" : `Familias (${familiesList.length})`}
+                      </button>
+                    </td>
+                  </tr>
+                  {isOpen ? familiesList.map((familyId) => {
+                    const family = familyById.get(familyId);
+                    const familyMeta = meta.byFamilyCategory.get(`${familyId}|${category.key}`) ?? 0;
+                    return (
+                      <tr key={`${category.key}-${familyId}`} style={{ background: "var(--panel-bg, #fafcfa)" }}>
+                        <td style={{ paddingLeft: 24 }}>{family ? `${family.family_code} - ${family.representative_name}` : familyId}</td>
+                        <td>{unit}</td>
+                        <td style={{ textAlign: "right" }}>{formatNumber(familyMeta)}</td>
+                        <td style={{ textAlign: "right" }}>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            disabled={!canEdit}
+                            style={{ width: 110, textAlign: "right" }}
+                            value={sembradoValue(familyId, category.key)}
+                            onChange={(event) => setDrafts((current) => ({ ...current, [draftKey(familyId, category.key)]: event.target.value }))}
+                          />
+                        </td>
+                        <td></td>
+                      </tr>
+                    );
+                  }) : null}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 function buildMaintenanceMatrix(data: {
@@ -11251,7 +11538,14 @@ function vegetalIndicatorGroupLabel(value?: string | null) {
     cacao: "Cacao",
     frutales: "Frutales",
     forestales_nativos: "Forestales nativos",
-    otro: "Otro vegetal sin indicador"
+    otro: "Otro vegetal sin indicador",
+    semilla_frijol: "Semilla de frijol",
+    semilla_maiz: "Semilla de maiz",
+    semilla_yuca: "Semilla de yuca",
+    semilla_sandia: "Semilla de sandia",
+    semilla_ahuyama: "Semilla de ahuyama",
+    semilla_cana: "Semilla de cana",
+    semilla_bore: "Semilla de bore"
   };
   return value ? labels[value] ?? value : "No aplica";
 }
