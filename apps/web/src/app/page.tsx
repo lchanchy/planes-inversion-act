@@ -6043,6 +6043,34 @@ const COUNTERPART_VEGETAL_SEEDS: CounterpartVegetalCategory[] = [
   "semilla_bore"
 ];
 
+// Respaldo de clasificacion: cuando la contrapartida no trae categoria estructurada (o quedo
+// como "otro", porque las semillas no existian como opcion al capturarla), se deduce del nombre
+// del aporte. La categoria estructurada, cuando existe, siempre manda sobre esta deduccion.
+function inferCounterpartVegetalCategory(name: string): CounterpartVegetalCategory | null {
+  const text = normalizeHeader(name).replaceAll("_", " ");
+  if (!text) return null;
+  // Prefijo: tolera plurales (frutal/frutales, colino/colinos).
+  const startsWord = (word: string) => new RegExp(`\\b${word}`).test(text);
+  // Palabra exacta: evita falsos positivos en terminos cortos ("bore" dentro de "arboreo").
+  const exactWord = (word: string) => new RegExp(`\\b${word}\\b`).test(text);
+  if (startsWord("frijol")) return "semilla_frijol";
+  if (startsWord("maiz")) return "semilla_maiz";
+  if (startsWord("yuca")) return "semilla_yuca";
+  if (startsWord("sandia")) return "semilla_sandia";
+  if (startsWord("ahuyama") || startsWord("auyama")) return "semilla_ahuyama";
+  if (exactWord("cana") || exactWord("canas")) return "semilla_cana";
+  if (exactWord("bore")) return "semilla_bore";
+  if (startsWord("cacao")) return "cacao";
+  if (startsWord("colino") || startsWord("pina") || startsWord("platano") || startsWord("pildoro") || startsWord("banano")) {
+    return "colinos";
+  }
+  if (startsWord("frutal")) return "frutales";
+  if (startsWord("forestal") || startsWord("nativo") || startsWord("maderable") || startsWord("achapo") || startsWord("arbol") || startsWord("arbore")) {
+    return "forestales_nativos";
+  }
+  return null;
+}
+
 // Orden de las filas del reporte: primero las 4 categorias base, luego la seccion de semillas.
 const COUNTERPART_VEGETAL_CATEGORIES: Array<{ key: CounterpartVegetalCategory; label: string; isSeed: boolean }> = [
   { key: "forestales_nativos", label: "Arboles forestales nativos", isSeed: false },
@@ -9027,8 +9055,16 @@ function buildTrackingMatrix(data: {
   const counterpartCategoryKeys = new Set(COUNTERPART_VEGETAL_CATEGORIES.map((category) => category.key));
   for (const counterpart of data.planCounterparts) {
     if (counterpart.is_deleted) continue;
-    const category = counterpart.vegetal_indicator_group as CounterpartVegetalCategory | null;
-    if (!category || !counterpartCategoryKeys.has(category)) continue;
+    const stored = counterpart.vegetal_indicator_group as CounterpartVegetalCategory | null;
+    // La categoria elegida manda; si no hay (o quedo como "otro"), se deduce del nombre.
+    // La mano de obra se excluye de la deduccion: sus jornales no son material vegetal
+    // aunque el aporte se llame "jornales para siembra de maiz".
+    const category = stored && counterpartCategoryKeys.has(stored)
+      ? stored
+      : counterpart.contribution_type === "mano_obra"
+        ? null
+        : inferCounterpartVegetalCategory(counterpart.name);
+    if (!category) continue;
     const familyId = approvedActivityFamily.get(counterpart.plan_activity_id);
     if (!familyId) continue;
     const row = rows.get(familyId);
