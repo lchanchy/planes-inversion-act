@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback, createContext, useContext, Fragment } from "react";
+import { useEffect, useMemo, useState, useCallback, createContext, useContext } from "react";
 import {
   AlignmentType,
   BorderStyle,
@@ -6252,6 +6252,19 @@ type TrackingVegetalGroup = {
   unit: string;
 };
 
+// Material vegetal de contrapartida: solo Meta (del plan) + Siembra por trimestre (manual).
+type TrackingCounterpartVegetalGroup = {
+  key: CounterpartVegetalCategory;
+  label: string;
+  unit: string;
+};
+
+type TrackingCounterpartVegetalCell = {
+  targetQuantity: number;
+  unit: string;
+  siembra: Partial<Record<number, QuarterlyProgress>>;
+};
+
 type TrackingActivityCell = {
   operational_plan_id: string;
   plan_activity_id: string;
@@ -6285,6 +6298,7 @@ type TrackingFamilyRow = {
   hectaresValue: string;
   activities: Record<string, TrackingActivityCell>;
   vegetalIndicators: Partial<Record<VegetalIndicatorGroup, TrackingVegetalCell>>;
+  counterpartVegetalIndicators: Partial<Record<CounterpartVegetalCategory, TrackingCounterpartVegetalCell>>;
   agreement?: QuarterlyProgress;
 };
 
@@ -6293,6 +6307,7 @@ type TrackingMatrix = {
   visibleQuarters: number[];
   groups: TrackingActivityGroup[];
   vegetalGroups: TrackingVegetalGroup[];
+  counterpartVegetalGroups: TrackingCounterpartVegetalGroup[];
   rows: TrackingFamilyRow[];
 };
 
@@ -6591,11 +6606,12 @@ function ProcurementDeliveriesActs({
     plans,
     planActivities,
     planMaterials,
+    planCounterparts,
     quarterlyProgress,
     filters,
     year: trackingYear,
     visibleQuarters: visibleTrackingQuarters
-  }), [projects, families, properties, municipalities, villages, activities, materials, plans, planActivities, planMaterials, quarterlyProgress, filters, trackingYear, visibleTrackingQuarters]);
+  }), [projects, families, properties, municipalities, villages, activities, materials, plans, planActivities, planMaterials, planCounterparts, quarterlyProgress, filters, trackingYear, visibleTrackingQuarters]);
   const trackingTotalPages = Math.max(1, Math.ceil(trackingMatrix.rows.length / trackingPageSize));
   const normalizedTrackingPage = Math.min(trackingPage, trackingTotalPages);
   const trackingPageStart = trackingMatrix.rows.length === 0 ? 0 : (normalizedTrackingPage - 1) * trackingPageSize + 1;
@@ -7300,6 +7316,22 @@ function ProcurementDeliveriesActs({
             progress_type: parsed.progressType,
             vegetal_indicator_group: parsed.vegetalGroup
           });
+        } else if (parsed.kind === "counterpart_vegetal") {
+          const cell = row.counterpartVegetalIndicators[parsed.category];
+          if (!cell || !parsed.quarter) continue;
+          await upsertQuarterlyProgress({
+            project_id: row.project_id,
+            family_id: row.family_id,
+            operational_plan_id: null,
+            plan_activity_id: null,
+            activity_id: null,
+            year: trackingYear,
+            quarter: parsed.quarter,
+            target_quantity: cell.targetQuantity,
+            progress_quantity: quantity,
+            progress_type: "contrapartida_siembra",
+            vegetal_indicator_group: parsed.category
+          });
         } else {
           const existing = agreementPayloads.get(row.family_id) ?? {
             project_id: row.project_id,
@@ -7873,16 +7905,6 @@ function ProcurementDeliveriesActs({
 
       {!phase5Blocked && activeTab === "indicators" ? (
         <div className="section tracking-section">
-          <CounterpartVegetalIndicators
-            families={families}
-            plans={plans}
-            planActivities={planActivities}
-            planCounterparts={planCounterparts}
-            quarterlyProgress={quarterlyProgress}
-            year={trackingYear}
-            canEdit={canEditImplementation}
-            onSaved={onChange}
-          />
           <div className="summary-grid compact-summary">
             <Metric label="Familias seguimiento" value={trackingMatrix.rows.length} />
             <Metric label="Actividades aprobadas" value={trackingMatrix.groups.length} />
@@ -8228,9 +8250,18 @@ function TrackingMatrixTable({
             {baseHeaders.map((header, index) => (
               <th className={`sticky-col sticky-col-${index + 1}`} key={header} rowSpan={2}>{header}</th>
             ))}
-            {matrix.vegetalGroups.map((group, groupIndex) => (
+            {matrix.counterpartVegetalGroups.map((group, groupIndex) => (
               <th
                 className={`tracking-group-header tracking-vegetal-header tracking-group-start ${trackingGroupTone(groupIndex)}`}
+                colSpan={trackingCounterpartVisibleColSpan(matrix.visibleQuarters)}
+                key={`cp-${group.key}`}
+              >
+                {`Contrapartida: ${group.label} (${group.unit})`}
+              </th>
+            ))}
+            {matrix.vegetalGroups.map((group, groupIndex) => (
+              <th
+                className={`tracking-group-header tracking-vegetal-header tracking-group-start ${trackingGroupTone(matrix.counterpartVegetalGroups.length + groupIndex)}`}
                 colSpan={trackingVegetalVisibleColSpan(matrix.visibleQuarters)}
                 key={group.key}
               >
@@ -8238,16 +8269,19 @@ function TrackingMatrixTable({
               </th>
             ))}
             {matrix.groups.map((group, groupIndex) => (
-              <th className={`tracking-group-header ${trackingGroupTone(matrix.vegetalGroups.length + groupIndex)} tracking-group-start`} colSpan={trackingGroupVisibleColSpan(group, matrix.visibleQuarters)} key={group.key}>{trackingGroupHeaderLabel(group)}</th>
+              <th className={`tracking-group-header ${trackingGroupTone(matrix.counterpartVegetalGroups.length + matrix.vegetalGroups.length + groupIndex)} tracking-group-start`} colSpan={trackingGroupVisibleColSpan(group, matrix.visibleQuarters)} key={group.key}>{trackingGroupHeaderLabel(group)}</th>
             ))}
             <th className="tracking-group-header tracking-group-agreement tracking-group-start" colSpan={agreementColSpan}>Cumplimiento Acuerdo de Conservacion</th>
           </tr>
           <tr>
+            {matrix.counterpartVegetalGroups.flatMap((group, groupIndex) => trackingCounterpartVisibleSubheaders(matrix.visibleQuarters, matrix.year).map((header, headerIndex) => (
+              <th className={trackingGroupCellClass(trackingHeaderClass(header), groupIndex, headerIndex === 0)} key={`cp-${group.key}-${header}`}>{header}</th>
+            )))}
             {matrix.vegetalGroups.flatMap((group, groupIndex) => trackingVegetalVisibleSubheaders(matrix.visibleQuarters, matrix.year).map((header, headerIndex) => (
-              <th className={trackingGroupCellClass(trackingHeaderClass(header), groupIndex, headerIndex === 0)} key={`${group.key}-${header}`}>{header}</th>
+              <th className={trackingGroupCellClass(trackingHeaderClass(header), matrix.counterpartVegetalGroups.length + groupIndex, headerIndex === 0)} key={`${group.key}-${header}`}>{header}</th>
             )))}
             {matrix.groups.flatMap((group, groupIndex) => trackingGroupVisibleSubheaders(group, matrix.visibleQuarters, matrix.year).map((header, headerIndex) => (
-              <th className={trackingGroupCellClass(trackingHeaderClass(header), matrix.vegetalGroups.length + groupIndex, headerIndex === 0)} key={`${group.key}-${header}`}>{header}</th>
+              <th className={trackingGroupCellClass(trackingHeaderClass(header), matrix.counterpartVegetalGroups.length + matrix.vegetalGroups.length + groupIndex, headerIndex === 0)} key={`${group.key}-${header}`}>{header}</th>
             )))}
             <th className="tracking-col-meta tracking-group-agreement tracking-group-start">Meta</th>
             <th className="tracking-col-percent tracking-group-agreement">% Cumplimiento</th>
@@ -8273,8 +8307,57 @@ function TrackingMatrixTable({
                   type="number"
                 />
               </td>
-              {matrix.vegetalGroups.flatMap((group, groupIndex) => {
+              {matrix.counterpartVegetalGroups.flatMap((group, groupIndex) => {
                 const visualGroupIndex = groupIndex;
+                const cell = row.counterpartVegetalIndicators[group.key];
+                if (!cell) {
+                  return trackingCounterpartVisibleSubheaders(matrix.visibleQuarters, matrix.year).map((header, headerIndex) => (
+                    <td className={trackingGroupCellClass("muted", visualGroupIndex, headerIndex === 0)} key={`${row.key}-cp-${group.key}-${header}`}>-</td>
+                  ));
+                }
+                const cells = [
+                  <td className={trackingGroupCellClass("tracking-col-meta", visualGroupIndex, true)} key={`${row.key}-cp-${group.key}-meta`}>{formatNumber(cell.targetQuantity)}</td>
+                ];
+                for (const quarter of matrix.visibleQuarters) {
+                  const draftKey = trackingCounterpartDraftKey(row.family_id, group.key, quarter);
+                  cells.push(
+                    <td className={trackingGroupCellClass("tracking-col-progress", visualGroupIndex)} key={draftKey}>
+                      <input
+                        className="tracking-input"
+                        disabled={!canEdit}
+                        min="0"
+                        defaultValue={drafts[draftKey] ?? trackingCounterpartSiembraValue(cell, quarter)}
+                        onBlur={(event) => confirmTrackingCellChange(
+                          event,
+                          draftKey,
+                          drafts[draftKey] ?? trackingCounterpartSiembraValue(cell, quarter),
+                          `${row.familyCode} - ${group.label} - Siembra Q${quarter}`
+                        )}
+                        step="0.01"
+                        type="number"
+                      />
+                    </td>
+                  );
+                }
+                const accumulated = TRACKING_YEAR_QUARTERS.reduce((sum, quarter) => {
+                  const draftKey = trackingCounterpartDraftKey(row.family_id, group.key, quarter);
+                  const value = drafts[draftKey] ?? trackingCounterpartSiembraValue(cell, quarter) ?? "0";
+                  return sum + Number(value || 0);
+                }, 0);
+                const isOverTarget = cell.targetQuantity > 0 && accumulated > cell.targetQuantity;
+                cells.push(
+                  <td
+                    className={trackingGroupCellClass(`tracking-col-accumulated${isOverTarget ? " tracking-over-target" : ""}`, visualGroupIndex)}
+                    key={`${row.key}-cp-${group.key}-accumulated`}
+                    title={isOverTarget ? "El acumulado supera la meta aprobada." : undefined}
+                  >
+                    {formatNumber(accumulated)}
+                  </td>
+                );
+                return cells;
+              })}
+              {matrix.vegetalGroups.flatMap((group, groupIndex) => {
+                const visualGroupIndex = matrix.counterpartVegetalGroups.length + groupIndex;
                 const cell = row.vegetalIndicators[group.key];
                 if (!cell) {
                   return trackingVegetalVisibleSubheaders(matrix.visibleQuarters, matrix.year).map((header, headerIndex) => (
@@ -8321,7 +8404,7 @@ function TrackingMatrixTable({
                 return cells;
               })}
               {matrix.groups.flatMap((group, groupIndex) => {
-                const visualGroupIndex = matrix.vegetalGroups.length + groupIndex;
+                const visualGroupIndex = matrix.counterpartVegetalGroups.length + matrix.vegetalGroups.length + groupIndex;
                 const cell = row.activities[group.key];
                 if (!cell) {
                   return trackingGroupVisibleSubheaders(group, matrix.visibleQuarters, matrix.year).map((header, headerIndex) => (
@@ -8773,6 +8856,7 @@ function buildTrackingMatrix(data: {
   plans: OperationalPlan[];
   planActivities: PlanActivity[];
   planMaterials: PlanProjectMaterial[];
+  planCounterparts: PlanFamilyCounterpart[];
   quarterlyProgress: QuarterlyProgress[];
   filters: ProcurementFilters;
   year: number;
@@ -8788,6 +8872,7 @@ function buildTrackingMatrix(data: {
   const planById = new Map(data.plans.map((item) => [item.id, item]));
   const progressByActivity = new Map<string, QuarterlyProgress>();
   const progressByVegetal = new Map<string, QuarterlyProgress>();
+  const progressByCounterpartSiembra = new Map<string, QuarterlyProgress>();
   const agreementByFamily = new Map<string, QuarterlyProgress>();
 
   for (const progress of data.quarterlyProgress.filter((item) => !item.is_deleted && item.year === data.year)) {
@@ -8802,6 +8887,12 @@ function buildTrackingMatrix(data: {
         progress.family_id,
         progress.vegetal_indicator_group as VegetalIndicatorGroup,
         progress.progress_type as VegetalQuarterlyType,
+        progress.quarter
+      ), progress);
+    } else if (progress.progress_type === "contrapartida_siembra" && progress.quarter && progress.vegetal_indicator_group) {
+      progressByCounterpartSiembra.set(counterpartSiembraProgressKey(
+        progress.family_id,
+        progress.vegetal_indicator_group as CounterpartVegetalCategory,
         progress.quarter
       ), progress);
     } else if (progress.plan_activity_id && progress.quarter) {
@@ -8872,6 +8963,7 @@ function buildTrackingMatrix(data: {
       hectaresValue,
       activities: {},
       vegetalIndicators: {},
+      counterpartVegetalIndicators: {},
       agreement: agreementByFamily.get(family.id)
     };
 
@@ -8924,11 +9016,52 @@ function buildTrackingMatrix(data: {
   const vegetalGroups = VEGETAL_INDICATOR_GROUPS
     .filter((group) => Array.from(rows.values()).some((row) => row.vegetalIndicators[group.key]));
 
+  // Material vegetal de contrapartida: Meta por familia/categoria (contrapartidas del plan aprobado)
+  // + Siembra manual por trimestre. Solo aplica a familias que ya tienen fila (con plan aprobado).
+  const approvedActivityFamily = new Map<string, string>();
+  for (const planActivity of data.planActivities.filter((item) => !item.is_deleted)) {
+    const plan = planById.get(planActivity.plan_id);
+    if (!plan || !isApprovedPlanStatus(plan.status) || plan.is_deleted) continue;
+    approvedActivityFamily.set(planActivity.id, plan.family_id);
+  }
+  const counterpartCategoryKeys = new Set(COUNTERPART_VEGETAL_CATEGORIES.map((category) => category.key));
+  for (const counterpart of data.planCounterparts) {
+    if (counterpart.is_deleted) continue;
+    const category = counterpart.vegetal_indicator_group as CounterpartVegetalCategory | null;
+    if (!category || !counterpartCategoryKeys.has(category)) continue;
+    const familyId = approvedActivityFamily.get(counterpart.plan_activity_id);
+    if (!familyId) continue;
+    const row = rows.get(familyId);
+    if (!row) continue;
+    const current = row.counterpartVegetalIndicators[category] ?? {
+      targetQuantity: 0,
+      unit: counterpart.unit || "",
+      siembra: {}
+    };
+    current.targetQuantity += Number(counterpart.quantity ?? 0);
+    if (!current.unit && counterpart.unit) current.unit = counterpart.unit;
+    for (const quarter of [1, 2, 3, 4]) {
+      const progress = progressByCounterpartSiembra.get(counterpartSiembraProgressKey(familyId, category, quarter));
+      if (progress) current.siembra[quarter] = progress;
+    }
+    row.counterpartVegetalIndicators[category] = current;
+  }
+  const counterpartVegetalGroups: TrackingCounterpartVegetalGroup[] = COUNTERPART_VEGETAL_CATEGORIES
+    .filter((category) => Array.from(rows.values()).some((row) => row.counterpartVegetalIndicators[category.key]))
+    .map((category) => ({
+      key: category.key,
+      label: category.label,
+      unit: Array.from(rows.values())
+        .map((row) => row.counterpartVegetalIndicators[category.key]?.unit)
+        .find((unit) => unit) ?? "unidad"
+    }));
+
   return {
     year: data.year,
     visibleQuarters: data.visibleQuarters,
     groups: Array.from(groups.values()).sort((left, right) => left.activityName.localeCompare(right.activityName)),
     vegetalGroups,
+    counterpartVegetalGroups,
     rows: Array.from(rows.values()).sort((left, right) => left.familyCode.localeCompare(right.familyCode))
   };
 }
@@ -9006,6 +9139,36 @@ function trackingVegetalVisibleColSpan(quarters: number[]) {
   return 1 + quarters.length + 1 + quarters.length + 1;
 }
 
+// Contrapartida vegetal: Meta + Siembra por trimestre + Acumulado siembra (sin Entrega).
+function trackingCounterpartVisibleSubheaders(quarters: number[], year: number) {
+  return [
+    "Meta",
+    ...quarters.map((quarter) => `Siembra Q${quarter}_${year}`),
+    "Acumulado siembra"
+  ];
+}
+
+function trackingCounterpartVisibleColSpan(quarters: number[]) {
+  return 1 + quarters.length + 1;
+}
+
+function counterpartSiembraProgressKey(familyId: string, category: CounterpartVegetalCategory, quarter: number) {
+  return `${familyId}|${category}|${quarter}`;
+}
+
+function trackingCounterpartDraftKey(familyId: string, category: CounterpartVegetalCategory, quarter: number) {
+  return `counterpart_vegetal|${familyId}|${category}|${quarter}`;
+}
+
+function trackingCounterpartSiembraValue(cell: TrackingCounterpartVegetalCell, quarter: number) {
+  const value = cell.siembra[quarter]?.progress_quantity;
+  return value === undefined ? "" : String(value);
+}
+
+function trackingCounterpartAccumulated(cell: TrackingCounterpartVegetalCell, quarters = TRACKING_YEAR_QUARTERS) {
+  return quarters.reduce((sum, quarter) => sum + Number(cell.siembra[quarter]?.progress_quantity ?? 0), 0);
+}
+
 function trackingProgressTypeLabel(type: TrackingProgressType) {
   const labels: Record<TrackingProgressType, string> = {
     avance: "Avance",
@@ -9078,6 +9241,7 @@ function trackingAgreementDraftKey(familyId: string, field: "meta" | "percent") 
 function parseTrackingDraftKey(key: string):
   | { kind: "activity"; familyId: string; groupKey: string; planActivityId: string; progressType: TrackingProgressType; quarter: number }
   | { kind: "vegetal"; familyId: string; vegetalGroup: VegetalIndicatorGroup; progressType: VegetalQuarterlyType; quarter: number }
+  | { kind: "counterpart_vegetal"; familyId: string; category: CounterpartVegetalCategory; quarter: number }
   | { kind: "agreement"; familyId: string; field: "meta" | "percent" } {
   const parts = key.split("|");
   if (parts[0] === "activity") {
@@ -9097,6 +9261,14 @@ function parseTrackingDraftKey(key: string):
       vegetalGroup: parts[2] as VegetalIndicatorGroup,
       progressType: parts[3] as VegetalQuarterlyType,
       quarter: Number(parts[4])
+    };
+  }
+  if (parts[0] === "counterpart_vegetal") {
+    return {
+      kind: "counterpart_vegetal",
+      familyId: parts[1],
+      category: parts[2] as CounterpartVegetalCategory,
+      quarter: Number(parts[3])
     };
   }
   return {
@@ -9148,243 +9320,6 @@ async function upsertQuarterlyProgress(payload: {
   if (result.error) throw result.error;
 }
 
-// Seccion "Material vegetal de contrapartida de familias": Meta (contrapartida del plan aprobado)
-// por categoria + Sembrado manual por familia y trimestre (progress_type 'contrapartida_siembra').
-function CounterpartVegetalIndicators({
-  families,
-  plans,
-  planActivities,
-  planCounterparts,
-  quarterlyProgress,
-  year,
-  canEdit,
-  onSaved
-}: {
-  families: Family[];
-  plans: OperationalPlan[];
-  planActivities: PlanActivity[];
-  planCounterparts: PlanFamilyCounterpart[];
-  quarterlyProgress: QuarterlyProgress[];
-  year: number;
-  canEdit: boolean;
-  onSaved: () => Promise<void> | void;
-}) {
-  const [quarter, setQuarter] = useState<number>(1);
-  const [expanded, setExpanded] = useState<CounterpartVegetalCategory | null>(null);
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-
-  const familyById = useMemo(() => new Map(families.map((item) => [item.id, item])), [families]);
-
-  // Meta por familia y categoria (solo planes aprobados) + unidad representativa por categoria.
-  const meta = useMemo(() => {
-    const approvedPlanById = new Map(
-      plans.filter((plan) => !plan.is_deleted && isApprovedPlanStatus(plan.status)).map((plan) => [plan.id, plan])
-    );
-    const activityFamily = new Map<string, string>();
-    for (const activity of planActivities) {
-      if (activity.is_deleted) continue;
-      const plan = approvedPlanById.get(activity.plan_id);
-      if (plan) activityFamily.set(activity.id, plan.family_id);
-    }
-    const byFamilyCategory = new Map<string, number>();
-    const unitByCategory = new Map<CounterpartVegetalCategory, string>();
-    const totalByCategory = new Map<CounterpartVegetalCategory, number>();
-    for (const counterpart of planCounterparts) {
-      if (counterpart.is_deleted) continue;
-      const group = counterpart.vegetal_indicator_group as CounterpartVegetalCategory | null;
-      if (!group || !COUNTERPART_VEGETAL_CATEGORIES.some((category) => category.key === group)) continue;
-      const familyId = activityFamily.get(counterpart.plan_activity_id);
-      if (!familyId) continue;
-      const quantity = Number(counterpart.quantity ?? 0);
-      byFamilyCategory.set(`${familyId}|${group}`, (byFamilyCategory.get(`${familyId}|${group}`) ?? 0) + quantity);
-      totalByCategory.set(group, (totalByCategory.get(group) ?? 0) + quantity);
-      if (counterpart.unit && !unitByCategory.has(group)) unitByCategory.set(group, counterpart.unit);
-    }
-    return { byFamilyCategory, unitByCategory, totalByCategory };
-  }, [plans, planActivities, planCounterparts]);
-
-  // Sembrado guardado por familia/categoria para el trimestre y anio elegidos.
-  const sembradoByFamilyCategory = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const progress of quarterlyProgress) {
-      if (progress.is_deleted || progress.progress_type !== "contrapartida_siembra") continue;
-      if (progress.year !== year || progress.quarter !== quarter || !progress.vegetal_indicator_group) continue;
-      map.set(`${progress.family_id}|${progress.vegetal_indicator_group}`, Number(progress.progress_quantity ?? 0));
-    }
-    return map;
-  }, [quarterlyProgress, year, quarter]);
-
-  // Familias a listar por categoria: las que tienen meta en esa categoria (o sembrado ya capturado).
-  const familiesByCategory = useMemo(() => {
-    const map = new Map<CounterpartVegetalCategory, string[]>();
-    const seen = new Map<CounterpartVegetalCategory, Set<string>>();
-    const add = (category: CounterpartVegetalCategory, familyId: string) => {
-      if (!seen.has(category)) seen.set(category, new Set());
-      const set = seen.get(category)!;
-      if (set.has(familyId)) return;
-      set.add(familyId);
-      if (!map.has(category)) map.set(category, []);
-      map.get(category)!.push(familyId);
-    };
-    for (const key of meta.byFamilyCategory.keys()) {
-      const [familyId, category] = key.split("|") as [string, CounterpartVegetalCategory];
-      add(category, familyId);
-    }
-    for (const key of sembradoByFamilyCategory.keys()) {
-      const [familyId, category] = key.split("|") as [string, CounterpartVegetalCategory];
-      add(category, familyId);
-    }
-    for (const list of map.values()) {
-      list.sort((left, right) => {
-        const leftLabel = `${familyById.get(left)?.family_code ?? ""} ${familyById.get(left)?.representative_name ?? ""}`;
-        const rightLabel = `${familyById.get(right)?.family_code ?? ""} ${familyById.get(right)?.representative_name ?? ""}`;
-        return leftLabel.localeCompare(rightLabel);
-      });
-    }
-    return map;
-  }, [meta, sembradoByFamilyCategory, familyById]);
-
-  const draftKey = (familyId: string, category: CounterpartVegetalCategory) => `${familyId}|${category}|${quarter}`;
-  const sembradoValue = (familyId: string, category: CounterpartVegetalCategory) => {
-    const key = draftKey(familyId, category);
-    if (key in drafts) return drafts[key];
-    return String(sembradoByFamilyCategory.get(`${familyId}|${category}`) ?? "");
-  };
-  const sembradoTotal = (category: CounterpartVegetalCategory) => {
-    const families = familiesByCategory.get(category) ?? [];
-    return families.reduce((sum, familyId) => sum + (Number(sembradoValue(familyId, category)) || 0), 0);
-  };
-
-  async function save() {
-    const entries = Object.entries(drafts).filter(([, value]) => value.trim() !== "");
-    if (entries.length === 0) return;
-    setSaving(true);
-    setMessage(null);
-    try {
-      for (const [key, value] of entries) {
-        const [familyId, category, draftQuarter] = key.split("|") as [string, CounterpartVegetalCategory, string];
-        const family = familyById.get(familyId);
-        if (!family) continue;
-        await upsertQuarterlyProgress({
-          project_id: family.project_id,
-          family_id: familyId,
-          operational_plan_id: null,
-          plan_activity_id: null,
-          activity_id: null,
-          year,
-          quarter: Number(draftQuarter),
-          target_quantity: 0,
-          progress_quantity: Number(value) || 0,
-          progress_type: "contrapartida_siembra",
-          vegetal_indicator_group: category
-        });
-      }
-      setDrafts({});
-      await onSaved();
-      setMessage("Sembrado guardado.");
-    } catch (error) {
-      setMessage(`No fue posible guardar: ${(error as Error).message}`);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  const pendingCount = Object.values(drafts).filter((value) => value.trim() !== "").length;
-
-  return (
-    <div className="panel grid" style={{ marginBottom: 16 }}>
-      <div className="span-12"><strong>Material vegetal de contrapartida de familias</strong></div>
-      <p className="span-12 muted">
-        Meta = cantidad de la contrapartida en los planes operativos aprobados. Sembrado = reporte manual por familia y trimestre.
-      </p>
-      <label className="span-3">
-        Trimestre del sembrado
-        <select value={quarter} onChange={(event) => { setQuarter(Number(event.target.value)); setExpanded(null); }}>
-          <option value={1}>Trimestre 1</option>
-          <option value={2}>Trimestre 2</option>
-          <option value={3}>Trimestre 3</option>
-          <option value={4}>Trimestre 4</option>
-        </select>
-      </label>
-      <div className="span-9 form-actions" style={{ alignItems: "end", justifyContent: "flex-end" }}>
-        <button disabled={!canEdit || saving || pendingCount === 0} type="button" onClick={() => void save()}>
-          Guardar sembrado {pendingCount > 0 ? `(${pendingCount})` : ""}
-        </button>
-      </div>
-      {message ? <div className="span-12 muted">{message}</div> : null}
-      <div className="span-12" style={{ overflowX: "auto" }}>
-        <table>
-          <thead>
-            <tr>
-              <th>Categoria</th>
-              <th>Unidad</th>
-              <th style={{ textAlign: "right" }}>Meta</th>
-              <th style={{ textAlign: "right" }}>Sembrado (T{quarter})</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {COUNTERPART_VEGETAL_CATEGORIES.map((category, index) => {
-              const previous = COUNTERPART_VEGETAL_CATEGORIES[index - 1];
-              const showSeedHeader = category.isSeed && (!previous || !previous.isSeed);
-              const familiesList = familiesByCategory.get(category.key) ?? [];
-              const unit = meta.unitByCategory.get(category.key) ?? "";
-              const isOpen = expanded === category.key;
-              return (
-                <Fragment key={category.key}>
-                  {showSeedHeader ? (
-                    <tr><td colSpan={5} style={{ fontWeight: 600, background: "var(--panel-bg, #f4f6f4)" }}>Semillas</td></tr>
-                  ) : null}
-                  <tr>
-                    <td>{category.label}</td>
-                    <td>{unit}</td>
-                    <td style={{ textAlign: "right" }}>{formatNumber(meta.totalByCategory.get(category.key) ?? 0)}</td>
-                    <td style={{ textAlign: "right" }}>{formatNumber(sembradoTotal(category.key))}</td>
-                    <td>
-                      <button
-                        className="secondary"
-                        type="button"
-                        disabled={familiesList.length === 0}
-                        onClick={() => setExpanded(isOpen ? null : category.key)}
-                      >
-                        {isOpen ? "Ocultar" : `Familias (${familiesList.length})`}
-                      </button>
-                    </td>
-                  </tr>
-                  {isOpen ? familiesList.map((familyId) => {
-                    const family = familyById.get(familyId);
-                    const familyMeta = meta.byFamilyCategory.get(`${familyId}|${category.key}`) ?? 0;
-                    return (
-                      <tr key={`${category.key}-${familyId}`} style={{ background: "var(--panel-bg, #fafcfa)" }}>
-                        <td style={{ paddingLeft: 24 }}>{family ? `${family.family_code} - ${family.representative_name}` : familyId}</td>
-                        <td>{unit}</td>
-                        <td style={{ textAlign: "right" }}>{formatNumber(familyMeta)}</td>
-                        <td style={{ textAlign: "right" }}>
-                          <input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            disabled={!canEdit}
-                            style={{ width: 110, textAlign: "right" }}
-                            value={sembradoValue(familyId, category.key)}
-                            onChange={(event) => setDrafts((current) => ({ ...current, [draftKey(familyId, category.key)]: event.target.value }))}
-                          />
-                        </td>
-                        <td></td>
-                      </tr>
-                    );
-                  }) : null}
-                </Fragment>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
 
 function buildMaintenanceMatrix(data: {
   projects: Project[];
@@ -10686,6 +10621,15 @@ async function exportTrackingMatrixExcel(matrix: TrackingMatrix) {
   });
 
   let column = baseHeaders.length + 1;
+  for (const group of matrix.counterpartVegetalGroups) {
+    const subheaders = trackingCounterpartVisibleSubheaders(matrix.visibleQuarters, matrix.year);
+    sheet.getCell(1, column).value = `Contrapartida: ${group.label} (${group.unit})`;
+    sheet.mergeCells(1, column, 1, column + subheaders.length - 1);
+    subheaders.forEach((header, index) => {
+      sheet.getCell(2, column + index).value = header;
+    });
+    column += subheaders.length;
+  }
   for (const group of matrix.vegetalGroups) {
     const subheaders = trackingVegetalVisibleSubheaders(matrix.visibleQuarters, matrix.year);
     sheet.getCell(1, column).value = `${group.label} (${group.unit})`;
@@ -10720,6 +10664,18 @@ async function exportTrackingMatrixExcel(matrix: TrackingMatrix) {
       row.villageName,
       row.hectares
     ];
+    for (const group of matrix.counterpartVegetalGroups) {
+      const cell = row.counterpartVegetalIndicators[group.key];
+      if (!cell) {
+        values.push(...trackingCounterpartVisibleSubheaders(matrix.visibleQuarters, matrix.year).map(() => ""));
+        continue;
+      }
+      values.push(cell.targetQuantity);
+      for (const quarter of matrix.visibleQuarters) {
+        values.push(Number(cell.siembra[quarter]?.progress_quantity ?? 0));
+      }
+      values.push(trackingCounterpartAccumulated(cell));
+    }
     for (const group of matrix.vegetalGroups) {
       const cell = row.vegetalIndicators[group.key];
       if (!cell) {
@@ -10752,6 +10708,19 @@ async function exportTrackingMatrixExcel(matrix: TrackingMatrix) {
     values.push(Number(row.agreement?.progress_quantity ?? 0) / 100);
     const excelRow = sheet.addRow(values);
     let activityColumn = baseHeaders.length + 1;
+    for (const group of matrix.counterpartVegetalGroups) {
+      const subheaders = trackingCounterpartVisibleSubheaders(matrix.visibleQuarters, matrix.year);
+      const cell = row.counterpartVegetalIndicators[group.key];
+      if (cell) {
+        const siembraAccumulated = trackingCounterpartAccumulated(cell);
+        if (cell.targetQuantity > 0 && siembraAccumulated > cell.targetQuantity) {
+          const accumulatedCell = excelRow.getCell(activityColumn + subheaders.length - 1);
+          accumulatedCell.font = { color: { argb: "FFC00000" }, bold: true };
+          accumulatedCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFE5E5" } };
+        }
+      }
+      activityColumn += subheaders.length;
+    }
     for (const group of matrix.vegetalGroups) {
       const subheaders = trackingVegetalVisibleSubheaders(matrix.visibleQuarters, matrix.year);
       const cell = row.vegetalIndicators[group.key];
