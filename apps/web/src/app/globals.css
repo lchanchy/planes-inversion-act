@@ -833,38 +833,48 @@ th {
   width: 210px;
   min-width: 210px;
   max-width: 210px;
+  /* Sombra que marca donde termina el area congelada. */
+  box-shadow: 3px 0 6px rgba(15, 45, 30, 0.18);
+}
+
+/* Solo quedan inmovilizadas Codigo Predio y Familia (330px). Las demas columnas base se
+   desplazan con la tabla: congelar las 7 ocupaba 985px y dejaba los datos sin ancho visible. */
+.tracking-table .sticky-col-3,
+.tracking-table .sticky-col-4,
+.tracking-table .sticky-col-5,
+.tracking-table .sticky-col-6,
+.tracking-table .sticky-col-7 {
+  position: static;
+  left: auto;
+  z-index: auto;
+  box-shadow: none;
 }
 
 .tracking-table .sticky-col-3 {
-  left: 330px;
   width: 115px;
   min-width: 115px;
   max-width: 115px;
 }
 
 .tracking-table .sticky-col-4 {
-  left: 445px;
   width: 90px;
   min-width: 90px;
   max-width: 90px;
 }
 
 .tracking-table .sticky-col-5 {
-  left: 535px;
   width: 150px;
   min-width: 150px;
   max-width: 150px;
 }
 
 .tracking-table .sticky-col-6 {
-  left: 685px;
   width: 170px;
   min-width: 170px;
   max-width: 170px;
 }
 
 .tracking-table .sticky-col-7 {
-  left: 855px;
   width: 130px;
   min-width: 130px;
   max-width: 130px;
