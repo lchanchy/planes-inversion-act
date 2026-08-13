@@ -98,11 +98,116 @@ class AppContainer(context: Context) {
         }
     }
 
+    // Fase 8: modulo Economia Familiar. Solo agrega tablas nuevas; no toca nada existente.
+    private val migration7To8 = object : Migration(7, 8) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            // Catalogos
+            db.execSQL("CREATE TABLE IF NOT EXISTS economia_equipos (id TEXT NOT NULL PRIMARY KEY, codigo TEXT NOT NULL, nombre TEXT NOT NULL, orden INTEGER NOT NULL, activo INTEGER NOT NULL)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS economia_encuestadores (id TEXT NOT NULL PRIMARY KEY, nombre TEXT NOT NULL, activo INTEGER NOT NULL)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS economia_rondas (id TEXT NOT NULL PRIMARY KEY, codigo TEXT NOT NULL, nombre TEXT NOT NULL, orden INTEGER NOT NULL, activo INTEGER NOT NULL)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS economia_categorias (id TEXT NOT NULL PRIMARY KEY, codigo TEXT NOT NULL, nombre TEXT NOT NULL, orden INTEGER NOT NULL, activo INTEGER NOT NULL)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS economia_productos (id TEXT NOT NULL PRIMARY KEY, categoriaId TEXT NOT NULL, codigo TEXT NOT NULL, nombre TEXT NOT NULL, esPecuario INTEGER NOT NULL, unidadBase TEXT NOT NULL, orden INTEGER NOT NULL, activo INTEGER NOT NULL)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS economia_tipos_apoyo (id TEXT NOT NULL PRIMARY KEY, codigo TEXT NOT NULL, nombre TEXT NOT NULL, orden INTEGER NOT NULL, activo INTEGER NOT NULL)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS economia_tipos_pago (id TEXT NOT NULL PRIMARY KEY, codigo TEXT NOT NULL, nombre TEXT NOT NULL, orden INTEGER NOT NULL, activo INTEGER NOT NULL)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS economia_lugares_venta (id TEXT NOT NULL PRIMARY KEY, codigo TEXT NOT NULL, nombre TEXT NOT NULL, orden INTEGER NOT NULL, activo INTEGER NOT NULL)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS economia_familias (id TEXT NOT NULL PRIMARY KEY, projectId TEXT NOT NULL, familyId TEXT NOT NULL, activo INTEGER NOT NULL, notas TEXT)")
+            // Captura
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS economia_encuestas (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    projectId TEXT NOT NULL,
+                    familyId TEXT NOT NULL,
+                    rondaId TEXT NOT NULL,
+                    equipoId TEXT,
+                    encuestadorId TEXT,
+                    fecha TEXT NOT NULL,
+                    cambioNumPersonas INTEGER,
+                    personasNinos INTEGER,
+                    personasAdolescentes INTEGER,
+                    personasJovenes INTEGER,
+                    personasAdultos INTEGER,
+                    personasMayores INTEGER,
+                    recibeApoyoGobierno INTEGER,
+                    recibeOtrosPagos INTEGER,
+                    valorJornal REAL,
+                    estado TEXT NOT NULL,
+                    observaciones TEXT,
+                    syncState TEXT NOT NULL,
+                    lastError TEXT
+                )
+                """.trimIndent()
+            )
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS economia_encuesta_apoyos (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    encuestaId TEXT NOT NULL,
+                    projectId TEXT NOT NULL,
+                    familyId TEXT NOT NULL,
+                    tipoApoyoId TEXT NOT NULL,
+                    valorMensual REAL,
+                    nombreLibre TEXT,
+                    syncState TEXT NOT NULL
+                )
+                """.trimIndent()
+            )
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS economia_encuesta_pagos (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    encuestaId TEXT NOT NULL,
+                    projectId TEXT NOT NULL,
+                    familyId TEXT NOT NULL,
+                    tipoPagoId TEXT NOT NULL,
+                    valorMensual REAL,
+                    syncState TEXT NOT NULL
+                )
+                """.trimIndent()
+            )
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS economia_encuesta_productos (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    encuestaId TEXT NOT NULL,
+                    projectId TEXT NOT NULL,
+                    familyId TEXT NOT NULL,
+                    productoId TEXT,
+                    nombreOtro TEXT,
+                    unidad TEXT,
+                    esPecuario INTEGER NOT NULL,
+                    temporalidad TEXT,
+                    cantidadProducida REAL,
+                    consumo REAL,
+                    vendido REAL,
+                    motivoNoVenta TEXT,
+                    precioUnitario REAL,
+                    apoyoAct INTEGER,
+                    syncState TEXT NOT NULL
+                )
+                """.trimIndent()
+            )
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS economia_producto_lugares_venta (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    encuestaProductoId TEXT NOT NULL,
+                    projectId TEXT NOT NULL,
+                    familyId TEXT NOT NULL,
+                    lugarVentaId TEXT NOT NULL,
+                    nombreLibre TEXT,
+                    syncState TEXT NOT NULL
+                )
+                """.trimIndent()
+            )
+        }
+    }
+
     private val database = Room.databaseBuilder(
         context,
         RestauracionDatabase::class.java,
         "restauracion_offline.db"
-    ).addMigrations(migration1To2, migration2To3, migration3To4, migration4To5, migration5To6, migration6To7).build()
+    ).addMigrations(migration1To2, migration2To3, migration3To4, migration4To5, migration5To6, migration6To7, migration7To8).build()
 
     val sessionStore = SessionStore(context)
 

@@ -38,6 +38,27 @@ class RestauracionRepository(
     fun planCounterpartsTotal(planId: String) = db.planDao().counterpartsForPlan(planId)
     fun deliveriesForPlan(planId: String) = db.planDao().deliveriesForPlan(planId)
     fun deliveryItemsForPlan(planId: String) = db.planDao().deliveryItemsForPlan(planId)
+
+    // --- Economia Familiar (Fase 8): lecturas para la UI ---
+    fun economiaEquipos() = db.economiaDao().equipos()
+    fun economiaEncuestadores() = db.economiaDao().encuestadores()
+    fun economiaRondas() = db.economiaDao().rondas()
+    fun economiaCategorias() = db.economiaDao().categorias()
+    fun economiaProductos() = db.economiaDao().productos()
+    fun economiaProductosPorCategoria(categoriaId: String) = db.economiaDao().productosPorCategoria(categoriaId)
+    fun economiaTiposApoyo() = db.economiaDao().tiposApoyo()
+    fun economiaTiposPago() = db.economiaDao().tiposPago()
+    fun economiaLugaresVenta() = db.economiaDao().lugaresVenta()
+    fun economiaFamilias(projectId: String) = db.economiaDao().familiasEconomia(projectId)
+    fun economiaEncuestas(projectId: String) = db.economiaDao().encuestas(projectId)
+    fun economiaEncuestasForFamily(familyId: String) = db.economiaDao().encuestasForFamily(familyId)
+    fun economiaEncuesta(id: String) = db.economiaDao().encuesta(id)
+    fun economiaApoyos(encuestaId: String) = db.economiaDao().apoyos(encuestaId)
+    fun economiaPagos(encuestaId: String) = db.economiaDao().pagos(encuestaId)
+    fun economiaProductosEncuesta(encuestaId: String) = db.economiaDao().productosEncuesta(encuestaId)
+    fun economiaLugaresDeProducto(encuestaProductoId: String) = db.economiaDao().lugaresDeProducto(encuestaProductoId)
+    suspend fun economiaEncuestaForFamilyRonda(familyId: String, rondaId: String) =
+        db.economiaDao().encuestaForFamilyRonda(familyId, rondaId)
     fun hasSession() = sessionStore.hasSession
     fun lastScreen() = sessionStore.lastScreen
     fun lastProjectId() = sessionStore.lastProjectId
@@ -111,6 +132,22 @@ class RestauracionRepository(
         // Entregas existentes (web u otro tecnico) para calcular saldos pendientes correctos.
         remote.deliveries().forEach { db.planDao().upsertDelivery(it) }
         remote.deliveryItems().forEach { db.planDao().upsertDeliveryItem(it) }
+
+        // --- Economia Familiar (Fase 8): catalogos (replace) + familias marcadas. ---
+        // Best-effort y AISLADO: si el modulo aun no esta aplicado en el servidor (404/400),
+        // runCatching evita romper la descarga de lo critico (catalogos/planes/entregas).
+        runCatching {
+            val eco = db.economiaDao()
+            eco.replaceEquipos(remote.economiaEquipos())
+            eco.replaceEncuestadores(remote.economiaEncuestadores())
+            eco.replaceRondas(remote.economiaRondas())
+            eco.replaceCategorias(remote.economiaCategorias())
+            eco.replaceProductos(remote.economiaProductos())
+            eco.replaceTiposApoyo(remote.economiaTiposApoyo())
+            eco.replaceTiposPago(remote.economiaTiposPago())
+            eco.replaceLugaresVenta(remote.economiaLugaresVenta())
+            eco.replaceFamiliasEconomia(remote.economiaFamilias())
+        }
     }
 
     // Fase 4: actividades (con su plan) que otra familia tiene en este dispositivo, para reasignar.
@@ -505,6 +542,57 @@ class RestauracionRepository(
         deliveriesJustSynced.forEach { deliveryId ->
             runCatching { remote.requestActGeneration(deliveryId) }
         }
+
+        // --- Economia Familiar (Fase 8): subir en orden de FK ---
+        // encuesta -> apoyos -> pagos -> productos -> lugares de venta.
+        // Aislado del bloque anterior; no altera el orden de planes/entregas.
+        val economiaDao = db.economiaDao()
+        economiaDao.pendingEncuestas().forEach { item ->
+            runCatching {
+                remote.uploadEconomiaEncuesta(item)
+                economiaDao.updateEncuesta(item.copy(syncState = SyncState.SYNCED, lastError = null))
+            }.onFailure {
+                economiaDao.updateEncuesta(item.copy(syncState = SyncState.ERROR, lastError = it.message))
+                errors += it.message ?: "Error sincronizando encuesta de economia."
+            }
+        }
+        economiaDao.pendingApoyos().forEach { item ->
+            runCatching {
+                remote.uploadEconomiaApoyo(item)
+                economiaDao.updateApoyo(item.copy(syncState = SyncState.SYNCED))
+            }.onFailure {
+                economiaDao.updateApoyo(item.copy(syncState = SyncState.ERROR))
+                errors += it.message ?: "Error sincronizando apoyo (economia)."
+            }
+        }
+        economiaDao.pendingPagos().forEach { item ->
+            runCatching {
+                remote.uploadEconomiaPago(item)
+                economiaDao.updatePago(item.copy(syncState = SyncState.SYNCED))
+            }.onFailure {
+                economiaDao.updatePago(item.copy(syncState = SyncState.ERROR))
+                errors += it.message ?: "Error sincronizando otro ingreso (economia)."
+            }
+        }
+        economiaDao.pendingProductos().forEach { item ->
+            runCatching {
+                remote.uploadEconomiaProducto(item)
+                economiaDao.updateProducto(item.copy(syncState = SyncState.SYNCED))
+            }.onFailure {
+                economiaDao.updateProducto(item.copy(syncState = SyncState.ERROR))
+                errors += it.message ?: "Error sincronizando producto (economia)."
+            }
+        }
+        economiaDao.pendingLugaresProducto().forEach { item ->
+            runCatching {
+                remote.uploadEconomiaLugarProducto(item)
+                economiaDao.updateLugarProducto(item.copy(syncState = SyncState.SYNCED))
+            }.onFailure {
+                economiaDao.updateLugarProducto(item.copy(syncState = SyncState.ERROR))
+                errors += it.message ?: "Error sincronizando lugar de venta (economia)."
+            }
+        }
+
         if (errors.isNotEmpty()) {
             error(errors.distinct().joinToString(separator = "\n"))
         }

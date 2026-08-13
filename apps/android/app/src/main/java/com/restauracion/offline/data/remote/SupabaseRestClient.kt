@@ -3,6 +3,20 @@ package com.restauracion.offline.data.remote
 import com.restauracion.offline.data.SessionStore
 import com.restauracion.offline.data.local.ActivityCatalogEntity
 import com.restauracion.offline.data.local.CounterpartCatalogEntity
+import com.restauracion.offline.data.local.EconomiaCategoriaEntity
+import com.restauracion.offline.data.local.EconomiaEncuestaApoyoEntity
+import com.restauracion.offline.data.local.EconomiaEncuestaEntity
+import com.restauracion.offline.data.local.EconomiaEncuestaPagoEntity
+import com.restauracion.offline.data.local.EconomiaEncuestaProductoEntity
+import com.restauracion.offline.data.local.EconomiaEncuestadorEntity
+import com.restauracion.offline.data.local.EconomiaEquipoEntity
+import com.restauracion.offline.data.local.EconomiaFamiliaEntity
+import com.restauracion.offline.data.local.EconomiaLugarVentaEntity
+import com.restauracion.offline.data.local.EconomiaProductoEntity
+import com.restauracion.offline.data.local.EconomiaProductoLugarVentaEntity
+import com.restauracion.offline.data.local.EconomiaRondaEntity
+import com.restauracion.offline.data.local.EconomiaTipoApoyoEntity
+import com.restauracion.offline.data.local.EconomiaTipoPagoEntity
 import com.restauracion.offline.data.local.FamilyEntity
 import com.restauracion.offline.data.local.MaterialCatalogEntity
 import com.restauracion.offline.data.local.MaterialDeliveryEntity
@@ -400,6 +414,187 @@ class SupabaseRestClient(
             "SUPABASE_ANON_KEY no esta configurada. Use la Legacy anon key de Supabase, no la sb_publishable_."
         }
     }
+
+    // ==========================================================================
+    // Economia Familiar (Fase 8)
+    // ==========================================================================
+
+    // --- Catalogos (pull) ---
+    suspend fun economiaEquipos(): List<EconomiaEquipoEntity> = withAuth {
+        requireConfigured()
+        client.get("$baseUrl/rest/v1/economia_equipos?select=id,codigo,nombre,orden,activo&is_deleted=eq.false") {
+            authHeaders()
+        }.body<List<EconomiaEquipoDto>>().map { it.toEntity() }
+    }
+
+    suspend fun economiaEncuestadores(): List<EconomiaEncuestadorEntity> = withAuth {
+        requireConfigured()
+        client.get("$baseUrl/rest/v1/economia_encuestadores?select=id,nombre,activo&is_deleted=eq.false") {
+            authHeaders()
+        }.body<List<EconomiaEncuestadorDto>>().map { it.toEntity() }
+    }
+
+    suspend fun economiaRondas(): List<EconomiaRondaEntity> = withAuth {
+        requireConfigured()
+        client.get("$baseUrl/rest/v1/economia_rondas?select=id,codigo,nombre,orden,activo&is_deleted=eq.false") {
+            authHeaders()
+        }.body<List<EconomiaRondaDto>>().map { it.toEntity() }
+    }
+
+    suspend fun economiaCategorias(): List<EconomiaCategoriaEntity> = withAuth {
+        requireConfigured()
+        client.get("$baseUrl/rest/v1/economia_categorias?select=id,codigo,nombre,orden,activo&is_deleted=eq.false") {
+            authHeaders()
+        }.body<List<EconomiaCategoriaDto>>().map { it.toEntity() }
+    }
+
+    suspend fun economiaProductos(): List<EconomiaProductoEntity> = withAuth {
+        requireConfigured()
+        client.get("$baseUrl/rest/v1/economia_productos?select=id,categoria_id,codigo,nombre,es_pecuario,unidad_base,orden,activo&is_deleted=eq.false") {
+            authHeaders()
+        }.body<List<EconomiaProductoDto>>().map { it.toEntity() }
+    }
+
+    suspend fun economiaTiposApoyo(): List<EconomiaTipoApoyoEntity> = withAuth {
+        requireConfigured()
+        client.get("$baseUrl/rest/v1/economia_tipos_apoyo?select=id,codigo,nombre,orden,activo&is_deleted=eq.false") {
+            authHeaders()
+        }.body<List<EconomiaTipoApoyoDto>>().map { it.toEntity() }
+    }
+
+    suspend fun economiaTiposPago(): List<EconomiaTipoPagoEntity> = withAuth {
+        requireConfigured()
+        client.get("$baseUrl/rest/v1/economia_tipos_pago?select=id,codigo,nombre,orden,activo&is_deleted=eq.false") {
+            authHeaders()
+        }.body<List<EconomiaTipoPagoDto>>().map { it.toEntity() }
+    }
+
+    suspend fun economiaLugaresVenta(): List<EconomiaLugarVentaEntity> = withAuth {
+        requireConfigured()
+        client.get("$baseUrl/rest/v1/economia_lugares_venta?select=id,codigo,nombre,orden,activo&is_deleted=eq.false") {
+            authHeaders()
+        }.body<List<EconomiaLugarVentaDto>>().map { it.toEntity() }
+    }
+
+    suspend fun economiaFamilias(): List<EconomiaFamiliaEntity> = withAuth {
+        requireConfigured()
+        client.get("$baseUrl/rest/v1/economia_familias?select=id,project_id,family_id,activo,notas&is_deleted=eq.false") {
+            authHeaders()
+        }.body<List<EconomiaFamiliaDto>>().map { it.toEntity() }
+    }
+
+    // --- Captura (push) --- upsert por id (Prefer merge-duplicates).
+    suspend fun uploadEconomiaEncuesta(item: EconomiaEncuestaEntity) = withAuth {
+        requireConfigured()
+        client.post("$baseUrl/rest/v1/economia_encuestas") {
+            authHeaders()
+            header("Prefer", "resolution=merge-duplicates")
+            contentType(ContentType.Application.Json)
+            val payload = EconomiaEncuestaUploadDto(
+                id = item.id,
+                projectId = item.projectId,
+                familyId = item.familyId,
+                rondaId = item.rondaId,
+                equipoId = item.equipoId,
+                encuestadorId = item.encuestadorId,
+                fecha = item.fecha,
+                cambioNumPersonas = item.cambioNumPersonas,
+                personasNinos = item.personasNinos,
+                personasAdolescentes = item.personasAdolescentes,
+                personasJovenes = item.personasJovenes,
+                personasAdultos = item.personasAdultos,
+                personasMayores = item.personasMayores,
+                recibeApoyoGobierno = item.recibeApoyoGobierno,
+                recibeOtrosPagos = item.recibeOtrosPagos,
+                valorJornal = item.valorJornal,
+                estado = item.estado,
+                observaciones = item.observaciones
+            )
+            setBody(json.encodeToString(payload))
+        }
+    }
+
+    suspend fun uploadEconomiaApoyo(item: EconomiaEncuestaApoyoEntity) = withAuth {
+        requireConfigured()
+        client.post("$baseUrl/rest/v1/economia_encuesta_apoyos") {
+            authHeaders()
+            header("Prefer", "resolution=merge-duplicates")
+            contentType(ContentType.Application.Json)
+            val payload = EconomiaApoyoUploadDto(
+                id = item.id,
+                encuestaId = item.encuestaId,
+                projectId = item.projectId,
+                familyId = item.familyId,
+                tipoApoyoId = item.tipoApoyoId,
+                valorMensual = item.valorMensual,
+                nombreLibre = item.nombreLibre
+            )
+            setBody(json.encodeToString(payload))
+        }
+    }
+
+    suspend fun uploadEconomiaPago(item: EconomiaEncuestaPagoEntity) = withAuth {
+        requireConfigured()
+        client.post("$baseUrl/rest/v1/economia_encuesta_pagos") {
+            authHeaders()
+            header("Prefer", "resolution=merge-duplicates")
+            contentType(ContentType.Application.Json)
+            val payload = EconomiaPagoUploadDto(
+                id = item.id,
+                encuestaId = item.encuestaId,
+                projectId = item.projectId,
+                familyId = item.familyId,
+                tipoPagoId = item.tipoPagoId,
+                valorMensual = item.valorMensual
+            )
+            setBody(json.encodeToString(payload))
+        }
+    }
+
+    suspend fun uploadEconomiaProducto(item: EconomiaEncuestaProductoEntity) = withAuth {
+        requireConfigured()
+        client.post("$baseUrl/rest/v1/economia_encuesta_productos") {
+            authHeaders()
+            header("Prefer", "resolution=merge-duplicates")
+            contentType(ContentType.Application.Json)
+            val payload = EconomiaProductoUploadDto(
+                id = item.id,
+                encuestaId = item.encuestaId,
+                projectId = item.projectId,
+                familyId = item.familyId,
+                productoId = item.productoId,
+                nombreOtro = item.nombreOtro,
+                unidad = item.unidad,
+                esPecuario = item.esPecuario,
+                temporalidad = item.temporalidad,
+                cantidadProducida = item.cantidadProducida,
+                consumo = item.consumo,
+                vendido = item.vendido,
+                motivoNoVenta = item.motivoNoVenta,
+                precioUnitario = item.precioUnitario,
+                apoyoAct = item.apoyoAct
+            )
+            setBody(json.encodeToString(payload))
+        }
+    }
+
+    suspend fun uploadEconomiaLugarProducto(item: EconomiaProductoLugarVentaEntity) = withAuth {
+        requireConfigured()
+        client.post("$baseUrl/rest/v1/economia_producto_lugares_venta") {
+            authHeaders()
+            header("Prefer", "resolution=merge-duplicates")
+            contentType(ContentType.Application.Json)
+            val payload = EconomiaLugarProductoUploadDto(
+                id = item.id,
+                encuestaProductoId = item.encuestaProductoId,
+                projectId = item.projectId,
+                familyId = item.familyId,
+                lugarVentaId = item.lugarVentaId,
+                nombreLibre = item.nombreLibre
+            )
+            setBody(json.encodeToString(payload))
+        }
+    }
 }
 
 @Serializable private data class AuthResponse(
@@ -770,3 +965,126 @@ private data class MaterialDeliveryItemUploadDto(
 
 @Serializable
 private data class UserProfileDto(val id: String)
+
+// ==========================================================================
+// Economia Familiar (Fase 8) - DTOs
+// ==========================================================================
+
+// --- Catalogos (pull) ---
+@Serializable private data class EconomiaEquipoDto(
+    val id: String, val codigo: String? = null, val nombre: String? = null,
+    val orden: Int? = null, val activo: Boolean? = null
+) { fun toEntity() = EconomiaEquipoEntity(id, codigo ?: "", nombre ?: "", orden ?: 0, activo ?: true) }
+
+@Serializable private data class EconomiaEncuestadorDto(
+    val id: String, val nombre: String? = null, val activo: Boolean? = null
+) { fun toEntity() = EconomiaEncuestadorEntity(id, nombre ?: "", activo ?: true) }
+
+@Serializable private data class EconomiaRondaDto(
+    val id: String, val codigo: String? = null, val nombre: String? = null,
+    val orden: Int? = null, val activo: Boolean? = null
+) { fun toEntity() = EconomiaRondaEntity(id, codigo ?: "", nombre ?: "", orden ?: 0, activo ?: true) }
+
+@Serializable private data class EconomiaCategoriaDto(
+    val id: String, val codigo: String? = null, val nombre: String? = null,
+    val orden: Int? = null, val activo: Boolean? = null
+) { fun toEntity() = EconomiaCategoriaEntity(id, codigo ?: "", nombre ?: "", orden ?: 0, activo ?: true) }
+
+@Serializable private data class EconomiaProductoDto(
+    val id: String,
+    @SerialName("categoria_id") val categoriaId: String? = null,
+    val codigo: String? = null, val nombre: String? = null,
+    @SerialName("es_pecuario") val esPecuario: Boolean? = null,
+    @SerialName("unidad_base") val unidadBase: String? = null,
+    val orden: Int? = null, val activo: Boolean? = null
+) { fun toEntity() = EconomiaProductoEntity(id, categoriaId ?: "", codigo ?: "", nombre ?: "", esPecuario ?: false, unidadBase ?: "kg", orden ?: 0, activo ?: true) }
+
+@Serializable private data class EconomiaTipoApoyoDto(
+    val id: String, val codigo: String? = null, val nombre: String? = null,
+    val orden: Int? = null, val activo: Boolean? = null
+) { fun toEntity() = EconomiaTipoApoyoEntity(id, codigo ?: "", nombre ?: "", orden ?: 0, activo ?: true) }
+
+@Serializable private data class EconomiaTipoPagoDto(
+    val id: String, val codigo: String? = null, val nombre: String? = null,
+    val orden: Int? = null, val activo: Boolean? = null
+) { fun toEntity() = EconomiaTipoPagoEntity(id, codigo ?: "", nombre ?: "", orden ?: 0, activo ?: true) }
+
+@Serializable private data class EconomiaLugarVentaDto(
+    val id: String, val codigo: String? = null, val nombre: String? = null,
+    val orden: Int? = null, val activo: Boolean? = null
+) { fun toEntity() = EconomiaLugarVentaEntity(id, codigo ?: "", nombre ?: "", orden ?: 0, activo ?: true) }
+
+@Serializable private data class EconomiaFamiliaDto(
+    val id: String,
+    @SerialName("project_id") val projectId: String? = null,
+    @SerialName("family_id") val familyId: String? = null,
+    val activo: Boolean? = null, val notas: String? = null
+) { fun toEntity() = EconomiaFamiliaEntity(id, projectId ?: "", familyId ?: "", activo ?: true, notas) }
+
+// --- Captura (push) --- las columnas generadas (personas_total, ingreso_mensual) NO se envian.
+@Serializable private data class EconomiaEncuestaUploadDto(
+    val id: String,
+    @SerialName("project_id") val projectId: String,
+    @SerialName("family_id") val familyId: String,
+    @SerialName("ronda_id") val rondaId: String,
+    @SerialName("equipo_id") val equipoId: String?,
+    @SerialName("encuestador_id") val encuestadorId: String?,
+    val fecha: String,
+    @SerialName("cambio_num_personas") val cambioNumPersonas: Boolean?,
+    @SerialName("personas_ninos") val personasNinos: Int?,
+    @SerialName("personas_adolescentes") val personasAdolescentes: Int?,
+    @SerialName("personas_jovenes") val personasJovenes: Int?,
+    @SerialName("personas_adultos") val personasAdultos: Int?,
+    @SerialName("personas_mayores") val personasMayores: Int?,
+    @SerialName("recibe_apoyo_gobierno") val recibeApoyoGobierno: Boolean?,
+    @SerialName("recibe_otros_pagos") val recibeOtrosPagos: Boolean?,
+    @SerialName("valor_jornal") val valorJornal: Double?,
+    val estado: String,
+    val observaciones: String?
+)
+
+@Serializable private data class EconomiaApoyoUploadDto(
+    val id: String,
+    @SerialName("encuesta_id") val encuestaId: String,
+    @SerialName("project_id") val projectId: String,
+    @SerialName("family_id") val familyId: String,
+    @SerialName("tipo_apoyo_id") val tipoApoyoId: String,
+    @SerialName("valor_mensual") val valorMensual: Double?,
+    @SerialName("nombre_libre") val nombreLibre: String?
+)
+
+@Serializable private data class EconomiaPagoUploadDto(
+    val id: String,
+    @SerialName("encuesta_id") val encuestaId: String,
+    @SerialName("project_id") val projectId: String,
+    @SerialName("family_id") val familyId: String,
+    @SerialName("tipo_pago_id") val tipoPagoId: String,
+    @SerialName("valor_mensual") val valorMensual: Double?
+)
+
+@Serializable private data class EconomiaProductoUploadDto(
+    val id: String,
+    @SerialName("encuesta_id") val encuestaId: String,
+    @SerialName("project_id") val projectId: String,
+    @SerialName("family_id") val familyId: String,
+    @SerialName("producto_id") val productoId: String?,
+    @SerialName("nombre_otro") val nombreOtro: String?,
+    val unidad: String?,
+    @SerialName("es_pecuario") val esPecuario: Boolean,
+    val temporalidad: String?,
+    @SerialName("cantidad_producida") val cantidadProducida: Double?,
+    val consumo: Double?,
+    val vendido: Double?,
+    @SerialName("motivo_no_venta") val motivoNoVenta: String?,
+    @SerialName("precio_unitario") val precioUnitario: Double?,
+    @SerialName("apoyo_act") val apoyoAct: Boolean?
+)
+
+@Serializable private data class EconomiaLugarProductoUploadDto(
+    val id: String,
+    @SerialName("encuesta_producto_id") val encuestaProductoId: String,
+    @SerialName("project_id") val projectId: String,
+    @SerialName("family_id") val familyId: String,
+    @SerialName("lugar_venta_id") val lugarVentaId: String,
+    @SerialName("nombre_libre") val nombreLibre: String?
+)
