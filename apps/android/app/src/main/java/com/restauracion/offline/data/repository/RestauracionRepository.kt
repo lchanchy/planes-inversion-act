@@ -1,6 +1,11 @@
 package com.restauracion.offline.data.repository
 
 import com.restauracion.offline.data.SessionStore
+import com.restauracion.offline.data.local.EconomiaEncuestaApoyoEntity
+import com.restauracion.offline.data.local.EconomiaEncuestaEntity
+import com.restauracion.offline.data.local.EconomiaEncuestaPagoEntity
+import com.restauracion.offline.data.local.EconomiaEncuestaProductoEntity
+import com.restauracion.offline.data.local.EconomiaProductoLugarVentaEntity
 import com.restauracion.offline.data.local.MaterialDeliveryEntity
 import com.restauracion.offline.data.local.MaterialDeliveryItemEntity
 import com.restauracion.offline.data.local.OperationalPlanEntity
@@ -59,6 +64,85 @@ class RestauracionRepository(
     fun economiaLugaresDeProducto(encuestaProductoId: String) = db.economiaDao().lugaresDeProducto(encuestaProductoId)
     suspend fun economiaEncuestaForFamilyRonda(familyId: String, rondaId: String) =
         db.economiaDao().encuestaForFamilyRonda(familyId, rondaId)
+
+    // Guarda la encuesta completa offline (cabecera + hijos), marcada PENDING_SYNC.
+    // Reemplaza los hijos previos: soporta re-guardar/editar una encuesta existente.
+    suspend fun guardarEncuestaEconomia(
+        encuesta: EconomiaEncuestaEntity,
+        apoyos: List<EconomiaApoyoInput>,
+        pagos: List<EconomiaPagoInput>,
+        productos: List<EconomiaProductoInput>
+    ) {
+        val dao = db.economiaDao()
+        val cabecera = encuesta.copy(syncState = SyncState.PENDING_SYNC, lastError = null)
+        dao.upsertEncuesta(cabecera)
+        dao.deleteLugaresForEncuesta(cabecera.id)
+        dao.deleteProductosForEncuesta(cabecera.id)
+        dao.deleteApoyosForEncuesta(cabecera.id)
+        dao.deletePagosForEncuesta(cabecera.id)
+        apoyos.forEach { a ->
+            dao.upsertApoyo(
+                EconomiaEncuestaApoyoEntity(
+                    encuestaId = cabecera.id,
+                    projectId = cabecera.projectId,
+                    familyId = cabecera.familyId,
+                    tipoApoyoId = a.tipoApoyoId,
+                    valorMensual = a.valorMensual,
+                    nombreLibre = a.nombreLibre
+                )
+            )
+        }
+        pagos.forEach { p ->
+            dao.upsertPago(
+                EconomiaEncuestaPagoEntity(
+                    encuestaId = cabecera.id,
+                    projectId = cabecera.projectId,
+                    familyId = cabecera.familyId,
+                    tipoPagoId = p.tipoPagoId,
+                    valorMensual = p.valorMensual
+                )
+            )
+        }
+        productos.forEach { pr ->
+            val prod = EconomiaEncuestaProductoEntity(
+                encuestaId = cabecera.id,
+                projectId = cabecera.projectId,
+                familyId = cabecera.familyId,
+                productoId = pr.productoId,
+                nombreOtro = pr.nombreOtro,
+                unidad = pr.unidad,
+                esPecuario = pr.esPecuario,
+                temporalidad = pr.temporalidad,
+                cantidadProducida = pr.cantidadProducida,
+                consumo = pr.consumo,
+                vendido = pr.vendido,
+                motivoNoVenta = pr.motivoNoVenta,
+                precioUnitario = pr.precioUnitario,
+                apoyoAct = pr.apoyoAct
+            )
+            dao.upsertProducto(prod)
+            pr.lugaresVentaIds.forEach { lugarId ->
+                dao.upsertLugarProducto(
+                    EconomiaProductoLugarVentaEntity(
+                        encuestaProductoId = prod.id,
+                        projectId = cabecera.projectId,
+                        familyId = cabecera.familyId,
+                        lugarVentaId = lugarId,
+                        nombreLibre = null
+                    )
+                )
+            }
+        }
+    }
+
+    suspend fun eliminarEncuestaEconomia(encuestaId: String) {
+        val dao = db.economiaDao()
+        dao.deleteLugaresForEncuesta(encuestaId)
+        dao.deleteProductosForEncuesta(encuestaId)
+        dao.deleteApoyosForEncuesta(encuestaId)
+        dao.deletePagosForEncuesta(encuestaId)
+        dao.deleteEncuesta(encuestaId)
+    }
     fun hasSession() = sessionStore.hasSession
     fun lastScreen() = sessionStore.lastScreen
     fun lastProjectId() = sessionStore.lastProjectId
@@ -619,4 +703,31 @@ data class DeliveryLineInput(
     val unit: String,
     val approvedQuantity: Double,
     val deliveredQuantity: Double
+)
+
+// --- Economia Familiar (Fase 8): entradas de captura para guardarEncuestaEconomia ---
+data class EconomiaApoyoInput(
+    val tipoApoyoId: String,
+    val valorMensual: Double?,
+    val nombreLibre: String?
+)
+
+data class EconomiaPagoInput(
+    val tipoPagoId: String,
+    val valorMensual: Double?
+)
+
+data class EconomiaProductoInput(
+    val productoId: String?,          // null si es "otro" producto libre
+    val nombreOtro: String?,
+    val unidad: String?,
+    val esPecuario: Boolean,
+    val temporalidad: String?,
+    val cantidadProducida: Double?,
+    val consumo: Double?,
+    val vendido: Double?,
+    val motivoNoVenta: String?,
+    val precioUnitario: Double?,
+    val apoyoAct: Boolean?,
+    val lugaresVentaIds: List<String>
 )

@@ -87,7 +87,7 @@ import androidx.compose.ui.unit.IntSize
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 
-private enum class Screen { LOGIN, HOME, FAMILY, PLAN, DELIVERY, REASSIGN }
+private enum class Screen { LOGIN, HOME, FAMILY, PLAN, DELIVERY, REASSIGN, ECONOMIA }
 
 private val BrandDark = Color(0xFF145F3B)
 private val BrandPrimary = Color(0xFF1F7A4F)
@@ -242,7 +242,13 @@ fun RestauracionApp(container: AppContainer) {
                         selectedFamilyId = null
                         selectedPlanId = null
                         screenName = Screen.FAMILY.name
-                    }
+                    },
+                    onOpenEconomia = { screenName = Screen.ECONOMIA.name }
+                )
+
+                Screen.ECONOMIA -> EconomiaScreen(
+                    container = container,
+                    onBack = { screenName = Screen.HOME.name }
                 )
 
                 Screen.FAMILY -> {
@@ -436,11 +442,12 @@ private fun HomeScreen(
     onDownload: () -> Unit,
     onSync: () -> Unit,
     onLogout: () -> Unit,
-    onOpenProject: (ProjectEntity) -> Unit
+    onOpenProject: (ProjectEntity) -> Unit,
+    onOpenEconomia: () -> Unit
 ) {
     // ponytail: auto-actualizar catalogos al entrar a la pantalla principal sin depender del boton manual
     LaunchedEffect(Unit) { onDownload() }
-    
+
     val projects by container.repository.projects.collectAsState(initial = emptyList())
     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         AppHeader(chip = "Proyectos")
@@ -449,6 +456,7 @@ private fun HomeScreen(
             Button(onClick = onSync) { Text("Sincronizar") }
             OutlinedButton(onClick = onLogout) { Text("Salir") }
         }
+        Button(onClick = onOpenEconomia, modifier = Modifier.fillMaxWidth()) { Text("Economía Familiar") }
         message?.let { Text(friendlyMessage(it), color = MaterialTheme.colorScheme.primary) }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(projects) { project ->

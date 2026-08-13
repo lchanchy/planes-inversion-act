@@ -225,6 +225,12 @@ interface EconomiaDao {
     @Query("delete from economia_producto_lugares_venta where encuestaProductoId = :encuestaProductoId")
     suspend fun deleteLugaresForProducto(encuestaProductoId: String)
 
+    @Query("delete from economia_encuesta_productos where encuestaId = :encuestaId")
+    suspend fun deleteProductosForEncuesta(encuestaId: String)
+
+    @Query("delete from economia_producto_lugares_venta where encuestaProductoId in (select id from economia_encuesta_productos where encuestaId = :encuestaId)")
+    suspend fun deleteLugaresForEncuesta(encuestaId: String)
+
     // ---------- Pendientes de sincronizar (push, en orden de FK) ----------
     @Query("select * from economia_encuestas where syncState in ('PENDING_SYNC','ERROR','CONFLICT')")
     suspend fun pendingEncuestas(): List<EconomiaEncuestaEntity>
