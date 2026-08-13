@@ -203,11 +203,18 @@ class AppContainer(context: Context) {
         }
     }
 
+    // Fase 8: agrega el departamento a los municipios (para el filtro en cascada de Economia).
+    private val migration8To9 = object : Migration(8, 9) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE municipalities ADD COLUMN department TEXT")
+        }
+    }
+
     private val database = Room.databaseBuilder(
         context,
         RestauracionDatabase::class.java,
         "restauracion_offline.db"
-    ).addMigrations(migration1To2, migration2To3, migration3To4, migration4To5, migration5To6, migration6To7, migration7To8).build()
+    ).addMigrations(migration1To2, migration2To3, migration3To4, migration4To5, migration5To6, migration6To7, migration7To8, migration8To9).build()
 
     val sessionStore = SessionStore(context)
 

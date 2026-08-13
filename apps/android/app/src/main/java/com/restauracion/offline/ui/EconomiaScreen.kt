@@ -68,7 +68,9 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
     var projectId by remember { mutableStateOf<String?>(null) }
     var rondaId by remember { mutableStateOf<String?>(null) }
     var familyId by remember { mutableStateOf<String?>(null) }
-    var familyQuery by remember { mutableStateOf("") }
+    var departamento by remember { mutableStateOf<String?>(null) }
+    var municipioId by remember { mutableStateOf<String?>(null) }
+    var veredaId by remember { mutableStateOf<String?>(null) }
     var encuestadorId by remember { mutableStateOf<String?>(null) }
     var fecha by remember { mutableStateOf(LocalDate.now().toString()) }
 
@@ -137,50 +139,59 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
             0 -> EcoPanel {
                 EcoTitle("1. Datos generales")
                 EcoSelector("Proyecto", projects.firstOrNull { it.id == projectId }?.name, projects.map { it.id to it.name }) {
-                    projectId = it; familyId = null; familyQuery = ""
+                    projectId = it; familyId = null; departamento = null; municipioId = null; veredaId = null
                 }
                 EcoSelector("Ronda de monitoreo", rondas.firstOrNull { it.id == rondaId }?.nombre, rondas.map { it.id to it.nombre }) { rondaId = it }
-                // Familia: buscador con sugerencias (hay muchas familias).
+                // Familia: filtro en cascada Departamento -> Municipio -> Vereda -> Familia
+                // (hay muchas familias; se van acotando por territorio).
                 if (family != null) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text("Familia", style = MaterialTheme.typography.bodySmall)
                             Text("${family.familyCode} - ${family.representativeName}", style = MaterialTheme.typography.bodyMedium)
                         }
-                        OutlinedButton(onClick = { familyId = null; familyQuery = "" }) { Text("Cambiar") }
+                        OutlinedButton(onClick = { familyId = null }) { Text("Cambiar") }
                     }
                     Text("Departamento/Municipio: ${municipioNombre ?: "-"}", style = MaterialTheme.typography.bodySmall)
                     Text("Vereda o comunidad: ${veredaNombre ?: "-"}", style = MaterialTheme.typography.bodySmall)
+                } else if (projectId == null) {
+                    Text("Seleccione primero el proyecto.", style = MaterialTheme.typography.bodySmall)
                 } else {
-                    OutlinedTextField(
-                        value = familyQuery,
-                        onValueChange = { familyQuery = it },
-                        label = { Text("Familia (escriba código o nombre para buscar)") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    if (projectId == null) {
-                        Text("Seleccione primero el proyecto.", style = MaterialTheme.typography.bodySmall)
-                    } else {
-                        val sugeridas = if (familyQuery.isBlank()) {
-                            emptyList()
-                        } else {
-                            families.filter {
-                                it.familyCode.contains(familyQuery, ignoreCase = true) ||
-                                    it.representativeName.contains(familyQuery, ignoreCase = true)
-                            }.take(15)
+                    val municipiosDeFamilias = families.mapNotNull { it.municipalityId }.toSet()
+                    val municById = municipalities.associateBy { it.id }
+                    val departamentos = municipiosDeFamilias.mapNotNull { municById[it]?.department }.distinct().sorted()
+                    if (departamentos.isEmpty()) {
+                        Text(
+                            "No hay familias descargadas (o falta actualizar). Vuelva al inicio y pulse \"Descargar\".",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    EcoSelector("Departamento", departamento, departamentos.map { it to it }) {
+                        departamento = it; municipioId = null; veredaId = null
+                    }
+                    if (departamento != null) {
+                        val municipios = municipalities
+                            .filter { it.id in municipiosDeFamilias && it.department == departamento }
+                            .sortedBy { it.name }
+                        EcoSelector("Municipio", municipios.firstOrNull { it.id == municipioId }?.name, municipios.map { it.id to it.name }) {
+                            municipioId = it; veredaId = null
                         }
-                        sugeridas.forEach { f ->
-                            OutlinedButton(onClick = { familyId = f.id; familyQuery = "" }, modifier = Modifier.fillMaxWidth()) {
-                                Text("${f.familyCode} - ${f.representativeName}")
-                            }
+                    }
+                    if (municipioId != null) {
+                        val veredaIds = families.filter { it.municipalityId == municipioId }.mapNotNull { it.villageId }.toSet()
+                        val veredas = villages.filter { it.id in veredaIds }.sortedBy { it.name }
+                        EcoSelector("Vereda (opcional)", veredas.firstOrNull { it.id == veredaId }?.name, veredas.map { it.id to it.name }) {
+                            veredaId = it
                         }
-                        if (familyQuery.isNotBlank() && sugeridas.isEmpty()) {
-                            Text(
-                                "Sin coincidencias. Si agregó familias en la web, vuelva al inicio y pulse \"Descargar\".",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
+                        val familiasFiltradas = families
+                            .filter { it.municipalityId == municipioId && (veredaId == null || it.villageId == veredaId) }
+                            .sortedBy { it.familyCode }
+                        EcoSelector(
+                            "Familia (${familiasFiltradas.size})",
+                            null,
+                            familiasFiltradas.map { it.id to "${it.familyCode} - ${it.representativeName}" }
+                        ) { familyId = it }
                     }
                 }
                 EcoSelector("Encuestador", encuestadores.firstOrNull { it.id == encuestadorId }?.nombre, encuestadores.map { it.id to it.nombre }) { encuestadorId = it }

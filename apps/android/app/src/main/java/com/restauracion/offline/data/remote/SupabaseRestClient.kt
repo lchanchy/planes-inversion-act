@@ -128,7 +128,7 @@ class SupabaseRestClient(
 
     suspend fun municipalities(): List<MunicipalityEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/municipalities?select=id,name") {
+        client.get("$baseUrl/rest/v1/municipalities?select=id,name,department") {
         authHeaders()
         }.body<List<MunicipalityDto>>().map { it.toEntity() }
     }
@@ -882,8 +882,8 @@ private data class MaterialDeliveryItemUploadDto(
     )
 }
 
-@Serializable private data class MunicipalityDto(val id: String, val name: String? = null) {
-    fun toEntity() = MunicipalityEntity(id, name ?: "Sin nombre")
+@Serializable private data class MunicipalityDto(val id: String, val name: String? = null, val department: String? = null) {
+    fun toEntity() = MunicipalityEntity(id, name ?: "Sin nombre", department)
 }
 
 @Serializable private data class VillageDto(

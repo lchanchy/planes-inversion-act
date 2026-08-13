@@ -31,7 +31,8 @@ data class FamilyEntity(
 @Entity(tableName = "municipalities")
 data class MunicipalityEntity(
     @PrimaryKey val id: String,
-    val name: String
+    val name: String,
+    val department: String? = null
 )
 
 @Entity(tableName = "villages")

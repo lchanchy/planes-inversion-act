@@ -36,7 +36,7 @@ import androidx.room.RoomDatabase
         EconomiaEncuestaProductoEntity::class,
         EconomiaProductoLugarVentaEntity::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = false
 )
 abstract class RestauracionDatabase : RoomDatabase() {
