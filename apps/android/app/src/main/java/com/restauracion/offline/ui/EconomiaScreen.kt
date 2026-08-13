@@ -55,7 +55,6 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
     // Catalogos
     val projects by repo.projects.collectAsState(initial = emptyList())
     val rondas by repo.economiaRondas().collectAsState(initial = emptyList())
-    val equipos by repo.economiaEquipos().collectAsState(initial = emptyList())
     val encuestadores by repo.economiaEncuestadores().collectAsState(initial = emptyList())
     val categorias by repo.economiaCategorias().collectAsState(initial = emptyList())
     val productosCat by repo.economiaProductos().collectAsState(initial = emptyList())
@@ -69,7 +68,7 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
     var projectId by remember { mutableStateOf<String?>(null) }
     var rondaId by remember { mutableStateOf<String?>(null) }
     var familyId by remember { mutableStateOf<String?>(null) }
-    var equipoId by remember { mutableStateOf<String?>(null) }
+    var familyQuery by remember { mutableStateOf("") }
     var encuestadorId by remember { mutableStateOf<String?>(null) }
     var fecha by remember { mutableStateOf(LocalDate.now().toString()) }
 
@@ -138,19 +137,52 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
             0 -> EcoPanel {
                 EcoTitle("1. Datos generales")
                 EcoSelector("Proyecto", projects.firstOrNull { it.id == projectId }?.name, projects.map { it.id to it.name }) {
-                    projectId = it; familyId = null
+                    projectId = it; familyId = null; familyQuery = ""
                 }
                 EcoSelector("Ronda de monitoreo", rondas.firstOrNull { it.id == rondaId }?.nombre, rondas.map { it.id to it.nombre }) { rondaId = it }
-                EcoSelector(
-                    "Familia",
-                    families.firstOrNull { it.id == familyId }?.let { "${it.familyCode} - ${it.representativeName}" },
-                    families.map { it.id to "${it.familyCode} - ${it.representativeName}" }
-                ) { familyId = it }
+                // Familia: buscador con sugerencias (hay muchas familias).
                 if (family != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Familia", style = MaterialTheme.typography.bodySmall)
+                            Text("${family.familyCode} - ${family.representativeName}", style = MaterialTheme.typography.bodyMedium)
+                        }
+                        OutlinedButton(onClick = { familyId = null; familyQuery = "" }) { Text("Cambiar") }
+                    }
                     Text("Departamento/Municipio: ${municipioNombre ?: "-"}", style = MaterialTheme.typography.bodySmall)
                     Text("Vereda o comunidad: ${veredaNombre ?: "-"}", style = MaterialTheme.typography.bodySmall)
+                } else {
+                    OutlinedTextField(
+                        value = familyQuery,
+                        onValueChange = { familyQuery = it },
+                        label = { Text("Familia (escriba código o nombre para buscar)") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (projectId == null) {
+                        Text("Seleccione primero el proyecto.", style = MaterialTheme.typography.bodySmall)
+                    } else {
+                        val sugeridas = if (familyQuery.isBlank()) {
+                            emptyList()
+                        } else {
+                            families.filter {
+                                it.familyCode.contains(familyQuery, ignoreCase = true) ||
+                                    it.representativeName.contains(familyQuery, ignoreCase = true)
+                            }.take(15)
+                        }
+                        sugeridas.forEach { f ->
+                            OutlinedButton(onClick = { familyId = f.id; familyQuery = "" }, modifier = Modifier.fillMaxWidth()) {
+                                Text("${f.familyCode} - ${f.representativeName}")
+                            }
+                        }
+                        if (familyQuery.isNotBlank() && sugeridas.isEmpty()) {
+                            Text(
+                                "Sin coincidencias. Si agregó familias en la web, vuelva al inicio y pulse \"Descargar\".",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
                 }
-                EcoSelector("Equipo", equipos.firstOrNull { it.id == equipoId }?.nombre, equipos.map { it.id to it.nombre }) { equipoId = it }
                 EcoSelector("Encuestador", encuestadores.firstOrNull { it.id == encuestadorId }?.nombre, encuestadores.map { it.id to it.nombre }) { encuestadorId = it }
                 OutlinedTextField(value = fecha, onValueChange = { fecha = it }, label = { Text("Fecha (AAAA-MM-DD)") }, modifier = Modifier.fillMaxWidth())
             }
@@ -262,7 +294,7 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
                                     projectId = pid,
                                     familyId = fid,
                                     rondaId = rid,
-                                    equipoId = equipoId,
+                                    equipoId = null,
                                     encuestadorId = encuestadorId,
                                     fecha = fecha,
                                     cambioNumPersonas = cambioPersonas,
