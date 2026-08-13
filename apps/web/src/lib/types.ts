@@ -426,3 +426,113 @@ export type MaintenanceProgress = {
   observations: string | null;
   is_deleted: boolean;
 };
+
+// ==========================================================================
+// Fase 8: Economia Familiar
+// ==========================================================================
+export type EconomiaCategoria = {
+  id: string;
+  codigo: string;
+  nombre: string;
+  orden: number;
+  activo: boolean;
+};
+
+export type EconomiaProductoCatalogo = {
+  id: string;
+  categoria_id: string;
+  codigo: string;
+  nombre: string;
+  es_pecuario: boolean;
+  unidad_base: string;
+  orden: number;
+  activo: boolean;
+};
+
+export type EconomiaTipoApoyo = {
+  id: string;
+  codigo: string;
+  nombre: string;
+  orden: number;
+  activo: boolean;
+};
+
+export type EconomiaTipoPago = {
+  id: string;
+  codigo: string;
+  nombre: string;
+  orden: number;
+  activo: boolean;
+};
+
+export type EconomiaRonda = {
+  id: string;
+  codigo: string;
+  nombre: string;
+  orden: number;
+  activo: boolean;
+};
+
+export type EconomiaEncuesta = {
+  id: string;
+  project_id: string;
+  family_id: string;
+  ronda_id: string;
+  equipo_id: string | null;
+  encuestador_id: string | null;
+  fecha: string;
+  cambio_num_personas: boolean | null;
+  personas_ninos: number | null;
+  personas_adolescentes: number | null;
+  personas_jovenes: number | null;
+  personas_adultos: number | null;
+  personas_mayores: number | null;
+  personas_total: number | null;
+  recibe_apoyo_gobierno: boolean | null;
+  recibe_otros_pagos: boolean | null;
+  valor_jornal: number | null;
+  estado: string;
+  observaciones: string | null;
+  is_deleted: boolean;
+};
+
+export type EconomiaEncuestaApoyo = {
+  id: string;
+  encuesta_id: string;
+  project_id: string;
+  family_id: string;
+  tipo_apoyo_id: string;
+  valor_mensual: number | null;
+  nombre_libre: string | null;
+  is_deleted: boolean;
+};
+
+export type EconomiaEncuestaPago = {
+  id: string;
+  encuesta_id: string;
+  project_id: string;
+  family_id: string;
+  tipo_pago_id: string;
+  valor_mensual: number | null;
+  is_deleted: boolean;
+};
+
+export type EconomiaEncuestaProducto = {
+  id: string;
+  encuesta_id: string;
+  project_id: string;
+  family_id: string;
+  producto_id: string | null;
+  nombre_otro: string | null;
+  unidad: string | null;
+  es_pecuario: boolean;
+  temporalidad: string | null;
+  cantidad_producida: number | null;
+  consumo: number | null;
+  vendido: number | null;
+  motivo_no_venta: string | null;
+  precio_unitario: number | null;
+  ingreso_mensual: number | null;
+  apoyo_act: boolean | null;
+  is_deleted: boolean;
+};

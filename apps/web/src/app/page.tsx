@@ -55,7 +55,13 @@ import type {
   QuarterlyProgressType,
   Role,
   UserMunicipalityAssignment,
-  Village
+  Village,
+  EconomiaProductoCatalogo,
+  EconomiaRonda,
+  EconomiaEncuesta,
+  EconomiaEncuestaApoyo,
+  EconomiaEncuestaPago,
+  EconomiaEncuestaProducto
 } from "@/lib/types";
 
 type ViewKey =
@@ -71,7 +77,8 @@ type ViewKey =
   | "phase5_etec"
   | "phase5_indicators"
   | "phase5_maintenance"
-  | "phase5_acts";
+  | "phase5_acts"
+  | "phase8_economia";
 type Phase5Tab = "consolidated" | "etec" | "indicators" | "maintenance" | "acts";
 type Notice = { type: "info" | "error"; message: string } | null;
 type ProjectLogoPosition = "left" | "center" | "right" | "bottom-left" | "bottom-center" | "bottom-right";
@@ -660,7 +667,8 @@ function AdminApp({ session }: { session: Session }) {
     { key: "phase5_etec", label: "ETEC" },
     { key: "phase5_indicators", label: "Herramienta de indicadores" },
     { key: "phase5_maintenance", label: "Herramienta de mantenimiento" },
-    { key: "phase5_acts", label: "Actas de entrega" }
+    { key: "phase5_acts", label: "Actas de entrega" },
+    { key: "phase8_economia", label: "Economía Familiar" }
   ];
   const selectedPhase5Tab = phase5TabFromView(view);
 
@@ -837,6 +845,14 @@ function AdminApp({ session }: { session: Session }) {
               canGenerateActs={canWrite}
               canEditImplementation={canWrite || roleNames.has("technician")}
               onChange={loadAll}
+            />
+          ) : null}
+          {view === "phase8_economia" ? (
+            <EconomiaAnalytics
+              projects={scoped.projects}
+              families={scoped.families}
+              municipalities={municipalities}
+              villages={villages}
             />
           ) : null}
         </section>
@@ -12907,4 +12923,412 @@ function formatMoney(value: number) {
     currency: "COP",
     maximumFractionDigits: 0
   }).format(value);
+}
+
+// ==========================================================================
+// Fase 8: Economia Familiar - modulo web analitico (solo lectura + exportacion).
+// Carga sus propias tablas economia_* (aislado del loadAll principal) y presenta
+// las fuentes de ingreso por familia, agregadas por vereda/municipio/departamento.
+// ==========================================================================
+type EconomiaNivel = "departamento" | "municipio" | "vereda";
+
+type EconomiaRow = {
+  encuestaId: string;
+  familyId: string;
+  familia: string;
+  departamento: string;
+  municipio: string;
+  vereda: string;
+  ronda: string;
+  personas: number;
+  ingProductos: number;
+  ingGobierno: number;
+  ingOtros: number;
+  ingTotal: number;
+  jornal: number;
+};
+
+function EconomiaAnalytics({
+  projects,
+  families,
+  municipalities,
+  villages
+}: {
+  projects: Project[];
+  families: Family[];
+  municipalities: Municipality[];
+  villages: Village[];
+}) {
+  const [loading, setLoading] = useState(true);
+  const [schemaError, setSchemaError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [rondas, setRondas] = useState<EconomiaRonda[]>([]);
+  const [productosCat, setProductosCat] = useState<EconomiaProductoCatalogo[]>([]);
+  const [encuestas, setEncuestas] = useState<EconomiaEncuesta[]>([]);
+  const [apoyos, setApoyos] = useState<EconomiaEncuestaApoyo[]>([]);
+  const [pagos, setPagos] = useState<EconomiaEncuestaPago[]>([]);
+  const [productos, setProductos] = useState<EconomiaEncuestaProducto[]>([]);
+  const [rondaFilter, setRondaFilter] = useState<string>("all");
+  const [nivel, setNivel] = useState<EconomiaNivel>("municipio");
+
+  const loadEconomia = useCallback(async () => {
+    setLoading(true);
+    setSchemaError(null);
+    setLoadError(null);
+    const [rondasRes, productosCatRes, encuestasRes, apoyosRes, pagosRes, productosRes] = await Promise.all([
+      supabase.from("economia_rondas").select("*").eq("is_deleted", false).order("orden"),
+      supabase.from("economia_productos").select("*").eq("is_deleted", false).order("orden"),
+      supabase.from("economia_encuestas").select("*").eq("is_deleted", false),
+      supabase.from("economia_encuesta_apoyos").select("*").eq("is_deleted", false),
+      supabase.from("economia_encuesta_pagos").select("*").eq("is_deleted", false),
+      supabase.from("economia_encuesta_productos").select("*").eq("is_deleted", false)
+    ]);
+    const results = [rondasRes, productosCatRes, encuestasRes, apoyosRes, pagosRes, productosRes];
+    const missing = results.some((r) => r.error && isMissingTableError(r.error));
+    if (missing) {
+      setSchemaError(
+        "Faltan migraciones de Economia Familiar en Supabase. Aplique 20260813120000_phase8_economia_familiar.sql antes de usar este modulo."
+      );
+      setLoading(false);
+      return;
+    }
+    const anyError = results.find((r) => r.error);
+    if (anyError?.error) {
+      setLoadError(getErrorMessage(anyError.error));
+      setLoading(false);
+      return;
+    }
+    setRondas((rondasRes.data as EconomiaRonda[]) ?? []);
+    setProductosCat((productosCatRes.data as EconomiaProductoCatalogo[]) ?? []);
+    setEncuestas((encuestasRes.data as EconomiaEncuesta[]) ?? []);
+    setApoyos((apoyosRes.data as EconomiaEncuestaApoyo[]) ?? []);
+    setPagos((pagosRes.data as EconomiaEncuestaPago[]) ?? []);
+    setProductos((productosRes.data as EconomiaEncuestaProducto[]) ?? []);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    void loadEconomia();
+  }, [loadEconomia]);
+
+  const municById = useMemo(() => new Map(municipalities.map((m) => [m.id, m] as const)), [municipalities]);
+  const villById = useMemo(() => new Map(villages.map((v) => [v.id, v] as const)), [villages]);
+  const famById = useMemo(() => new Map(families.map((f) => [f.id, f] as const)), [families]);
+  const rondaById = useMemo(() => new Map(rondas.map((r) => [r.id, r] as const)), [rondas]);
+  const prodCatById = useMemo(() => new Map(productosCat.map((p) => [p.id, p] as const)), [productosCat]);
+
+  const rows = useMemo<EconomiaRow[]>(() => {
+    const familyIds = new Set(families.map((f) => f.id));
+    const prodByEnc = new Map<string, number>();
+    productos.forEach((p) => prodByEnc.set(p.encuesta_id, (prodByEnc.get(p.encuesta_id) ?? 0) + (p.ingreso_mensual ?? 0)));
+    const apoyoByEnc = new Map<string, number>();
+    apoyos.forEach((a) => apoyoByEnc.set(a.encuesta_id, (apoyoByEnc.get(a.encuesta_id) ?? 0) + (a.valor_mensual ?? 0)));
+    const pagoByEnc = new Map<string, number>();
+    pagos.forEach((p) => pagoByEnc.set(p.encuesta_id, (pagoByEnc.get(p.encuesta_id) ?? 0) + (p.valor_mensual ?? 0)));
+    return encuestas
+      .filter((e) => familyIds.has(e.family_id) && (rondaFilter === "all" || e.ronda_id === rondaFilter))
+      .map((e) => {
+        const fam = famById.get(e.family_id);
+        const m = fam?.municipality_id ? municById.get(fam.municipality_id) : undefined;
+        const v = fam?.village_id ? villById.get(fam.village_id) : undefined;
+        const ingProductos = prodByEnc.get(e.id) ?? 0;
+        const ingGobierno = apoyoByEnc.get(e.id) ?? 0;
+        const ingOtros = pagoByEnc.get(e.id) ?? 0;
+        return {
+          encuestaId: e.id,
+          familyId: e.family_id,
+          familia: fam ? `${fam.family_code} - ${fam.representative_name}` : "(familia desconocida)",
+          departamento: m?.department ?? "Sin departamento",
+          municipio: m?.name ?? "Sin municipio",
+          vereda: v?.name ?? "Sin vereda",
+          ronda: rondaById.get(e.ronda_id)?.nombre ?? "-",
+          personas: e.personas_total ?? 0,
+          ingProductos,
+          ingGobierno,
+          ingOtros,
+          ingTotal: ingProductos + ingGobierno + ingOtros,
+          jornal: e.valor_jornal ?? 0
+        };
+      })
+      .sort((a, b) => b.ingTotal - a.ingTotal);
+  }, [encuestas, productos, apoyos, pagos, families, rondaFilter, famById, municById, villById, rondaById]);
+
+  const totales = useMemo(() => {
+    const familias = new Set(rows.map((r) => r.familyId));
+    const ingProductos = rows.reduce((acc, r) => acc + r.ingProductos, 0);
+    const ingGobierno = rows.reduce((acc, r) => acc + r.ingGobierno, 0);
+    const ingOtros = rows.reduce((acc, r) => acc + r.ingOtros, 0);
+    const ingTotal = ingProductos + ingGobierno + ingOtros;
+    return {
+      familias: familias.size,
+      encuestas: rows.length,
+      ingProductos,
+      ingGobierno,
+      ingOtros,
+      ingTotal,
+      promedio: familias.size > 0 ? ingTotal / familias.size : 0
+    };
+  }, [rows]);
+
+  const aggRows = useMemo(() => {
+    const map = new Map<string, { clave: string; familias: Set<string>; encuestas: number; ingProductos: number; ingGobierno: number; ingOtros: number; ingTotal: number }>();
+    rows.forEach((r) => {
+      const clave =
+        nivel === "departamento" ? r.departamento : nivel === "municipio" ? `${r.departamento} / ${r.municipio}` : `${r.municipio} / ${r.vereda}`;
+      const cur = map.get(clave) ?? { clave, familias: new Set<string>(), encuestas: 0, ingProductos: 0, ingGobierno: 0, ingOtros: 0, ingTotal: 0 };
+      cur.familias.add(r.familyId);
+      cur.encuestas += 1;
+      cur.ingProductos += r.ingProductos;
+      cur.ingGobierno += r.ingGobierno;
+      cur.ingOtros += r.ingOtros;
+      cur.ingTotal += r.ingTotal;
+      map.set(clave, cur);
+    });
+    return Array.from(map.values()).sort((a, b) => b.ingTotal - a.ingTotal);
+  }, [rows, nivel]);
+
+  const topProductos = useMemo(() => {
+    const encIds = new Set(rows.map((r) => r.encuestaId));
+    const map = new Map<string, { nombre: string; ingreso: number; encuestas: Set<string> }>();
+    productos
+      .filter((p) => encIds.has(p.encuesta_id))
+      .forEach((p) => {
+        const nombre = p.producto_id ? prodCatById.get(p.producto_id)?.nombre ?? "(producto)" : p.nombre_otro ?? "Otro producto";
+        const cur = map.get(nombre) ?? { nombre, ingreso: 0, encuestas: new Set<string>() };
+        cur.ingreso += p.ingreso_mensual ?? 0;
+        cur.encuestas.add(p.encuesta_id);
+        map.set(nombre, cur);
+      });
+    return Array.from(map.values()).sort((a, b) => b.ingreso - a.ingreso).slice(0, 20);
+  }, [productos, rows, prodCatById]);
+
+  const nivelLabel = nivel === "departamento" ? "Departamento" : nivel === "municipio" ? "Departamento / Municipio" : "Municipio / Vereda";
+
+  async function exportarExcel() {
+    const ExcelJS = await import("exceljs");
+    const workbook = new ExcelJS.Workbook();
+
+    const s1 = workbook.addWorksheet("Por familia");
+    s1.addRow(["Familia", "Departamento", "Municipio", "Vereda", "Ronda", "Personas", "Ing. productos", "Ing. gobierno", "Ing. otros", "Ing. total mensual", "Valor jornal"]);
+    rows.forEach((r) => s1.addRow([r.familia, r.departamento, r.municipio, r.vereda, r.ronda, r.personas, r.ingProductos, r.ingGobierno, r.ingOtros, r.ingTotal, r.jornal]));
+    s1.getRow(1).font = { bold: true };
+
+    const s2 = workbook.addWorksheet("Agregado");
+    s2.addRow([nivelLabel, "Familias", "Encuestas", "Ing. productos", "Ing. gobierno", "Ing. otros", "Ing. total", "Promedio por familia"]);
+    aggRows.forEach((a) =>
+      s2.addRow([a.clave, a.familias.size, a.encuestas, a.ingProductos, a.ingGobierno, a.ingOtros, a.ingTotal, a.familias.size > 0 ? a.ingTotal / a.familias.size : 0])
+    );
+    s2.getRow(1).font = { bold: true };
+
+    const s3 = workbook.addWorksheet("Fuentes por producto");
+    s3.addRow(["Producto", "Ingreso mensual total", "Encuestas"]);
+    topProductos.forEach((p) => s3.addRow([p.nombre, p.ingreso, p.encuestas.size]));
+    s3.getRow(1).font = { bold: true };
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    saveBlob(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), `economia-familiar-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  }
+
+  return (
+    <section className="section">
+      <div className="toolbar">
+        <div>
+          <h2>Economía Familiar</h2>
+          <div className="muted">
+            Fuentes de ingreso por familia y su comparación por vereda, municipio y departamento.
+            {projects.length > 0 ? "" : " (Seleccione un proyecto para ver datos.)"}
+          </div>
+        </div>
+        <button className="nav-button" onClick={() => void exportarExcel()} disabled={loading || rows.length === 0}>
+          Exportar Excel
+        </button>
+      </div>
+
+      {schemaError ? <div className="alert error">{schemaError}</div> : null}
+      {loadError ? <div className="alert error">No fue posible cargar Economía Familiar: {loadError}</div> : null}
+      {loading ? <div className="muted">Cargando…</div> : null}
+
+      {!loading && !schemaError && !loadError ? (
+        <>
+          <div className="panel grid compact-panel">
+            <label>
+              Ronda
+              <select value={rondaFilter} onChange={(e) => setRondaFilter(e.target.value)}>
+                <option value="all">Todas las rondas</option>
+                {rondas.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.nombre}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Agregar por
+              <select value={nivel} onChange={(e) => setNivel(e.target.value as EconomiaNivel)}>
+                <option value="departamento">Departamento</option>
+                <option value="municipio">Municipio</option>
+                <option value="vereda">Vereda</option>
+              </select>
+            </label>
+          </div>
+
+          <div className="summary-grid">
+            <div className="metric">
+              <strong>{totales.encuestas}</strong>
+              <span>Encuestas</span>
+            </div>
+            <div className="metric">
+              <strong>{totales.familias}</strong>
+              <span>Familias</span>
+            </div>
+            <div className="metric">
+              <strong>{formatMoney(totales.ingTotal)}</strong>
+              <span>Ingreso total mensual</span>
+            </div>
+            <div className="metric">
+              <strong>{formatMoney(totales.promedio)}</strong>
+              <span>Promedio por familia</span>
+            </div>
+          </div>
+
+          <div className="panel">
+            <div className="panel-heading">Fuentes de ingreso</div>
+            <div className="summary-grid">
+              <div className="metric">
+                <strong>{formatMoney(totales.ingProductos)}</strong>
+                <span>Venta de productos</span>
+              </div>
+              <div className="metric">
+                <strong>{formatMoney(totales.ingGobierno)}</strong>
+                <span>Apoyos del gobierno</span>
+              </div>
+              <div className="metric">
+                <strong>{formatMoney(totales.ingOtros)}</strong>
+                <span>Otros ingresos</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="panel">
+            <div className="panel-heading">Comparación por {nivel}</div>
+            <div className="tracking-table-wrapper">
+              <table className="tracking-table">
+                <thead>
+                  <tr>
+                    <th>{nivelLabel}</th>
+                    <th>Familias</th>
+                    <th>Encuestas</th>
+                    <th>Ing. productos</th>
+                    <th>Ing. gobierno</th>
+                    <th>Ing. otros</th>
+                    <th>Ing. total</th>
+                    <th>Promedio/familia</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {aggRows.map((a) => (
+                    <tr key={a.clave}>
+                      <td>{a.clave}</td>
+                      <td>{a.familias.size}</td>
+                      <td>{a.encuestas}</td>
+                      <td>{formatMoney(a.ingProductos)}</td>
+                      <td>{formatMoney(a.ingGobierno)}</td>
+                      <td>{formatMoney(a.ingOtros)}</td>
+                      <td>{formatMoney(a.ingTotal)}</td>
+                      <td>{formatMoney(a.familias.size > 0 ? a.ingTotal / a.familias.size : 0)}</td>
+                    </tr>
+                  ))}
+                  {aggRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="muted">
+                        No hay encuestas para los filtros seleccionados.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="panel">
+            <div className="panel-heading">Detalle por familia</div>
+            <div className="tracking-table-wrapper">
+              <table className="tracking-table">
+                <thead>
+                  <tr>
+                    <th>Familia</th>
+                    <th>Departamento</th>
+                    <th>Municipio</th>
+                    <th>Vereda</th>
+                    <th>Ronda</th>
+                    <th>Personas</th>
+                    <th>Ing. productos</th>
+                    <th>Ing. gobierno</th>
+                    <th>Ing. otros</th>
+                    <th>Ing. total</th>
+                    <th>Jornal</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={r.encuestaId}>
+                      <td>{r.familia}</td>
+                      <td>{r.departamento}</td>
+                      <td>{r.municipio}</td>
+                      <td>{r.vereda}</td>
+                      <td>{r.ronda}</td>
+                      <td>{r.personas}</td>
+                      <td>{formatMoney(r.ingProductos)}</td>
+                      <td>{formatMoney(r.ingGobierno)}</td>
+                      <td>{formatMoney(r.ingOtros)}</td>
+                      <td>{formatMoney(r.ingTotal)}</td>
+                      <td>{formatMoney(r.jornal)}</td>
+                    </tr>
+                  ))}
+                  {rows.length === 0 ? (
+                    <tr>
+                      <td colSpan={11} className="muted">
+                        No hay encuestas para los filtros seleccionados.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="panel">
+            <div className="panel-heading">Productos con más ingreso</div>
+            <div className="tracking-table-wrapper">
+              <table className="tracking-table">
+                <thead>
+                  <tr>
+                    <th>Producto</th>
+                    <th>Ingreso mensual total</th>
+                    <th>Encuestas</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {topProductos.map((p) => (
+                    <tr key={p.nombre}>
+                      <td>{p.nombre}</td>
+                      <td>{formatMoney(p.ingreso)}</td>
+                      <td>{p.encuestas.size}</td>
+                    </tr>
+                  ))}
+                  {topProductos.length === 0 ? (
+                    <tr>
+                      <td colSpan={3} className="muted">
+                        Sin productos registrados.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      ) : null}
+    </section>
+  );
 }
