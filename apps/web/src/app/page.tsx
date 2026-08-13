@@ -12970,6 +12970,7 @@ function EconomiaAnalytics({
   const [productos, setProductos] = useState<EconomiaEncuestaProducto[]>([]);
   const [rondaFilter, setRondaFilter] = useState<string>("all");
   const [nivel, setNivel] = useState<EconomiaNivel>("municipio");
+  const [comparaNivel, setComparaNivel] = useState<"familia" | EconomiaNivel>("familia");
 
   const loadEconomia = useCallback(async () => {
     setLoading(true);
@@ -13104,6 +13105,61 @@ function EconomiaAnalytics({
 
   const nivelLabel = nivel === "departamento" ? "Departamento" : nivel === "municipio" ? "Departamento / Municipio" : "Municipio / Vereda";
 
+  // --- Comparacion entre rondas (linea base vs monitoreos). Ignora el filtro de una sola ronda:
+  //     usa TODAS las rondas como columnas para poder compararlas. Escala a muchos monitoreos.
+  const ingresoPorEncuesta = useMemo(() => {
+    const m = new Map<string, number>();
+    const add = (encuestaId: string, valor: number) => m.set(encuestaId, (m.get(encuestaId) ?? 0) + valor);
+    productos.forEach((p) => add(p.encuesta_id, p.ingreso_mensual ?? 0));
+    apoyos.forEach((a) => add(a.encuesta_id, a.valor_mensual ?? 0));
+    pagos.forEach((p) => add(p.encuesta_id, p.valor_mensual ?? 0));
+    return m;
+  }, [productos, apoyos, pagos]);
+
+  const rondasOrdenadas = useMemo(() => [...rondas].sort((a, b) => a.orden - b.orden), [rondas]);
+
+  const comparaNivelLabel =
+    comparaNivel === "familia" ? "Familia" : comparaNivel === "departamento" ? "Departamento" : comparaNivel === "municipio" ? "Departamento / Municipio" : "Municipio / Vereda";
+
+  const pivotRondas = useMemo(() => {
+    const familyIds = new Set(families.map((f) => f.id));
+    const claveDe = (e: EconomiaEncuesta): string => {
+      const fam = famById.get(e.family_id);
+      if (comparaNivel === "familia") return fam ? `${fam.family_code} - ${fam.representative_name}` : "(familia desconocida)";
+      const m = fam?.municipality_id ? municById.get(fam.municipality_id) : undefined;
+      const v = fam?.village_id ? villById.get(fam.village_id) : undefined;
+      if (comparaNivel === "departamento") return m?.department ?? "Sin departamento";
+      if (comparaNivel === "municipio") return `${m?.department ?? "Sin departamento"} / ${m?.name ?? "Sin municipio"}`;
+      return `${m?.name ?? "Sin municipio"} / ${v?.name ?? "Sin vereda"}`;
+    };
+    const map = new Map<string, Map<string, number>>();
+    encuestas
+      .filter((e) => familyIds.has(e.family_id))
+      .forEach((e) => {
+        const clave = claveDe(e);
+        const inner = map.get(clave) ?? new Map<string, number>();
+        inner.set(e.ronda_id, (inner.get(e.ronda_id) ?? 0) + (ingresoPorEncuesta.get(e.id) ?? 0));
+        map.set(clave, inner);
+      });
+    return Array.from(map.entries())
+      .map(([clave, inner]) => {
+        const valores = rondasOrdenadas.map((r) => (inner.has(r.id) ? inner.get(r.id) ?? 0 : null));
+        const conDato = valores.filter((v): v is number => v != null);
+        let variacion: number | null = null;
+        if (conDato.length >= 2) {
+          const base = conDato[0];
+          const ultimo = conDato[conDato.length - 1];
+          variacion = base > 0 ? ((ultimo - base) / base) * 100 : null;
+        }
+        return { clave, valores, variacion };
+      })
+      .sort((a, b) => {
+        const ultA = [...a.valores].reverse().find((v) => v != null) ?? 0;
+        const ultB = [...b.valores].reverse().find((v) => v != null) ?? 0;
+        return ultB - ultA;
+      });
+  }, [encuestas, families, comparaNivel, famById, municById, villById, rondasOrdenadas, ingresoPorEncuesta]);
+
   async function exportarExcel() {
     const ExcelJS = await import("exceljs");
     const workbook = new ExcelJS.Workbook();
@@ -13124,6 +13180,13 @@ function EconomiaAnalytics({
     s3.addRow(["Producto", "Ingreso mensual total", "Encuestas"]);
     topProductos.forEach((p) => s3.addRow([p.nombre, p.ingreso, p.encuestas.size]));
     s3.getRow(1).font = { bold: true };
+
+    const s4 = workbook.addWorksheet("Comparacion rondas");
+    s4.addRow([comparaNivelLabel, ...rondasOrdenadas.map((r) => r.nombre), "Variacion %"]);
+    pivotRondas.forEach((row) =>
+      s4.addRow([row.clave, ...row.valores.map((v) => (v == null ? "" : v)), row.variacion == null ? "" : Math.round(row.variacion)])
+    );
+    s4.getRow(1).font = { bold: true };
 
     const buffer = await workbook.xlsx.writeBuffer();
     saveBlob(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), `economia-familiar-${new Date().toISOString().slice(0, 10)}.xlsx`);
@@ -13242,6 +13305,53 @@ function EconomiaAnalytics({
                     <tr>
                       <td colSpan={8} className="muted">
                         No hay encuestas para los filtros seleccionados.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="panel">
+            <div className="panel-heading">Comparación entre rondas (línea base vs monitoreos)</div>
+            <div className="panel grid compact-panel">
+              <label>
+                Comparar por
+                <select value={comparaNivel} onChange={(e) => setComparaNivel(e.target.value as "familia" | EconomiaNivel)}>
+                  <option value="familia">Familia</option>
+                  <option value="departamento">Departamento</option>
+                  <option value="municipio">Municipio</option>
+                  <option value="vereda">Vereda</option>
+                </select>
+              </label>
+              <div className="muted">Cada ronda es una columna; se agregan solas al crear nuevas rondas. El ingreso es el total mensual (productos + gobierno + otros).</div>
+            </div>
+            <div className="tracking-table-wrapper">
+              <table className="tracking-table">
+                <thead>
+                  <tr>
+                    <th>{comparaNivelLabel}</th>
+                    {rondasOrdenadas.map((r) => (
+                      <th key={r.id}>{r.nombre}</th>
+                    ))}
+                    <th>Variación</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pivotRondas.map((row) => (
+                    <tr key={row.clave}>
+                      <td>{row.clave}</td>
+                      {row.valores.map((v, i) => (
+                        <td key={rondasOrdenadas[i]?.id ?? i}>{v == null ? "—" : formatMoney(v)}</td>
+                      ))}
+                      <td>{row.variacion == null ? "—" : `${row.variacion >= 0 ? "+" : ""}${row.variacion.toFixed(0)}%`}</td>
+                    </tr>
+                  ))}
+                  {pivotRondas.length === 0 ? (
+                    <tr>
+                      <td colSpan={rondasOrdenadas.length + 2} className="muted">
+                        No hay encuestas registradas todavía.
                       </td>
                     </tr>
                   ) : null}
