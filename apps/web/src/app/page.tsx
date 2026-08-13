@@ -13202,8 +13202,8 @@ function EconomiaAnalytics({
             {projects.length > 0 ? "" : " (Seleccione un proyecto para ver datos.)"}
           </div>
         </div>
-        <button className="nav-button" onClick={() => void exportarExcel()} disabled={loading || rows.length === 0}>
-          Exportar Excel
+        <button className="secondary" type="button" onClick={() => void exportarExcel()} disabled={loading}>
+          Descargar Excel Economía
         </button>
       </div>
 
