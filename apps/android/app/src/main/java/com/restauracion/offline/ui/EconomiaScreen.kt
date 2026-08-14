@@ -43,6 +43,7 @@ import com.restauracion.offline.data.AppContainer
 import com.restauracion.offline.data.local.EconomiaEncuestaEntity
 import com.restauracion.offline.data.local.EconomiaEncuestaProductoEntity
 import com.restauracion.offline.data.local.EconomiaProductoEntity
+import com.restauracion.offline.data.local.annualIncomeFactor
 import com.restauracion.offline.data.repository.EconomiaApoyoInput
 import com.restauracion.offline.data.repository.EconomiaPagoInput
 import com.restauracion.offline.data.repository.EconomiaProductoInput
@@ -371,29 +372,28 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
                             color = MaterialTheme.colorScheme.primary
                         )
                     }
-                    EcoSelector("Departamento", departamento, departamentos.map { it to it }) {
+                    AppSelector("Departamento", departamento, departamentos.map { it to it }) {
                         departamento = it; municipioId = null; veredaId = null
                     }
                     if (departamento != null) {
                         val municipios = municipalities
                             .filter { it.id in municipiosDeFamilias && it.department == departamento }
                             .sortedBy { it.name }
-                        EcoSelector("Municipio", municipios.firstOrNull { it.id == municipioId }?.name, municipios.map { it.id to it.name }) {
+                        AppSelector("Municipio", municipios.firstOrNull { it.id == municipioId }?.name, municipios.map { it.id to it.name }) {
                             municipioId = it; veredaId = null
                         }
                     }
                     if (municipioId != null) {
                         val veredaIds = allFamilies.filter { it.municipalityId == municipioId }.mapNotNull { it.villageId }.toSet()
                         val veredas = villages.filter { it.id in veredaIds }.sortedBy { it.name }
-                        EcoSelector("Vereda (opcional)", veredas.firstOrNull { it.id == veredaId }?.name, veredas.map { it.id to it.name }) {
+                        AppSelector("Vereda (opcional)", veredas.firstOrNull { it.id == veredaId }?.name, veredas.map { it.id to it.name }) {
                             veredaId = it
                         }
                         val familiasFiltradas = allFamilies
                             .filter { it.municipalityId == municipioId && (veredaId == null || it.villageId == veredaId) }
                             .sortedBy { it.familyCode }
-                        EcoSelector(
+                        AppFamilySelector(
                             "Familia (${familiasFiltradas.size})",
-                            null,
                             familiasFiltradas.map { it.id to "${it.familyCode} - ${it.representativeName}" }
                         ) { fid ->
                             familyId = fid
@@ -590,7 +590,7 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
                                         nombreOtro = null,
                                         unidad = cat.unidadBase,
                                         esPecuario = cat.esPecuario,
-                                        temporalidad = if (cat.esPecuario) pTemporalidad[prodId]?.ifBlank { null } else "mensual",
+                                        temporalidad = pTemporalidad[prodId]?.ifBlank { null },
                                         cantidadProducida = pCantidad[prodId]?.toDoubleOrNull(),
                                         consumo = pConsumo[prodId]?.toDoubleOrNull(),
                                         vendido = vendido,
@@ -664,7 +664,7 @@ private class OtroProductoDraft {
 
     fun toInput() = EconomiaProductoInput(
         id = id, productoId = null, nombreOtro = nombre.trim(), unidad = unidad,
-        esPecuario = esPecuario, temporalidad = if (esPecuario) temporalidad else "mensual",
+        esPecuario = esPecuario, temporalidad = temporalidad,
         cantidadProducida = cantidad.toDoubleOrNull(), consumo = consumo.toDoubleOrNull(),
         vendido = vendido.toDoubleOrNull(), motivoNoVenta = if (vendido.toDoubleOrNull() == 0.0) motivo.trim() else null,
         precioUnitario = precio.toDoubleOrNull(), apoyoAct = apoyoAct, lugaresVentaIds = lugares.toList()
@@ -682,7 +682,7 @@ private class OtroProductoDraft {
 
 @Composable private fun OtroProductoEditor(item: OtroProductoDraft, lugares: List<Pair<String,String>>) {
     OutlinedTextField(item.nombre, { item.nombre=it }, label={Text("Nombre del otro producto")}, modifier=Modifier.fillMaxWidth())
-    EcoSelector("Unidad", UNIDADES.firstOrNull { it.first==item.unidad }?.second, UNIDADES) { item.unidad=it; item.esPecuario=it=="animal" }
+    AppSelector("Unidad", UNIDADES.firstOrNull { it.first==item.unidad }?.second, UNIDADES) { item.unidad=it; item.esPecuario=it=="animal" }
     ProductoDetalle(item.unidad,item.esPecuario,item.cantidad,{item.cantidad=it},item.temporalidad,{item.temporalidad=it},
         item.consumo,{item.consumo=it},item.vendido,{item.vendido=it},item.motivo,{item.motivo=it},item.precio,{item.precio=it},
         lugares,item.lugares,{id,on->item.lugares=if(on)item.lugares+id else item.lugares-id},item.apoyoAct,{item.apoyoAct=it})
@@ -710,7 +710,7 @@ private fun validarEncuestaCompleta(
         if(qv>0&&pp<=0)e += "$nombre: registre el precio unitario."
         if(qv>0&&ls.isEmpty())e += "$nombre: seleccione al menos un lugar de venta."
         if(qv==0.0&&m.isBlank())e += "$nombre: indique por qué no vende."
-        if(pecuario&&t.isBlank())e += "$nombre: seleccione la temporalidad."
+        if(t.isBlank())e += "$nombre: seleccione la temporalidad."
         if(a==null)e += "$nombre: indique si tiene apoyo de ACT."
     }
     prodSel.forEach{id->productos[id]?.let{p->validarProducto(p.nombre,p.esPecuario,cantidad[id].orEmpty(),consumo[id].orEmpty(),vendido[id].orEmpty(),precio[id].orEmpty(),motivo[id].orEmpty(),temporalidad[id].orEmpty(),apoyoAct[id],lugares[id]?.values?:emptySet())}}
@@ -734,10 +734,8 @@ private fun ProductoDetalle(
     apoyoAct: Boolean?, onApoyoAct: (Boolean) -> Unit
 ) {
     Column(modifier = Modifier.padding(start = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        EcoDecimal(if (esPecuario) "Número producidos" else "Producido en un mes ($unidad)", cantidad, onCantidad)
-        if (esPecuario) {
-            EcoSelector("¿Cada cuánto los produce?", temporalidad.ifBlank { null }, TEMPORALIDADES) { onTemporalidad(it) }
-        }
+        EcoDecimal(if (esPecuario) "Número producidos por periodo" else "Cantidad producida por periodo ($unidad)", cantidad, onCantidad)
+        AppSelector("¿Cada cuánto obtiene esta producción?", temporalidad.ifBlank { null }, TEMPORALIDADES) { onTemporalidad(it) }
         EcoDecimal("¿Cuánto consume? ($unidad)", consumo, onConsumo)
         EcoDecimal("¿Cuánto vende? ($unidad)", vendido, onVendido)
         if (vendido.toDoubleOrNull() == 0.0) {
@@ -746,10 +744,7 @@ private fun ProductoDetalle(
         if ((vendido.toDoubleOrNull() ?: 0.0) > 0.0) {
             EcoMoney("Precio de 1 $unidad en la región", precio, onPrecio)
             val ingresoPeriodo = (vendido.toDoubleOrNull() ?: 0.0) * (precio.toDoubleOrNull() ?: 0.0)
-            val factorAnual = when (if (esPecuario) temporalidad else "mensual") {
-                "diario" -> 365.0; "semanal" -> 52.0; "quincenal" -> 24.0; "trimestral" -> 4.0
-                "semestral" -> 2.0; "anual" -> 1.0; else -> 12.0
-            }
+            val factorAnual = annualIncomeFactor(temporalidad)
             val ingresoAnual = ingresoPeriodo * factorAnual
             Text("Ingreso mensual equivalente: $" + "%,.0f".format(ingresoAnual / 12.0), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
             Text("Ingreso anual equivalente: $" + "%,.0f".format(ingresoAnual), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
@@ -776,7 +771,7 @@ private fun EcoTitle(text: String) {
 }
 
 @Composable
-private fun EcoSelector(label: String, current: String?, options: List<Pair<String, String>>, onPick: (String) -> Unit) {
+internal fun AppSelector(label: String, current: String?, options: List<Pair<String, String>>, onPick: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(label, style = MaterialTheme.typography.bodySmall)
@@ -789,6 +784,49 @@ private fun EcoSelector(label: String, current: String?, options: List<Pair<Stri
                     DropdownMenuItem(text = { Text(text) }, onClick = { expanded = false; onPick(id) })
                 }
             }
+        }
+    }
+}
+
+@Composable
+internal fun AppFamilySelector(label: String, options: List<Pair<String, String>>, onPick: (String) -> Unit) {
+    var query by remember { mutableStateOf("") }
+    var expanded by remember { mutableStateOf(false) }
+    val suggestions = if (query.isBlank()) emptyList() else options
+        .filter { (_, text) -> text.contains(query.trim(), ignoreCase = true) }
+        .take(3)
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        OutlinedTextField(
+            value = query,
+            onValueChange = { query = it },
+            label = { Text(label) },
+            placeholder = { Text("Escriba código o nombre") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+        Box {
+            OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
+                Text("Seleccionar de la lista")
+            }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                options.forEach { (id, text) ->
+                    DropdownMenuItem(
+                        text = { Text(text) },
+                        onClick = { expanded = false; query = ""; onPick(id) }
+                    )
+                }
+            }
+        }
+        suggestions.forEach { (id, text) ->
+            OutlinedButton(
+                onClick = { query = ""; onPick(id) },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(text)
+            }
+        }
+        if (query.isNotBlank() && suggestions.isEmpty()) {
+            Text("No se encontraron familias.", style = MaterialTheme.typography.bodySmall)
         }
     }
 }

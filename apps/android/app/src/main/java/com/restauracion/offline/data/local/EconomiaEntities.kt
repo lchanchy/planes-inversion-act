@@ -166,7 +166,7 @@ data class EconomiaEncuestaProductoEntity(
     val nombreOtro: String?,
     val unidad: String?,                     // g | kg | litro | unidad (para "otro")
     val esPecuario: Boolean = false,
-    val temporalidad: String?,               // pecuario: diario..anual
+    val temporalidad: String?,               // diario..anual para cualquier producto
     val cantidadProducida: Double?,
     val consumo: Double?,
     val vendido: Double?,
@@ -176,12 +176,19 @@ data class EconomiaEncuestaProductoEntity(
     val syncState: SyncState = SyncState.PENDING_SYNC
 ) {
     val ingresoPeriodo: Double get() = (vendido ?: 0.0) * (precioUnitario ?: 0.0)
-    val ingresoAnual: Double get() = ingresoPeriodo * when (temporalidad ?: "mensual") {
-        "diario" -> 365.0; "semanal" -> 52.0; "quincenal" -> 24.0
-        "trimestral" -> 4.0; "semestral" -> 2.0; "anual" -> 1.0
-        else -> 12.0
-    }
+    val ingresoAnual: Double get() = ingresoPeriodo * annualIncomeFactor(temporalidad)
     val ingresoMensual: Double get() = ingresoAnual / 12.0
+}
+
+internal fun annualIncomeFactor(temporalidad: String?): Double = when (temporalidad) {
+    "diario" -> 365.0
+    "semanal" -> 52.0
+    "quincenal" -> 24.0
+    "mensual" -> 12.0
+    "trimestral" -> 4.0
+    "semestral" -> 2.0
+    "anual" -> 1.0
+    else -> 12.0
 }
 
 @Entity(tableName = "economia_producto_lugares_venta")

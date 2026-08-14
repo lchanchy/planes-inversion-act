@@ -1,6 +1,6 @@
 -- Fase 8B: monitoreo anual, unidades fieles, calculos normalizados y sync atomico.
--- Los registros existentes de Economia Familiar fueron confirmados como datos de prueba
--- y se eliminan antes de crear las reglas anuales. Los demas modulos no se modifican.
+-- Los registros existentes se conservan y se normalizan antes de crear las reglas anuales.
+-- Cualquier limpieza de pruebas debe realizarse en una migracion separada y auditable.
 
 -- Las unidades son datos de catalogo, no un conjunto cerrado: se convierten a texto
 -- para aceptar fielmente g, kg, litro, unidad y animal sin bloquear futuras unidades.
@@ -8,10 +8,6 @@ alter table public.economia_productos alter column unidad_base drop default;
 alter table public.economia_productos alter column unidad_base type text using unidad_base::text;
 alter table public.economia_productos alter column unidad_base set default 'kg';
 alter table public.economia_encuesta_productos alter column unidad type text using unidad::text;
-
--- El usuario confirmo que las encuestas Economia existentes son exclusivamente pruebas.
--- Se limpian antes de aplicar reglas nuevas; las familias y los demas modulos no se tocan.
-delete from public.economia_encuestas;
 
 alter table public.economia_encuestas
   add column if not exists anio smallint,
@@ -32,7 +28,7 @@ set anio = extract(year from e.fecha)::smallint,
       when r.codigo ~ '^monitoreo_[0-9]+$' then substring(r.codigo from '[0-9]+$')::integer
       else null
     end,
-    es_piloto = true
+    es_piloto = coalesce(e.es_piloto, false)
 from public.economia_rondas r
 where r.id = e.ronda_id
   and (e.anio is null or e.tipo_medicion is null);
@@ -40,7 +36,7 @@ where r.id = e.ronda_id
 update public.economia_encuestas
 set anio = coalesce(anio, extract(year from fecha)::smallint),
     tipo_medicion = coalesce(tipo_medicion, 'linea_base'),
-    es_piloto = true
+    es_piloto = coalesce(es_piloto, false)
 where anio is null or tipo_medicion is null;
 
 alter table public.economia_encuestas
@@ -184,7 +180,7 @@ alter table public.economia_encuesta_productos drop constraint if exists economi
 alter table public.economia_encuesta_productos add constraint economia_producto_unidad_check check (unidad is not null);
 alter table public.economia_encuesta_productos drop constraint if exists economia_producto_temporalidad_check;
 alter table public.economia_encuesta_productos add constraint economia_producto_temporalidad_check check (
-  (es_pecuario and temporalidad is not null) or (not es_pecuario and coalesce(temporalidad,'mensual'::public.economia_temporalidad) = 'mensual'::public.economia_temporalidad)
+  temporalidad is not null
 );
 
 create table if not exists public.economia_sync_conflictos(

@@ -423,7 +423,7 @@ function AdminApp({ session }: { session: Session }) {
 
   const canManageProfiles = roleNames.has("super_admin") || roleNames.has("admin") || roleNames.has("project_admin");
 
-  async function loadAll() {
+  async function loadAll(attempt = 0) {
     setLoading(true);
     setNotice(null);
     try {
@@ -591,7 +591,13 @@ function AdminApp({ session }: { session: Session }) {
       setQuarterlyProgress((quarterlyProgressResult.data ?? []) as QuarterlyProgress[]);
       setMaintenanceProgress(maintenanceProgressResult.error ? [] : (maintenanceProgressResult.data ?? []) as MaintenanceProgress[]);
     } catch (error) {
-      setNotice({ type: "error", message: getErrorMessage(error) });
+      const message = getErrorMessage(error);
+      if (attempt === 0 && message.toLowerCase().includes("jwt issued at future")) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1200));
+        await supabase.auth.refreshSession();
+        return await loadAll(attempt + 1);
+      }
+      setNotice({ type: "error", message });
     } finally {
       setLoading(false);
     }
@@ -718,7 +724,7 @@ function AdminApp({ session }: { session: Session }) {
             </select>
           </label>
           <div className="form-actions">
-            <button className="secondary" onClick={loadAll} type="button" disabled={loading}>
+            <button className="secondary" onClick={() => loadAll()} type="button" disabled={loading}>
               {loading ? "Cargando..." : "Actualizar"}
             </button>
             <button className="secondary" onClick={signOut} type="button">
