@@ -20,7 +20,11 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.Color
+import com.restauracion.offline.data.local.SyncState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -114,6 +118,26 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
     var message by remember { mutableStateOf<String?>(null) }
     var guardando by remember { mutableStateOf(false) }
 
+    // Bandeja de salida (lista) vs captura (asistente).
+    var mode by remember { mutableStateOf("lista") }
+    var sincronizando by remember { mutableStateOf(false) }
+    val allEncuestas by repo.economiaEncuestasAll().collectAsState(initial = emptyList())
+    val allFamilies by repo.economiaAllFamilies().collectAsState(initial = emptyList())
+    val famNombre = allFamilies.associate { it.id to "${it.familyCode} - ${it.representativeName}" }
+    val resetForm = {
+        step = 0
+        projectId = null; rondaId = null; familyId = null
+        departamento = null; municipioId = null; veredaId = null
+        encuestadorId = null; fecha = LocalDate.now().toString()
+        cambioPersonas = null; ninos = ""; adolescentes = ""; jovenes = ""; adultos = ""; mayores = ""
+        recibeApoyo = null; apoyoSel.clear(); apoyoValor.clear(); apoyoOtroNombre = ""
+        recibePagos = null; pagoSel.clear(); pagoValor.clear(); valorJornal = ""
+        catSel.clear(); prodSel.clear()
+        pCantidad.clear(); pConsumo.clear(); pVendido.clear(); pPrecio.clear(); pMotivo.clear()
+        pTemporalidad.clear(); pApoyoAct.clear(); pLugares.clear()
+        observaciones = ""
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -124,10 +148,10 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
     ) {
         EcoPanel {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedButton(onClick = onBack) { Text("Volver") }
+                OutlinedButton(onClick = { if (mode == "captura") mode = "lista" else onBack() }) { Text("Volver") }
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Economía Familiar", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-                    Text(pasoLabel(step), style = MaterialTheme.typography.bodySmall)
+                    Text(if (mode == "captura") pasoLabel(step) else "Bandeja de encuestas", style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
@@ -135,6 +159,48 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
             EcoPanel { Text(it, color = MaterialTheme.colorScheme.primary) }
         }
 
+        if (mode == "lista") {
+            EcoPanel {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { message = null; resetForm(); mode = "captura" }) { Text("Nueva encuesta") }
+                    OutlinedButton(
+                        enabled = !sincronizando,
+                        onClick = {
+                            sincronizando = true
+                            scope.launch {
+                                runCatching { repo.syncPending() }
+                                    .onSuccess { message = "Sincronización enviada." }
+                                    .onFailure { message = it.message ?: "Error al sincronizar." }
+                                sincronizando = false
+                            }
+                        }
+                    ) { Text(if (sincronizando) "Sincronizando..." else "Sincronizar") }
+                }
+                val pendientes = allEncuestas.count { it.syncState != SyncState.SYNCED }
+                Text("${allEncuestas.size} encuesta(s) · $pendientes pendiente(s) de enviar", style = MaterialTheme.typography.bodySmall)
+            }
+            if (allEncuestas.isEmpty()) {
+                EcoPanel { Text("No hay encuestas guardadas todavía. Pulse \"Nueva encuesta\".", style = MaterialTheme.typography.bodyMedium) }
+            } else {
+                allEncuestas.forEach { e ->
+                    EcoPanel {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(famNombre[e.familyId] ?: "(familia)", style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    "${rondas.firstOrNull { it.id == e.rondaId }?.nombre ?: "-"} · ${e.fecha}",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                if (e.syncState == SyncState.ERROR && e.lastError != null) {
+                                    Text(e.lastError, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                            EcoSyncChip(e.syncState)
+                        }
+                    }
+                }
+            }
+        } else {
         when (step) {
             0 -> EcoPanel {
                 EcoTitle("1. Datos generales")
@@ -347,8 +413,9 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
                                 repo.guardarEncuestaEconomia(encuesta, apoyos, pagos, productos)
                             }.onSuccess {
                                 guardando = false
-                                message = "Encuesta guardada. Use 'Sincronizar' en el inicio para enviarla."
-                                onBack()
+                                message = "Encuesta guardada. Quedó en la bandeja como pendiente; pulse \"Sincronizar\" para enviarla."
+                                resetForm()
+                                mode = "lista"
                             }.onFailure {
                                 guardando = false
                                 message = it.message ?: "No fue posible guardar la encuesta."
@@ -358,6 +425,30 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
                 ) { Text(if (guardando) "Guardando..." else "Guardar encuesta") }
             }
         }
+        }
+    }
+}
+
+@Composable
+private fun EcoSyncChip(state: SyncState) {
+    val label = when (state) {
+        SyncState.SYNCED -> "Sincronizada"
+        SyncState.PENDING_SYNC -> "Pendiente"
+        SyncState.ERROR -> "Error"
+        SyncState.CONFLICT -> "Conflicto"
+    }
+    val color = when (state) {
+        SyncState.SYNCED -> Color(0xFF145F3B)
+        SyncState.ERROR -> Color(0xFFB42318)
+        else -> MaterialTheme.colorScheme.primary
+    }
+    Surface(shape = RoundedCornerShape(8.dp), color = color.copy(alpha = 0.12f)) {
+        Text(
+            text = label,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = color
+        )
     }
 }
 

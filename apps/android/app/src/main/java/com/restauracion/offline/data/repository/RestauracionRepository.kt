@@ -56,6 +56,8 @@ class RestauracionRepository(
     fun economiaLugaresVenta() = db.economiaDao().lugaresVenta()
     fun economiaFamilias(projectId: String) = db.economiaDao().familiasEconomia(projectId)
     fun economiaEncuestas(projectId: String) = db.economiaDao().encuestas(projectId)
+    fun economiaEncuestasAll() = db.economiaDao().allEncuestas()
+    fun economiaAllFamilies() = db.catalogDao().allFamilies()
     fun economiaEncuestasForFamily(familyId: String) = db.economiaDao().encuestasForFamily(familyId)
     fun economiaEncuesta(id: String) = db.economiaDao().encuesta(id)
     fun economiaApoyos(encuestaId: String) = db.economiaDao().apoyos(encuestaId)

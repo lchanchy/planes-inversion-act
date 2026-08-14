@@ -133,6 +133,10 @@ interface EconomiaDao {
     @Query("select * from economia_encuestas where projectId = :projectId order by fecha desc")
     fun encuestas(projectId: String): Flow<List<EconomiaEncuestaEntity>>
 
+    // Bandeja de salida: todas las encuestas locales (offline y sincronizadas).
+    @Query("select * from economia_encuestas order by fecha desc")
+    fun allEncuestas(): Flow<List<EconomiaEncuestaEntity>>
+
     @Query("select * from economia_encuestas where familyId = :familyId order by fecha desc")
     fun encuestasForFamily(familyId: String): Flow<List<EconomiaEncuestaEntity>>
 
