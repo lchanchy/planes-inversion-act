@@ -328,9 +328,10 @@ class SupabaseRestClient(
 
     // Fase 3: pide al aplicativo web que genere el acta firmada de una entrega ya subida
     // (con sus items). Es best-effort: si no hay URL configurada, no hace nada.
-    suspend fun requestActGeneration(deliveryId: String) {
-        if (webAppUrl.isBlank()) return
+    suspend fun requestActGeneration(deliveryId: String) = withAuth {
+        if (webAppUrl.isBlank()) return@withAuth
         client.post("$webAppUrl/api/generate-act") {
+            authHeaders()
             contentType(ContentType.Application.Json)
             setBody(json.encodeToString(GenerateActRequest(deliveryId)))
         }

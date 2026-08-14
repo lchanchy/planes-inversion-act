@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase-admin";
+import { bearerToken } from "@/lib/server-auth";
 import { generateDeliveryActPdf } from "@/lib/delivery-act/generate-act-pdf";
 import type { DeliveryActInput, DeliveryActLogo } from "@/lib/delivery-act/types";
 
@@ -20,13 +22,17 @@ function sanitizeStorageName(value: string): string {
 // Fase 1/3: genera el acta firmada de una entrega y la guarda en Supabase Storage (bucket "actas").
 // La subida a SharePoint (Fase 5) se conecta despues, aislada, cuando TI entregue el registro de Azure.
 export async function POST(request: Request) {
+  const accessToken = bearerToken(request.headers.get("authorization"));
+  if (!accessToken) {
+    return NextResponse.json({ error: "Autenticacion requerida." }, { status: 401 });
+  }
+
   let deliveryId: string;
   try {
     const body = await request.json();
-    // Acepta { deliveryId } (llamada directa) o el payload de un Database Webhook de Supabase ({ record: { id } }).
-    deliveryId = String(body?.deliveryId ?? body?.record?.id ?? "");
+    deliveryId = String(body?.deliveryId ?? "");
   } catch {
-    return NextResponse.json({ error: "Cuerpo invalido; se espera { deliveryId } o un webhook de Supabase." }, { status: 400 });
+    return NextResponse.json({ error: "Cuerpo invalido; se espera { deliveryId }." }, { status: 400 });
   }
   if (!deliveryId) return NextResponse.json({ error: "Falta deliveryId." }, { status: 400 });
 
@@ -35,6 +41,33 @@ export async function POST(request: Request) {
     supabase = createAdminClient();
   } catch (error) {
     return NextResponse.json({ error: (error as Error).message }, { status: 500 });
+  }
+
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !supabaseAnonKey) {
+    return NextResponse.json({ error: "Falta configuracion publica de Supabase." }, { status: 500 });
+  }
+
+  const { data: authData, error: authError } = await supabase.auth.getUser(accessToken);
+  if (authError || !authData.user) {
+    return NextResponse.json({ error: "Sesion invalida o vencida." }, { status: 401 });
+  }
+
+  // La consulta con el JWT del usuario aplica RLS y confirma que puede acceder a esta entrega
+  // antes de usar el cliente administrativo para generar y almacenar el documento.
+  const userClient = createClient(supabaseUrl, supabaseAnonKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } }
+  });
+  const { data: authorizedDelivery, error: authorizationError } = await userClient
+    .from("material_deliveries")
+    .select("id")
+    .eq("id", deliveryId)
+    .eq("is_deleted", false)
+    .maybeSingle();
+  if (authorizationError || !authorizedDelivery) {
+    return NextResponse.json({ error: "No tiene acceso a esta entrega." }, { status: 403 });
   }
 
   // Entrega + items
