@@ -489,6 +489,9 @@ export type EconomiaEncuesta = {
   equipo_id: string | null;
   encuestador_id: string | null;
   fecha: string;
+  anio: number;
+  tipo_medicion: "linea_base" | "monitoreo";
+  numero_monitoreo: number | null;
   cambio_num_personas: boolean | null;
   personas_ninos: number | null;
   personas_adolescentes: number | null;
@@ -501,6 +504,10 @@ export type EconomiaEncuesta = {
   valor_jornal: number | null;
   estado: string;
   observaciones: string | null;
+  server_version: number;
+  revision: number;
+  notas_revision: string | null;
+  es_piloto: boolean;
   is_deleted: boolean;
 };
 
@@ -541,6 +548,23 @@ export type EconomiaEncuestaProducto = {
   motivo_no_venta: string | null;
   precio_unitario: number | null;
   ingreso_mensual: number | null;
+  ingreso_anual: number | null;
   apoyo_act: boolean | null;
   is_deleted: boolean;
+};
+
+export type EconomiaProductoLugarVenta = {
+  id: string;
+  encuesta_producto_id: string;
+  project_id: string;
+  family_id: string;
+  lugar_venta_id: string | null;
+  nombre_libre: string | null;
+  is_deleted: boolean;
+};
+
+export type EconomiaSyncConflicto = {
+  id: string; encuesta_id: string; project_id: string; family_id: string;
+  expected_version: number; current_version: number | null; estado: string;
+  server_payload: Record<string, unknown> | null; client_payload: Record<string, unknown>; created_at: string;
 };

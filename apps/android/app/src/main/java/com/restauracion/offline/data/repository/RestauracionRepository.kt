@@ -113,6 +113,7 @@ class RestauracionRepository(
         }
         productos.forEach { pr ->
             val prod = EconomiaEncuestaProductoEntity(
+                id = pr.id,
                 encuestaId = cabecera.id,
                 projectId = cabecera.projectId,
                 familyId = cabecera.familyId,
@@ -240,15 +241,28 @@ class RestauracionRepository(
             eco.replaceLugaresVenta(remote.economiaLugaresVenta())
             eco.replaceFamiliasEconomia(remote.economiaFamilias())
             // Encuestas existentes (para saber que monitoreos ya tiene cada familia).
-            // insert-if-new: no pisa capturas locales pendientes.
+            // Las capturas pendientes se conservan; las ya sincronizadas sí se refrescan para
+            // reflejar año, ronda, revisión y demás cambios hechos en la web.
             val serverEncuestas = remote.economiaEncuestas()
-            eco.insertEncuestasIfNew(serverEncuestas)
-            // Reflejar el estado de revision (Web -> App), solo en filas ya sincronizadas:
-            // 'devuelta' reactiva la encuesta como pendiente/offline para editar y reenviar.
-            serverEncuestas.forEach { s ->
-                if (s.estado == "devuelta") eco.markEncuestaDevuelta(s.id)
-                else eco.updateSyncedEncuestaEstado(s.id, s.estado)
+            val conflictosPendientes = remote.economiaConflictosPendientes()
+            serverEncuestas.forEach { server ->
+                val local = eco.encuestaById(server.id)
+                val desdeServidor = if (server.estado == "devuelta") {
+                    server.copy(syncState = SyncState.PENDING_SYNC)
+                } else {
+                    server
+                }
+                when {
+                    local == null -> eco.insertEncuestasIfNew(listOf(desdeServidor))
+                    local.syncState == SyncState.SYNCED -> eco.updateEncuesta(desdeServidor)
+                    local.syncState == SyncState.CONFLICT && server.id !in conflictosPendientes ->
+                        eco.updateEncuesta(desdeServidor)
+                }
             }
+            eco.insertApoyosIfNew(remote.economiaApoyos())
+            eco.insertPagosIfNew(remote.economiaPagos())
+            eco.insertProductosIfNew(remote.economiaProductosEncuesta())
+            eco.insertLugaresIfNew(remote.economiaLugaresProducto())
         }
     }
 
@@ -645,11 +659,8 @@ class RestauracionRepository(
             runCatching { remote.requestActGeneration(deliveryId) }
         }
 
-        // --- Economia Familiar (Fase 8): subir en orden de FK ---
-        // encuesta -> apoyos -> pagos -> productos -> lugares de venta.
-        // Aislado del bloque anterior; no altera el orden de planes/entregas.
+        // Economia Familiar: una encuesta completa es una sola unidad atomica de sync.
         val economiaDao = db.economiaDao()
-        // Estados en el servidor: si la web ya aprobo una encuesta, NO re-subirla con datos viejos.
         val economiaServerEstados = runCatching { remote.economiaEncuestas().associate { it.id to it.estado } }.getOrDefault(emptyMap())
         economiaDao.pendingEncuestas().forEach { item ->
             if (economiaServerEstados[item.id] == "aprobada") {
@@ -657,47 +668,27 @@ class RestauracionRepository(
                 return@forEach
             }
             runCatching {
-                remote.uploadEconomiaEncuesta(item)
-                economiaDao.updateEncuesta(item.copy(syncState = SyncState.SYNCED, lastError = null))
+                val apoyos = economiaDao.apoyosOnce(item.id)
+                val pagos = economiaDao.pagosOnce(item.id)
+                val productos = economiaDao.productosEncuestaOnce(item.id).map { p ->
+                    p to economiaDao.lugaresDeProductoOnce(p.id)
+                }
+                val result = remote.syncEconomiaEncuesta(item, apoyos, pagos, productos)
+                if (result.conflict) error("ECONOMIA_CONFLICT: la encuesta cambió en la web; revise el conflicto antes de reenviar.")
+                economiaDao.updateEncuesta(item.copy(
+                    syncState = SyncState.SYNCED, lastError = null, serverVersion = result.serverVersion,
+                    revision = result.revision, estado = result.estado
+                ))
+                apoyos.forEach { economiaDao.updateApoyo(it.copy(syncState = SyncState.SYNCED)) }
+                pagos.forEach { economiaDao.updatePago(it.copy(syncState = SyncState.SYNCED)) }
+                productos.forEach { (p, lugares) ->
+                    economiaDao.updateProducto(p.copy(syncState = SyncState.SYNCED))
+                    lugares.forEach { economiaDao.updateLugarProducto(it.copy(syncState = SyncState.SYNCED)) }
+                }
             }.onFailure {
-                economiaDao.updateEncuesta(item.copy(syncState = SyncState.ERROR, lastError = it.message))
+                val conflict = it.message?.contains("ECONOMIA_CONFLICT") == true
+                economiaDao.updateEncuesta(item.copy(syncState = if (conflict) SyncState.CONFLICT else SyncState.ERROR, lastError = it.message))
                 errors += it.message ?: "Error sincronizando encuesta de economia."
-            }
-        }
-        economiaDao.pendingApoyos().forEach { item ->
-            runCatching {
-                remote.uploadEconomiaApoyo(item)
-                economiaDao.updateApoyo(item.copy(syncState = SyncState.SYNCED))
-            }.onFailure {
-                economiaDao.updateApoyo(item.copy(syncState = SyncState.ERROR))
-                errors += it.message ?: "Error sincronizando apoyo (economia)."
-            }
-        }
-        economiaDao.pendingPagos().forEach { item ->
-            runCatching {
-                remote.uploadEconomiaPago(item)
-                economiaDao.updatePago(item.copy(syncState = SyncState.SYNCED))
-            }.onFailure {
-                economiaDao.updatePago(item.copy(syncState = SyncState.ERROR))
-                errors += it.message ?: "Error sincronizando otro ingreso (economia)."
-            }
-        }
-        economiaDao.pendingProductos().forEach { item ->
-            runCatching {
-                remote.uploadEconomiaProducto(item)
-                economiaDao.updateProducto(item.copy(syncState = SyncState.SYNCED))
-            }.onFailure {
-                economiaDao.updateProducto(item.copy(syncState = SyncState.ERROR))
-                errors += it.message ?: "Error sincronizando producto (economia)."
-            }
-        }
-        economiaDao.pendingLugaresProducto().forEach { item ->
-            runCatching {
-                remote.uploadEconomiaLugarProducto(item)
-                economiaDao.updateLugarProducto(item.copy(syncState = SyncState.SYNCED))
-            }.onFailure {
-                economiaDao.updateLugarProducto(item.copy(syncState = SyncState.ERROR))
-                errors += it.message ?: "Error sincronizando lugar de venta (economia)."
             }
         }
 
@@ -742,6 +733,7 @@ data class EconomiaPagoInput(
 )
 
 data class EconomiaProductoInput(
+    val id: String = java.util.UUID.randomUUID().toString(),
     val productoId: String?,          // null si es "otro" producto libre
     val nombreOtro: String?,
     val unidad: String?,

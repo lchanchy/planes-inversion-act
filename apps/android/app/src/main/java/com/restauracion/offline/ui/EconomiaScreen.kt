@@ -41,6 +41,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.restauracion.offline.data.AppContainer
 import com.restauracion.offline.data.local.EconomiaEncuestaEntity
+import com.restauracion.offline.data.local.EconomiaEncuestaProductoEntity
+import com.restauracion.offline.data.local.EconomiaProductoEntity
 import com.restauracion.offline.data.repository.EconomiaApoyoInput
 import com.restauracion.offline.data.repository.EconomiaPagoInput
 import com.restauracion.offline.data.repository.EconomiaProductoInput
@@ -74,6 +76,9 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
     var municipioId by remember { mutableStateOf<String?>(null) }
     var veredaId by remember { mutableStateOf<String?>(null) }
     var fecha by remember { mutableStateOf(LocalDate.now().toString()) }
+    var anio by remember { mutableStateOf(LocalDate.now().year.toString()) }
+    var tipoMedicion by remember { mutableStateOf("linea_base") }
+    var numeroMonitoreo by remember { mutableStateOf<Int?>(null) }
 
     val allFamilies by repo.economiaAllFamilies().collectAsState(initial = emptyList())
     val family = allFamilies.firstOrNull { it.id == familyId }
@@ -109,6 +114,7 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
     val pTemporalidad = remember { mutableStateMapOf<String, String>() }
     val pApoyoAct = remember { mutableStateMapOf<String, Boolean>() }
     val pLugares = remember { mutableStateMapOf<String, SnapshotStringSet>() } // productoId -> set de lugarVentaId
+    val otrosProductos = remember { mutableStateListOf<OtroProductoDraft>() }
 
     var observaciones by remember { mutableStateOf("") }
     var step by remember { mutableStateOf(0) }
@@ -127,12 +133,14 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
         projectId = null; rondaId = null; familyId = null
         departamento = null; municipioId = null; veredaId = null
         fecha = LocalDate.now().toString()
+        anio = LocalDate.now().year.toString(); tipoMedicion = "linea_base"; numeroMonitoreo = null
         cambioPersonas = null; ninos = ""; adolescentes = ""; jovenes = ""; adultos = ""; mayores = ""
         recibeApoyo = null; apoyoSel.clear(); apoyoValor.clear(); apoyoOtroNombre = ""
         recibePagos = null; pagoSel.clear(); pagoValor.clear(); valorJornal = ""
         catSel.clear(); prodSel.clear()
         pCantidad.clear(); pConsumo.clear(); pVendido.clear(); pPrecio.clear(); pMotivo.clear()
         pTemporalidad.clear(); pApoyoAct.clear(); pLugares.clear()
+        otrosProductos.clear()
         observaciones = ""
     }
     // Cargar una encuesta existente en el asistente (editar una devuelta/pendiente).
@@ -149,6 +157,9 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
             municipioId = fam?.municipalityId
             veredaId = fam?.villageId
             fecha = e.fecha
+            anio = e.anio.toString()
+            tipoMedicion = e.tipoMedicion
+            numeroMonitoreo = e.numeroMonitoreo
             cambioPersonas = e.cambioNumPersonas
             ninos = e.personasNinos?.toString() ?: ""
             adolescentes = e.personasAdolescentes?.toString() ?: ""
@@ -169,7 +180,12 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
                 pagoValor[p.tipoPagoId] = numToStr(p.valorMensual)
             }
             repo.economiaProductosOnce(e.id).forEach { pr ->
-                val catalogId = pr.productoId ?: return@forEach // "otros" no se editan en el asistente
+                val catalogId = pr.productoId
+                if (catalogId == null) {
+                    val lugares = repo.economiaLugaresOnce(pr.id).map { it.lugarVentaId }.toSet()
+                    otrosProductos.add(OtroProductoDraft.from(pr, lugares))
+                    return@forEach
+                }
                 val cat = productosCat.firstOrNull { it.id == catalogId }
                 if (cat != null && !catSel.contains(cat.categoriaId)) catSel.add(cat.categoriaId)
                 if (!prodSel.contains(catalogId)) prodSel.add(catalogId)
@@ -207,7 +223,8 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
             }
         }
         message?.let {
-            EcoPanel { Text(it, color = MaterialTheme.colorScheme.primary) }
+            val esError = it.startsWith("Corrija") || it.startsWith("Error") || it.startsWith("Falta") || it.contains("ya tiene")
+            EcoPanel { Text(it, color = if (esError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary) }
         }
 
         if (mode == "lista") {
@@ -286,6 +303,13 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
                                                         style = MaterialTheme.typography.bodySmall
                                                     )
                                                     Text("Revisión: ${estadoRevisionLabel(e.estado)}", style = MaterialTheme.typography.bodySmall)
+                                                    if (e.estado == "devuelta" && !e.notasRevision.isNullOrBlank()) {
+                                                        Text(
+                                                            "Corrección solicitada: ${e.notasRevision}",
+                                                            style = MaterialTheme.typography.bodySmall,
+                                                            color = MaterialTheme.colorScheme.error
+                                                        )
+                                                    }
                                                 }
                                                 EcoSyncChip(e.syncState)
                                             }
@@ -308,6 +332,15 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
         when (step) {
             0 -> EcoPanel {
                 EcoTitle("1. Datos generales")
+                val encuestaEditando = allEncuestas.firstOrNull { it.id == editandoId }
+                if (encuestaEditando?.estado == "devuelta" && !encuestaEditando.notasRevision.isNullOrBlank()) {
+                    Text(
+                        "Corrección solicitada por el revisor: ${encuestaEditando.notasRevision}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
                 // Familia primero (cascada Departamento -> Municipio -> Vereda -> Familia).
                 // El PROYECTO se toma de la familia; la RONDA se asigna sola segun lo que ya tenga.
                 if (family != null) {
@@ -368,10 +401,17 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
                             // Ronda automatica: la primera (por orden) que la familia aun no tiene.
                             val hechas = allEncuestas.filter { it.familyId == fid }.map { it.rondaId }.toSet()
                             rondaId = rondas.sortedBy { it.orden }.firstOrNull { it.id !in hechas }?.id
+                                ?: rondas.sortedBy { it.orden }.firstOrNull()?.id
+                            val previas = allEncuestas.filter { it.familyId == fid && it.estado == "aprobada" }
+                            val tieneBase = previas.any { it.tipoMedicion == "linea_base" }
+                            tipoMedicion = if (tieneBase) "monitoreo" else "linea_base"
+                            numeroMonitoreo = if (tieneBase) (previas.mapNotNull { it.numeroMonitoreo }.maxOrNull() ?: 0) + 1 else null
                         }
                     }
                 }
                 OutlinedTextField(value = fecha, onValueChange = { fecha = it }, label = { Text("Fecha (AAAA-MM-DD)") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = anio, onValueChange = { anio = it.filter(Char::isDigit).take(4) }, label = { Text("Año del monitoreo") }, modifier = Modifier.fillMaxWidth())
+                Text(if (tipoMedicion == "linea_base") "Línea base" else "Monitoreo ${numeroMonitoreo ?: 1}", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
                 // Ronda de monitoreo (ultimo): asignada automaticamente segun lo que ya tiene la familia.
                 if (family != null) {
                     val rondaNombre = rondas.firstOrNull { it.id == rondaId }?.nombre
@@ -386,7 +426,15 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
 
             1 -> EcoPanel {
                 EcoTitle("2. Personas del hogar")
-                EcoSiNo("¿Cambió el número de personas en la familia?", cambioPersonas) { cambioPersonas = it }
+                EcoSiNo("¿Cambió el número de personas en la familia?", cambioPersonas) { cambio ->
+                    cambioPersonas = cambio
+                    if (!cambio) allEncuestas.filter { it.familyId == familyId && it.estado == "aprobada" }
+                        .maxByOrNull { it.anio }?.let { previa ->
+                            ninos=previa.personasNinos?.toString().orEmpty(); adolescentes=previa.personasAdolescentes?.toString().orEmpty()
+                            jovenes=previa.personasJovenes?.toString().orEmpty(); adultos=previa.personasAdultos?.toString().orEmpty()
+                            mayores=previa.personasMayores?.toString().orEmpty()
+                        }
+                }
                 EcoInt("0-11 Niños/as", ninos) { ninos = it }
                 EcoInt("12-17 Adolescentes", adolescentes) { adolescentes = it }
                 EcoInt("18-28 Jóvenes", jovenes) { jovenes = it }
@@ -441,7 +489,7 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
                         EcoCheck(p.nombre, marcado) { on -> if (on) { if (!prodSel.contains(p.id)) prodSel.add(p.id) } else prodSel.remove(p.id) }
                         if (marcado) {
                             ProductoDetalle(
-                                unidad = if (p.esPecuario) "animales" else "kg",
+                                unidad = p.unidadBase,
                                 esPecuario = p.esPecuario,
                                 cantidad = pCantidad[p.id].orEmpty(), onCantidad = { pCantidad[p.id] = it },
                                 temporalidad = pTemporalidad[p.id].orEmpty(), onTemporalidad = { pTemporalidad[p.id] = it },
@@ -462,6 +510,13 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
                         }
                     }
                 }
+                EcoTitle("Otros productos")
+                otrosProductos.forEachIndexed { index, otro ->
+                    OtroProductoEditor(otro, lugaresVenta.map { it.id to it.nombre })
+                    OutlinedButton(onClick = { otrosProductos.removeAt(index) }) { Text("Quitar producto") }
+                    HorizontalDivider()
+                }
+                OutlinedButton(onClick = { otrosProductos.add(OtroProductoDraft()) }) { Text("Agregar otro producto") }
                 OutlinedTextField(value = observaciones, onValueChange = { observaciones = it }, label = { Text("Observaciones (opcional)") }, modifier = Modifier.fillMaxWidth())
             }
         }
@@ -482,6 +537,16 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
                     onClick = {
                         val pid = projectId; val rid = rondaId; val fid = familyId
                         if (pid == null || rid == null || fid == null) { message = "Falta proyecto, ronda o familia."; return@Button }
+                        val errores = validarEncuestaCompleta(
+                            anio, tipoMedicion, cambioPersonas, ninos, adolescentes, jovenes, adultos, mayores,
+                            recibeApoyo, apoyoSel, apoyoValor, apoyoOtroNombre, tiposApoyo.associate { it.id to it.codigo },
+                            recibePagos, pagoSel, pagoValor, prodSel, productosCat.associateBy { it.id },
+                            pCantidad, pConsumo, pVendido, pPrecio, pMotivo, pTemporalidad, pApoyoAct, pLugares, otrosProductos
+                        )
+                        if (allEncuestas.any { it.familyId == fid && it.anio == anio.toIntOrNull() && it.id != editandoId }) {
+                            message = "Esta familia ya tiene una encuesta en el año $anio. Edite la existente."; return@Button
+                        }
+                        if (errores.isNotEmpty()) { message = "Corrija ${errores.size} inconsistencia(s):\n• " + errores.joinToString("\n• "); return@Button }
                         guardando = true
                         scope.launch {
                             runCatching {
@@ -494,6 +559,9 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
                                     equipoId = null,
                                     encuestadorId = null,
                                     fecha = fecha,
+                                    anio = anio.toInt(),
+                                    tipoMedicion = tipoMedicion,
+                                    numeroMonitoreo = numeroMonitoreo,
                                     cambioNumPersonas = cambioPersonas,
                                     personasNinos = ninos.toIntOrNull(),
                                     personasAdolescentes = adolescentes.toIntOrNull(),
@@ -504,7 +572,9 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
                                     recibeOtrosPagos = recibePagos,
                                     valorJornal = valorJornal.toDoubleOrNull(),
                                     estado = "completada",
-                                    observaciones = observaciones.ifBlank { null }
+                                    observaciones = observaciones.ifBlank { null },
+                                    esPiloto = existente?.esPiloto
+                                        ?: (family?.familyCode?.startsWith("PILOTO-", ignoreCase = true) == true)
                                 )
                                 val apoyos = if (recibeApoyo == true) tiposApoyo.filter { apoyoSel[it.id] == true }.map {
                                     EconomiaApoyoInput(it.id, apoyoValor[it.id]?.toDoubleOrNull(), if (it.codigo == "otro") apoyoOtroNombre.ifBlank { null } else null)
@@ -518,9 +588,9 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
                                     EconomiaProductoInput(
                                         productoId = prodId,
                                         nombreOtro = null,
-                                        unidad = null,
+                                        unidad = cat.unidadBase,
                                         esPecuario = cat.esPecuario,
-                                        temporalidad = pTemporalidad[prodId]?.ifBlank { null },
+                                        temporalidad = if (cat.esPecuario) pTemporalidad[prodId]?.ifBlank { null } else "mensual",
                                         cantidadProducida = pCantidad[prodId]?.toDoubleOrNull(),
                                         consumo = pConsumo[prodId]?.toDoubleOrNull(),
                                         vendido = vendido,
@@ -530,7 +600,8 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
                                         lugaresVentaIds = (pLugares[prodId]?.values ?: emptySet()).toList()
                                     )
                                 }
-                                repo.guardarEncuestaEconomia(encuesta, apoyos, pagos, productos)
+                                val productosOtros = otrosProductos.map { it.toInput() }
+                                repo.guardarEncuestaEconomia(encuesta, apoyos, pagos, productos + productosOtros)
                             }.onSuccess {
                                 guardando = false
                                 message = "Encuesta guardada. Quedó en la bandeja como pendiente; pulse \"Sincronizar\" para enviarla."
@@ -577,6 +648,76 @@ private class SnapshotStringSet(initial: Set<String> = emptySet()) {
     var values by mutableStateOf(initial)
 }
 
+private class OtroProductoDraft {
+    var id by mutableStateOf(java.util.UUID.randomUUID().toString())
+    var nombre by mutableStateOf("")
+    var unidad by mutableStateOf("kg")
+    var esPecuario by mutableStateOf(false)
+    var temporalidad by mutableStateOf("mensual")
+    var cantidad by mutableStateOf("")
+    var consumo by mutableStateOf("")
+    var vendido by mutableStateOf("")
+    var motivo by mutableStateOf("")
+    var precio by mutableStateOf("")
+    var apoyoAct by mutableStateOf<Boolean?>(null)
+    var lugares by mutableStateOf<Set<String>>(emptySet())
+
+    fun toInput() = EconomiaProductoInput(
+        id = id, productoId = null, nombreOtro = nombre.trim(), unidad = unidad,
+        esPecuario = esPecuario, temporalidad = if (esPecuario) temporalidad else "mensual",
+        cantidadProducida = cantidad.toDoubleOrNull(), consumo = consumo.toDoubleOrNull(),
+        vendido = vendido.toDoubleOrNull(), motivoNoVenta = if (vendido.toDoubleOrNull() == 0.0) motivo.trim() else null,
+        precioUnitario = precio.toDoubleOrNull(), apoyoAct = apoyoAct, lugaresVentaIds = lugares.toList()
+    )
+
+    companion object {
+        fun from(p: EconomiaEncuestaProductoEntity, lugares: Set<String>) = OtroProductoDraft().also {
+            it.id=p.id; it.nombre=p.nombreOtro.orEmpty(); it.unidad=p.unidad ?: "kg"; it.esPecuario=p.esPecuario
+            it.temporalidad=p.temporalidad ?: "mensual"; it.cantidad=numToStr(p.cantidadProducida)
+            it.consumo=numToStr(p.consumo); it.vendido=numToStr(p.vendido); it.motivo=p.motivoNoVenta.orEmpty()
+            it.precio=numToStr(p.precioUnitario); it.apoyoAct=p.apoyoAct; it.lugares=lugares
+        }
+    }
+}
+
+@Composable private fun OtroProductoEditor(item: OtroProductoDraft, lugares: List<Pair<String,String>>) {
+    OutlinedTextField(item.nombre, { item.nombre=it }, label={Text("Nombre del otro producto")}, modifier=Modifier.fillMaxWidth())
+    EcoSelector("Unidad", UNIDADES.firstOrNull { it.first==item.unidad }?.second, UNIDADES) { item.unidad=it; item.esPecuario=it=="animal" }
+    ProductoDetalle(item.unidad,item.esPecuario,item.cantidad,{item.cantidad=it},item.temporalidad,{item.temporalidad=it},
+        item.consumo,{item.consumo=it},item.vendido,{item.vendido=it},item.motivo,{item.motivo=it},item.precio,{item.precio=it},
+        lugares,item.lugares,{id,on->item.lugares=if(on)item.lugares+id else item.lugares-id},item.apoyoAct,{item.apoyoAct=it})
+}
+
+private fun validarEncuestaCompleta(
+    anio:String,tipoMedicion:String,cambio:Boolean?,ninos:String,adolescentes:String,jovenes:String,adultos:String,mayores:String,
+    recibeApoyo:Boolean?, apoyoSel:Map<String,Boolean>, apoyoValor:Map<String,String>, apoyoOtro:String, apoyoCodigos:Map<String,String>,
+    recibePagos:Boolean?, pagoSel:Map<String,Boolean>, pagoValor:Map<String,String>, prodSel:List<String>, productos:Map<String,EconomiaProductoEntity>,
+    cantidad:Map<String,String>,consumo:Map<String,String>,vendido:Map<String,String>,precio:Map<String,String>,motivo:Map<String,String>,
+    temporalidad:Map<String,String>,apoyoAct:Map<String,Boolean>,lugares:Map<String,SnapshotStringSet>,otros:List<OtroProductoDraft>
+):List<String> {
+    val e=mutableListOf<String>()
+    if(anio.toIntOrNull() !in 2000..2100)e += "Ingrese un año válido."
+    if(cambio==null)e += "Indique si cambió el número de personas."
+    if((tipoMedicion=="linea_base" || cambio==true) && listOf(ninos,adolescentes,jovenes,adultos,mayores).any{it.isBlank()})e += "Complete todos los grupos de edad."
+    if(recibeApoyo==null)e += "Responda si recibe apoyos del Gobierno."
+    if(recibeApoyo==true){ val ids=apoyoSel.filterValues{it}.keys; if(ids.isEmpty())e += "Seleccione al menos un apoyo."; ids.forEach{if((apoyoValor[it]?.toDoubleOrNull()?:0.0)<=0)e += "Registre el valor del apoyo seleccionado."; if(apoyoCodigos[it]=="otro"&&apoyoOtro.isBlank())e += "Escriba el nombre del otro apoyo."} }
+    if(recibePagos==null)e += "Responda si recibe otros pagos."
+    if(recibePagos==true){val ids=pagoSel.filterValues{it}.keys;if(ids.isEmpty())e += "Seleccione al menos otro ingreso.";ids.forEach{if((pagoValor[it]?.toDoubleOrNull()?:0.0)<=0)e += "Registre el valor del otro ingreso."}}
+    fun validarProducto(nombre:String,pecuario:Boolean,c:String,co:String,v:String,p:String,m:String,t:String,a:Boolean?,ls:Set<String>){
+        val q=c.toDoubleOrNull();val qc=co.toDoubleOrNull()?:0.0;val qv=v.toDoubleOrNull()?:0.0;val pp=p.toDoubleOrNull()?:0.0
+        if(q==null||q<0)e += "$nombre: registre la cantidad producida."
+        if(q!=null&&qc+qv>q)e += "$nombre: consumo más venta supera la producción."
+        if(qv>0&&pp<=0)e += "$nombre: registre el precio unitario."
+        if(qv>0&&ls.isEmpty())e += "$nombre: seleccione al menos un lugar de venta."
+        if(qv==0.0&&m.isBlank())e += "$nombre: indique por qué no vende."
+        if(pecuario&&t.isBlank())e += "$nombre: seleccione la temporalidad."
+        if(a==null)e += "$nombre: indique si tiene apoyo de ACT."
+    }
+    prodSel.forEach{id->productos[id]?.let{p->validarProducto(p.nombre,p.esPecuario,cantidad[id].orEmpty(),consumo[id].orEmpty(),vendido[id].orEmpty(),precio[id].orEmpty(),motivo[id].orEmpty(),temporalidad[id].orEmpty(),apoyoAct[id],lugares[id]?.values?:emptySet())}}
+    otros.forEach{o->if(o.nombre.isBlank())e += "Otro producto: escriba el nombre." else validarProducto(o.nombre,o.esPecuario,o.cantidad,o.consumo,o.vendido,o.precio,o.motivo,o.temporalidad,o.apoyoAct,o.lugares)}
+    return e.distinct()
+}
+
 @Composable
 private fun ProductoDetalle(
     unidad: String,
@@ -604,8 +745,14 @@ private fun ProductoDetalle(
         }
         if ((vendido.toDoubleOrNull() ?: 0.0) > 0.0) {
             EcoMoney("Precio de 1 $unidad en la región", precio, onPrecio)
-            val ingreso = (vendido.toDoubleOrNull() ?: 0.0) * (precio.toDoubleOrNull() ?: 0.0)
-            Text("Ingreso mensual estimado: $" + "%,.0f".format(ingreso), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+            val ingresoPeriodo = (vendido.toDoubleOrNull() ?: 0.0) * (precio.toDoubleOrNull() ?: 0.0)
+            val factorAnual = when (if (esPecuario) temporalidad else "mensual") {
+                "diario" -> 365.0; "semanal" -> 52.0; "quincenal" -> 24.0; "trimestral" -> 4.0
+                "semestral" -> 2.0; "anual" -> 1.0; else -> 12.0
+            }
+            val ingresoAnual = ingresoPeriodo * factorAnual
+            Text("Ingreso mensual equivalente: $" + "%,.0f".format(ingresoAnual / 12.0), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+            Text("Ingreso anual equivalente: $" + "%,.0f".format(ingresoAnual), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
             Text("Lugar(es) de venta:", style = MaterialTheme.typography.bodySmall)
             lugares.forEach { (id, nombre) ->
                 EcoCheck(nombre, lugaresSel.contains(id)) { on -> onToggleLugar(id, on) }
@@ -707,6 +854,7 @@ private val TEMPORALIDADES = listOf(
     "diario" to "Diario", "semanal" to "Semanal", "quincenal" to "Quincenal", "mensual" to "Mensual",
     "trimestral" to "Trimestral", "semestral" to "Semestral", "anual" to "Anual"
 )
+private val UNIDADES = listOf("g" to "Gramos","kg" to "Kilogramos","litro" to "Litros","unidad" to "Unidades","animal" to "Animales")
 
 private fun numToStr(v: Double?): String =
     v?.let { if (it % 1.0 == 0.0) it.toLong().toString() else it.toString() } ?: ""

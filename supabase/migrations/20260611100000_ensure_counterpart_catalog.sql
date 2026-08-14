@@ -42,6 +42,11 @@ begin
       else 'otro'
     end
     where type is null;
+
+    -- La migracion anterior usaba contribution_type y una restriccion unica
+    -- con ese nombre. Terminada la copia, se reemplaza por el contrato actual.
+    alter table public.counterpart_catalog drop constraint if exists counterpart_catalog_unique;
+    alter table public.counterpart_catalog drop column contribution_type;
   end if;
 end $$;
 
@@ -76,7 +81,7 @@ begin
       and conrelid = 'public.counterpart_catalog'::regclass
   ) then
     alter table public.counterpart_catalog
-      add constraint counterpart_catalog_unique unique (project_id, name, type, suggested_unit);
+      add constraint counterpart_catalog_unique unique nulls not distinct (project_id, name, type, suggested_unit);
   end if;
 end $$;
 

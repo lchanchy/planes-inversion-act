@@ -65,7 +65,9 @@ import type {
   EconomiaEncuesta,
   EconomiaEncuestaApoyo,
   EconomiaEncuestaPago,
-  EconomiaEncuestaProducto
+  EconomiaEncuestaProducto,
+  EconomiaProductoLugarVenta,
+  EconomiaSyncConflicto
 } from "@/lib/types";
 
 type ViewKey =
@@ -12959,11 +12961,20 @@ type EconomiaRow = {
   municipio: string;
   vereda: string;
   ronda: string;
+  anio: number;
+  esPiloto: boolean;
   personas: number;
+  ninos: number;
+  adolescentes: number;
+  jovenes: number;
+  adultos: number;
+  mayores: number;
   ingProductos: number;
   ingGobierno: number;
   ingOtros: number;
   ingTotal: number;
+  ingAnual: number;
+  ingPerCapita: number;
   jornal: number;
 };
 
@@ -12993,22 +13004,25 @@ function EconomiaAnalytics({
   const [apoyos, setApoyos] = useState<EconomiaEncuestaApoyo[]>([]);
   const [pagos, setPagos] = useState<EconomiaEncuestaPago[]>([]);
   const [productos, setProductos] = useState<EconomiaEncuestaProducto[]>([]);
+  const [productoLugares, setProductoLugares] = useState<EconomiaProductoLugarVenta[]>([]);
+  const [conflictos, setConflictos] = useState<EconomiaSyncConflicto[]>([]);
   const [rondaFilter, setRondaFilter] = useState<string>("all");
+  const [anioFilter, setAnioFilter] = useState<string>("all");
+  const [pilotoFilter, setPilotoFilter] = useState<"all" | "official" | "pilot">("official");
   const [nivel, setNivel] = useState<EconomiaNivel>("municipio");
   const [comparaNivel, setComparaNivel] = useState<"familia" | EconomiaNivel>("familia");
   const [expandedEncuesta, setExpandedEncuesta] = useState<string | null>(null);
-  const [nuevoMonitoreo, setNuevoMonitoreo] = useState("");
-  const [rondaMsg, setRondaMsg] = useState<string | null>(null);
-  const [agregandoRonda, setAgregandoRonda] = useState(false);
   const [mostrarAnalisis, setMostrarAnalisis] = useState(false);
   const [estadoFilter, setEstadoFilter] = useState("all");
   const [revisionMsg, setRevisionMsg] = useState<string | null>(null);
+  const [devolucionId, setDevolucionId] = useState<string | null>(null);
+  const [devolucionNotas, setDevolucionNotas] = useState("");
 
   const loadEconomia = useCallback(async () => {
     setLoading(true);
     setSchemaError(null);
     setLoadError(null);
-    const [rondasRes, productosCatRes, categoriasRes, lugaresRes, tiposApoyoRes, tiposPagoRes, encuestasRes, apoyosRes, pagosRes, productosRes] = await Promise.all([
+    const [rondasRes, productosCatRes, categoriasRes, lugaresRes, tiposApoyoRes, tiposPagoRes, encuestasRes, apoyosRes, pagosRes, productosRes, productoLugaresRes, conflictosRes] = await Promise.all([
       supabase.from("economia_rondas").select("*").eq("is_deleted", false).order("orden"),
       supabase.from("economia_productos").select("*").eq("is_deleted", false).order("orden"),
       supabase.from("economia_categorias").select("*").eq("is_deleted", false).order("orden"),
@@ -13018,9 +13032,11 @@ function EconomiaAnalytics({
       supabase.from("economia_encuestas").select("*").eq("is_deleted", false),
       supabase.from("economia_encuesta_apoyos").select("*").eq("is_deleted", false),
       supabase.from("economia_encuesta_pagos").select("*").eq("is_deleted", false),
-      supabase.from("economia_encuesta_productos").select("*").eq("is_deleted", false)
+      supabase.from("economia_encuesta_productos").select("*").eq("is_deleted", false),
+      supabase.from("economia_producto_lugares_venta").select("*").eq("is_deleted", false),
+      supabase.from("economia_sync_conflictos").select("*").eq("estado", "pendiente").order("created_at", { ascending: false })
     ]);
-    const results = [rondasRes, productosCatRes, categoriasRes, lugaresRes, tiposApoyoRes, tiposPagoRes, encuestasRes, apoyosRes, pagosRes, productosRes];
+    const results = [rondasRes, productosCatRes, categoriasRes, lugaresRes, tiposApoyoRes, tiposPagoRes, encuestasRes, apoyosRes, pagosRes, productosRes, productoLugaresRes, conflictosRes];
     const missing = results.some((r) => r.error && isMissingTableError(r.error));
     if (missing) {
       setSchemaError(
@@ -13045,6 +13061,8 @@ function EconomiaAnalytics({
     setApoyos((apoyosRes.data as EconomiaEncuestaApoyo[]) ?? []);
     setPagos((pagosRes.data as EconomiaEncuestaPago[]) ?? []);
     setProductos((productosRes.data as EconomiaEncuestaProducto[]) ?? []);
+    setProductoLugares((productoLugaresRes.data as EconomiaProductoLugarVenta[]) ?? []);
+    setConflictos((conflictosRes.data as EconomiaSyncConflicto[]) ?? []);
     setLoading(false);
   }, []);
 
@@ -13052,38 +13070,50 @@ function EconomiaAnalytics({
     void loadEconomia();
   }, [loadEconomia]);
 
-  async function agregarRonda() {
-    const nombre = nuevoMonitoreo.trim();
-    if (!nombre) return;
-    setAgregandoRonda(true);
-    setRondaMsg(null);
-    const orden = rondas.reduce((max, r) => Math.max(max, r.orden), 0) + 1;
-    const base = nombre
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[̀-ͯ]/g, "")
-      .replace(/[^a-z0-9]+/g, "_")
-      .replace(/^_+|_+$/g, "");
-    const codigo = `${base || "monitoreo"}_${orden}`;
-    const { error } = await supabase.from("economia_rondas").insert({ codigo, nombre, orden });
-    if (error) {
-      setRondaMsg(`No fue posible agregar (¿tiene rol administrador?): ${getErrorMessage(error)}`);
-    } else {
-      setNuevoMonitoreo("");
-      setRondaMsg(`Monitoreo "${nombre}" agregado. Ya aparece en la comparación y en la app tras "Descargar".`);
-      await loadEconomia();
-    }
-    setAgregandoRonda(false);
-  }
-
-  async function cambiarEstadoEncuesta(encuestaId: string, estado: string) {
+  async function cambiarEstadoEncuesta(encuestaId: string, estado: string, motivoDevolucion?: string) {
     setRevisionMsg(null);
-    const { error } = await supabase.from("economia_encuestas").update({ estado }).eq("id", encuestaId);
+    const notas = estado === "devuelta" ? motivoDevolucion?.trim() : null;
+    if (estado === "devuelta" && !notas) { setRevisionMsg("Debe escribir el motivo de devolución."); return; }
+    const { data: authData } = await supabase.auth.getUser();
+    const { error } = await supabase.from("economia_encuestas").update({
+      estado, notas_revision: notas, reviewed_at: new Date().toISOString(), reviewed_by: authData.user?.id ?? null
+    }).eq("id", encuestaId);
     if (error) {
       setRevisionMsg(`No fue posible cambiar el estado (¿tiene rol administrador?): ${getErrorMessage(error)}`);
       return;
     }
     setRevisionMsg(estado === "aprobada" ? "Encuesta aprobada." : "Encuesta devuelta. El técnico la verá para corregir tras “Descargar”.");
+    if (estado === "devuelta") {
+      setDevolucionId(null);
+      setDevolucionNotas("");
+    }
+    await loadEconomia();
+  }
+
+  async function resolverConflictoServidor(id: string) {
+    const { data: authData } = await supabase.auth.getUser();
+    const { error } = await supabase.from("economia_sync_conflictos").update({
+      estado: "resuelto_servidor", resolved_at: new Date().toISOString(), resolved_by: authData.user?.id ?? null
+    }).eq("id", id);
+    if (error) setRevisionMsg(`No fue posible resolver el conflicto: ${getErrorMessage(error)}`); else await loadEconomia();
+  }
+
+  async function resolverConflictoAndroid(conflicto: EconomiaSyncConflicto) {
+    const payload = conflicto.client_payload as { encuesta?: unknown; apoyos?: unknown; pagos?: unknown; productos?: unknown };
+    if (!payload.encuesta) { setRevisionMsg("El conflicto no contiene una encuesta Android recuperable."); return; }
+    const { data, error } = await supabase.rpc("sync_economia_encuesta", {
+      p_encuesta: payload.encuesta, p_apoyos: payload.apoyos ?? [], p_pagos: payload.pagos ?? [],
+      p_productos: payload.productos ?? [], p_expected_version: conflicto.current_version ?? 0
+    });
+    if (error || (data as { conflict?: boolean } | null)?.conflict) {
+      setRevisionMsg(`No fue posible conservar la versión Android: ${error ? getErrorMessage(error) : "la versión volvió a cambiar"}.`);
+      return;
+    }
+    const { data: authData } = await supabase.auth.getUser();
+    const { error: closeError } = await supabase.from("economia_sync_conflictos").update({
+      estado: "resuelto_cliente", resolved_at: new Date().toISOString(), resolved_by: authData.user?.id ?? null
+    }).eq("id", conflicto.id);
+    if (closeError) setRevisionMsg(`La encuesta se recuperó, pero no se pudo cerrar el conflicto: ${getErrorMessage(closeError)}`);
     await loadEconomia();
   }
 
@@ -13162,7 +13192,8 @@ function EconomiaAnalytics({
         const payload = prods.map((r) => {
           const catId = catIdByCodigo.get(r.categoria_codigo);
           if (!catId) throw new Error(`Producto "${r.codigo}": la categoría "${r.categoria_codigo}" no existe (créela en la hoja Categorias).`);
-          const unidad = (r.unidad_base || "kg").toLowerCase() === "animal" ? "animal" : "kg";
+          const unidadSolicitada = (r.unidad_base || "kg").toLowerCase();
+          const unidad = ["g", "kg", "litro", "unidad", "animal"].includes(unidadSolicitada) ? unidadSolicitada : "kg";
           return {
             categoria_id: catId,
             codigo: r.codigo,
@@ -13208,11 +13239,20 @@ function EconomiaAnalytics({
   const famById = useMemo(() => new Map(families.map((f) => [f.id, f] as const)), [families]);
   const rondaById = useMemo(() => new Map(rondas.map((r) => [r.id, r] as const)), [rondas]);
   const prodCatById = useMemo(() => new Map(productosCat.map((p) => [p.id, p] as const)), [productosCat]);
+  const lugarVentaById = useMemo(() => new Map(lugaresVenta.map((l) => [l.id, l] as const)), [lugaresVenta]);
   const tipoApoyoById = useMemo(() => new Map(tiposApoyo.map((t) => [t.id, t] as const)), [tiposApoyo]);
   const tipoPagoById = useMemo(() => new Map(tiposPago.map((t) => [t.id, t] as const)), [tiposPago]);
+  const aniosDisponibles = useMemo(() => Array.from(new Set(encuestas.map((e) => e.anio))).sort((a,b) => b-a), [encuestas]);
+  const numerosMonitoreo = useMemo(() => Array.from(new Set(encuestas.map((e) => e.numero_monitoreo).filter((n): n is number => n != null))).sort((a,b) => a-b), [encuestas]);
 
   const nombreProducto = (p: EconomiaEncuestaProducto): string =>
     p.producto_id ? prodCatById.get(p.producto_id)?.nombre ?? "(producto)" : p.nombre_otro ?? "Otro producto";
+  const lugaresProducto = (productoId: string): string => {
+    const nombres = productoLugares.filter((l) => l.encuesta_producto_id === productoId).map((l) =>
+      l.lugar_venta_id ? lugarVentaById.get(l.lugar_venta_id)?.nombre ?? "Lugar no disponible" : l.nombre_libre ?? "Otro lugar"
+    );
+    return nombres.length > 0 ? nombres.join(", ") : "-";
+  };
 
   const rows = useMemo<EconomiaRow[]>(() => {
     const familyIds = new Set(families.map((f) => f.id));
@@ -13223,7 +13263,10 @@ function EconomiaAnalytics({
     const pagoByEnc = new Map<string, number>();
     pagos.forEach((p) => pagoByEnc.set(p.encuesta_id, (pagoByEnc.get(p.encuesta_id) ?? 0) + (p.valor_mensual ?? 0)));
     return encuestas
-      .filter((e) => familyIds.has(e.family_id) && (rondaFilter === "all" || e.ronda_id === rondaFilter))
+      .filter((e) => familyIds.has(e.family_id)
+        && (rondaFilter === "all" || (rondaFilter === "linea_base" ? e.tipo_medicion === "linea_base" : e.numero_monitoreo === Number(rondaFilter)))
+        && (anioFilter === "all" || e.anio === Number(anioFilter))
+        && (pilotoFilter === "all" || (pilotoFilter === "pilot" ? e.es_piloto : !e.es_piloto)))
       .map((e) => {
         const fam = famById.get(e.family_id);
         const m = fam?.municipality_id ? municById.get(fam.municipality_id) : undefined;
@@ -13238,38 +13281,50 @@ function EconomiaAnalytics({
           departamento: m?.department ?? "Sin departamento",
           municipio: m?.name ?? "Sin municipio",
           vereda: v?.name ?? "Sin vereda",
-          ronda: rondaById.get(e.ronda_id)?.nombre ?? "-",
+          ronda: e.tipo_medicion === "linea_base" ? "Línea base" : `Monitoreo ${e.numero_monitoreo ?? "-"}`,
+          anio: e.anio,
+          esPiloto: e.es_piloto,
           personas: e.personas_total ?? 0,
+          ninos: e.personas_ninos ?? 0,
+          adolescentes: e.personas_adolescentes ?? 0,
+          jovenes: e.personas_jovenes ?? 0,
+          adultos: e.personas_adultos ?? 0,
+          mayores: e.personas_mayores ?? 0,
           ingProductos,
           ingGobierno,
           ingOtros,
           ingTotal: ingProductos + ingGobierno + ingOtros,
+          ingAnual: (ingProductos + ingGobierno + ingOtros) * 12,
+          ingPerCapita: (e.personas_total ?? 0) > 0 ? (ingProductos + ingGobierno + ingOtros) / (e.personas_total ?? 1) : 0,
           jornal: e.valor_jornal ?? 0
         };
       })
       .sort((a, b) => b.ingTotal - a.ingTotal);
-  }, [encuestas, productos, apoyos, pagos, families, rondaFilter, famById, municById, villById, rondaById]);
+  }, [encuestas, productos, apoyos, pagos, families, rondaFilter, anioFilter, pilotoFilter, famById, municById, villById]);
+
+  // Indicadores oficiales: solo encuestas aprobadas. La bandeja operativa conserva todas.
+  const reportRows = useMemo(() => rows.filter((r) => encuestas.find((e) => e.id === r.encuestaId)?.estado === "aprobada"), [rows, encuestas]);
 
   const totales = useMemo(() => {
-    const familias = new Set(rows.map((r) => r.familyId));
-    const ingProductos = rows.reduce((acc, r) => acc + r.ingProductos, 0);
-    const ingGobierno = rows.reduce((acc, r) => acc + r.ingGobierno, 0);
-    const ingOtros = rows.reduce((acc, r) => acc + r.ingOtros, 0);
+    const familias = new Set(reportRows.map((r) => r.familyId));
+    const ingProductos = reportRows.reduce((acc, r) => acc + r.ingProductos, 0);
+    const ingGobierno = reportRows.reduce((acc, r) => acc + r.ingGobierno, 0);
+    const ingOtros = reportRows.reduce((acc, r) => acc + r.ingOtros, 0);
     const ingTotal = ingProductos + ingGobierno + ingOtros;
     return {
       familias: familias.size,
-      encuestas: rows.length,
+      encuestas: reportRows.length,
       ingProductos,
       ingGobierno,
       ingOtros,
       ingTotal,
       promedio: familias.size > 0 ? ingTotal / familias.size : 0
     };
-  }, [rows]);
+  }, [reportRows]);
 
   const aggRows = useMemo(() => {
     const map = new Map<string, { clave: string; familias: Set<string>; encuestas: number; ingProductos: number; ingGobierno: number; ingOtros: number; ingTotal: number }>();
-    rows.forEach((r) => {
+    reportRows.forEach((r) => {
       const clave =
         nivel === "departamento" ? r.departamento : nivel === "municipio" ? `${r.departamento} / ${r.municipio}` : `${r.municipio} / ${r.vereda}`;
       const cur = map.get(clave) ?? { clave, familias: new Set<string>(), encuestas: 0, ingProductos: 0, ingGobierno: 0, ingOtros: 0, ingTotal: 0 };
@@ -13282,10 +13337,10 @@ function EconomiaAnalytics({
       map.set(clave, cur);
     });
     return Array.from(map.values()).sort((a, b) => b.ingTotal - a.ingTotal);
-  }, [rows, nivel]);
+  }, [reportRows, nivel]);
 
   const topProductos = useMemo(() => {
-    const encIds = new Set(rows.map((r) => r.encuestaId));
+    const encIds = new Set(reportRows.map((r) => r.encuestaId));
     const map = new Map<string, { nombre: string; ingreso: number; encuestas: Set<string> }>();
     productos
       .filter((p) => encIds.has(p.encuesta_id))
@@ -13297,7 +13352,7 @@ function EconomiaAnalytics({
         map.set(nombre, cur);
       });
     return Array.from(map.values()).sort((a, b) => b.ingreso - a.ingreso).slice(0, 20);
-  }, [productos, rows, prodCatById]);
+  }, [productos, reportRows, prodCatById]);
 
   const nivelLabel = nivel === "departamento" ? "Departamento" : nivel === "municipio" ? "Departamento / Municipio" : "Municipio / Vereda";
 
@@ -13312,13 +13367,17 @@ function EconomiaAnalytics({
     return m;
   }, [productos, apoyos, pagos]);
 
-  const rondasOrdenadas = useMemo(() => [...rondas].sort((a, b) => a.orden - b.orden), [rondas]);
+  const rondasOrdenadas = useMemo(() => [
+    { id: "linea_base", nombre: "Línea base" },
+    ...numerosMonitoreo.map((n) => ({ id: `monitoreo_${n}`, nombre: `Monitoreo ${n}` }))
+  ], [numerosMonitoreo]);
 
   const comparaNivelLabel =
     comparaNivel === "familia" ? "Familia" : comparaNivel === "departamento" ? "Departamento" : comparaNivel === "municipio" ? "Departamento / Municipio" : "Municipio / Vereda";
 
   const pivotRondas = useMemo(() => {
     const familyIds = new Set(families.map((f) => f.id));
+    const reportIds = new Set(reportRows.map((r) => r.encuestaId));
     const claveDe = (e: EconomiaEncuesta): string => {
       const fam = famById.get(e.family_id);
       if (comparaNivel === "familia") return fam ? `${fam.family_code} - ${fam.representative_name}` : "(familia desconocida)";
@@ -13330,11 +13389,12 @@ function EconomiaAnalytics({
     };
     const map = new Map<string, Map<string, number>>();
     encuestas
-      .filter((e) => familyIds.has(e.family_id))
+      .filter((e) => familyIds.has(e.family_id) && reportIds.has(e.id))
       .forEach((e) => {
         const clave = claveDe(e);
         const inner = map.get(clave) ?? new Map<string, number>();
-        inner.set(e.ronda_id, (inner.get(e.ronda_id) ?? 0) + (ingresoPorEncuesta.get(e.id) ?? 0));
+        const medicionId = e.tipo_medicion === "linea_base" ? "linea_base" : `monitoreo_${e.numero_monitoreo}`;
+        inner.set(medicionId, (inner.get(medicionId) ?? 0) + (ingresoPorEncuesta.get(e.id) ?? 0));
         map.set(clave, inner);
       });
     return Array.from(map.entries())
@@ -13354,15 +13414,15 @@ function EconomiaAnalytics({
         const ultB = [...b.valores].reverse().find((v) => v != null) ?? 0;
         return ultB - ultA;
       });
-  }, [encuestas, families, comparaNivel, famById, municById, villById, rondasOrdenadas, ingresoPorEncuesta]);
+  }, [encuestas, families, reportRows, comparaNivel, famById, municById, villById, rondasOrdenadas, ingresoPorEncuesta]);
 
   async function exportarExcel() {
     const ExcelJS = await import("exceljs");
     const workbook = new ExcelJS.Workbook();
 
     const s1 = workbook.addWorksheet("Por familia");
-    s1.addRow(["Familia", "Departamento", "Municipio", "Vereda", "Ronda", "Personas", "Ing. productos", "Ing. gobierno", "Ing. otros", "Ing. total mensual", "Valor jornal"]);
-    rows.forEach((r) => s1.addRow([r.familia, r.departamento, r.municipio, r.vereda, r.ronda, r.personas, r.ingProductos, r.ingGobierno, r.ingOtros, r.ingTotal, r.jornal]));
+    s1.addRow(["Familia", "Departamento", "Municipio", "Vereda", "Medición", "Año", "Piloto", "Niños", "Adolescentes", "Jóvenes", "Adultos", "Mayores", "Personas", "Ing. productos", "Ing. gobierno", "Ing. otros", "Ing. total mensual", "Ing. total anual", "Ing. mensual/persona", "Valor jornal"]);
+    reportRows.forEach((r) => s1.addRow([r.familia, r.departamento, r.municipio, r.vereda, r.ronda, r.anio, r.esPiloto ? "SI" : "NO", r.ninos,r.adolescentes,r.jovenes,r.adultos,r.mayores,r.personas, r.ingProductos, r.ingGobierno, r.ingOtros, r.ingTotal, r.ingAnual,r.ingPerCapita,r.jornal]));
     s1.getRow(1).font = { bold: true };
 
     const s2 = workbook.addWorksheet("Agregado");
@@ -13386,31 +13446,38 @@ function EconomiaAnalytics({
 
     // Detalle desglosado: por cada familia, cada fuente (producto/apoyo/otro) con cantidades y valor.
     const s5 = workbook.addWorksheet("Detalle ingresos");
-    s5.addRow(["Familia", "Departamento", "Municipio", "Vereda", "Ronda", "Fuente", "Detalle", "Producido", "Consumido", "Vendido", "Precio unitario", "Valor/Ingreso mensual", "Apoyo ACT"]);
-    rows.forEach((r) => {
+    s5.addRow(["Familia", "Departamento", "Municipio", "Vereda", "Medición", "Año", "Estado", "Piloto", "Personas", "Fuente", "Detalle", "Unidad", "Temporalidad", "Producido", "Consumido", "Vendido", "Precio unitario", "Lugares de venta", "Motivo de no venta", "Ingreso mensual", "Ingreso anual", "Apoyo ACT"]);
+    reportRows.forEach((r) => {
+      const estado = encuestas.find((e) => e.id === r.encuestaId)?.estado ?? "";
       productos.filter((p) => p.encuesta_id === r.encuestaId).forEach((p) => {
         s5.addRow([
-          r.familia, r.departamento, r.municipio, r.vereda, r.ronda, "Producto", nombreProducto(p),
-          p.cantidad_producida ?? 0, p.consumo ?? 0, p.vendido ?? 0, p.precio_unitario ?? 0, p.ingreso_mensual ?? 0, p.apoyo_act ? "Si" : "No"
+          r.familia, r.departamento, r.municipio, r.vereda, r.ronda,r.anio,estadoRevisionLabel(estado),r.esPiloto ? "SI" : "NO",r.personas,
+          "Producto",nombreProducto(p),p.unidad ?? prodCatById.get(p.producto_id ?? "")?.unidad_base ?? "",p.temporalidad ?? "mensual",
+          p.cantidad_producida ?? 0,p.consumo ?? 0,p.vendido ?? 0,p.precio_unitario ?? 0,lugaresProducto(p.id),p.motivo_no_venta ?? "",
+          p.ingreso_mensual ?? 0,p.ingreso_anual ?? (p.ingreso_mensual ?? 0)*12,p.apoyo_act ? "Si" : "No"
         ]);
       });
       apoyos.filter((a) => a.encuesta_id === r.encuestaId).forEach((a) => {
         s5.addRow([
-          r.familia, r.departamento, r.municipio, r.vereda, r.ronda, "Apoyo gobierno",
-          tipoApoyoById.get(a.tipo_apoyo_id)?.nombre ?? a.nombre_libre ?? "Apoyo", "", "", "", "", a.valor_mensual ?? 0, ""
+          r.familia,r.departamento,r.municipio,r.vereda,r.ronda,r.anio,estadoRevisionLabel(estado),r.esPiloto ? "SI" : "NO",r.personas,"Apoyo gobierno",
+          tipoApoyoById.get(a.tipo_apoyo_id)?.nombre ?? a.nombre_libre ?? "Apoyo","mensual","mensual","","","","","","",a.valor_mensual ?? 0,(a.valor_mensual ?? 0)*12,""
         ]);
       });
       pagos.filter((p) => p.encuesta_id === r.encuestaId).forEach((p) => {
         s5.addRow([
-          r.familia, r.departamento, r.municipio, r.vereda, r.ronda, "Otro ingreso",
-          tipoPagoById.get(p.tipo_pago_id)?.nombre ?? "Ingreso", "", "", "", "", p.valor_mensual ?? 0, ""
+          r.familia,r.departamento,r.municipio,r.vereda,r.ronda,r.anio,estadoRevisionLabel(estado),r.esPiloto ? "SI" : "NO",r.personas,"Otro ingreso",
+          tipoPagoById.get(p.tipo_pago_id)?.nombre ?? "Ingreso","mensual","mensual","","","","","","",p.valor_mensual ?? 0,(p.valor_mensual ?? 0)*12,""
         ]);
       });
     });
     s5.getRow(1).font = { bold: true };
+    s5.views = [{ state: "frozen", ySplit: 1 }];
+    s5.autoFilter = { from: "A1", to: "V1" };
+    s5.columns.forEach((column, index) => { column.width = index === 0 || index === 10 ? 32 : index === 17 || index === 18 ? 24 : 15; });
 
     const buffer = await workbook.xlsx.writeBuffer();
-    saveBlob(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), `economia-familiar-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    const marcaTiempo = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    saveBlob(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), `economia-familiar-${marcaTiempo}.xlsx`);
   }
 
   return (
@@ -13420,7 +13487,7 @@ function EconomiaAnalytics({
           <h2>Economía Familiar</h2>
         </div>
         <button className="secondary" type="button" onClick={() => void exportarExcel()} disabled={loading}>
-          Descargar Excel Economía
+          Descargar Excel detallado
         </button>
       </div>
 
@@ -13432,16 +13499,15 @@ function EconomiaAnalytics({
         <>
           <div className="panel grid compact-panel">
             <label>
-              Ronda
+              Medición
               <select value={rondaFilter} onChange={(e) => setRondaFilter(e.target.value)}>
-                <option value="all">Todas las rondas</option>
-                {rondas.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.nombre}
-                  </option>
-                ))}
+                <option value="all">Todas</option>
+                <option value="linea_base">Línea base</option>
+                {numerosMonitoreo.map((n) => <option key={n} value={n}>Monitoreo {n}</option>)}
               </select>
             </label>
+            <label>Año<select value={anioFilter} onChange={(e)=>setAnioFilter(e.target.value)}><option value="all">Todos</option>{aniosDisponibles.map((a)=><option key={a} value={a}>{a}</option>)}</select></label>
+            <label>Datos<select value={pilotoFilter} onChange={(e)=>setPilotoFilter(e.target.value as "all"|"official"|"pilot")}><option value="all">Todos</option><option value="official">Oficiales</option><option value="pilot">Piloto / no oficial</option></select></label>
             <label>
               Agregar por
               <select value={nivel} onChange={(e) => setNivel(e.target.value as EconomiaNivel)}>
@@ -13461,28 +13527,8 @@ function EconomiaAnalytics({
           {mostrarAnalisis ? (
           <>
           <div className="panel">
-            <div className="panel-heading">Monitoreos (rondas)</div>
-            <div className="chip-list">
-              {rondas.map((r) => (
-                <span key={r.id} className="chip">
-                  {r.nombre}
-                </span>
-              ))}
-            </div>
-            <div className="panel grid compact-panel">
-              <label>
-                Nuevo monitoreo
-                <input
-                  value={nuevoMonitoreo}
-                  onChange={(e) => setNuevoMonitoreo(e.target.value)}
-                  placeholder="Ej: Monitoreo 4"
-                />
-              </label>
-              <button className="secondary" type="button" onClick={() => void agregarRonda()} disabled={agregandoRonda || !nuevoMonitoreo.trim()}>
-                {agregandoRonda ? "Agregando…" : "Agregar monitoreo"}
-              </button>
-            </div>
-            {rondaMsg ? <div className="muted">{rondaMsg}</div> : null}
+            <div className="panel-heading">Secuencia anual</div>
+            <div className="muted">La línea base se registra una sola vez. Después, Android habilita automáticamente Monitoreo 1, 2, 3… cuando la medición anterior está aprobada.</div>
           </div>
 
           <div className="panel">
@@ -13635,6 +13681,18 @@ function EconomiaAnalytics({
           ) : null}
 
           <div className="panel">
+            <div className="panel-heading">Conflictos de sincronización ({conflictos.length})</div>
+            {conflictos.length === 0 ? <div className="muted">No hay conflictos pendientes.</div> : conflictos.map((c) => (
+              <div key={c.id} className="panel">
+                <strong>{famById.get(c.family_id)?.family_code ?? c.family_id}</strong> · versión Android {c.expected_version} / servidor {c.current_version ?? "sin registro"}
+                <details><summary>Comparar datos</summary><pre style={{whiteSpace:"pre-wrap",maxHeight:320,overflow:"auto"}}>{JSON.stringify({servidor:c.server_payload,android:c.client_payload},null,2)}</pre></details>
+                <button className="secondary" type="button" onClick={()=>void resolverConflictoServidor(c.id)}>Conservar versión del servidor</button>
+                <button className="secondary" type="button" onClick={()=>void resolverConflictoAndroid(c)}>Conservar versión Android</button>
+              </div>
+            ))}
+          </div>
+
+          <div className="panel">
             <div className="panel-heading">Encuestas</div>
             <div className="panel grid compact-panel">
               <label>
@@ -13648,6 +13706,35 @@ function EconomiaAnalytics({
               </label>
             </div>
             {revisionMsg ? <div className="muted">{revisionMsg}</div> : null}
+            {devolucionId ? (
+              <div className="panel grid compact-panel">
+                <label>
+                  Motivo de devolución
+                  <textarea
+                    aria-label="Motivo de devolución"
+                    value={devolucionNotas}
+                    onChange={(e) => setDevolucionNotas(e.target.value)}
+                    placeholder="Indique claramente qué debe corregir el técnico."
+                  />
+                </label>
+                <div className="chip-list">
+                  <button
+                    type="button"
+                    disabled={!devolucionNotas.trim()}
+                    onClick={() => void cambiarEstadoEncuesta(devolucionId, "devuelta", devolucionNotas)}
+                  >
+                    Confirmar devolución
+                  </button>
+                  <button
+                    className="secondary"
+                    type="button"
+                    onClick={() => { setDevolucionId(null); setDevolucionNotas(""); }}
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            ) : null}
             <div className="tracking-table-wrapper">
               <table className="tracking-table">
                 <thead>
@@ -13658,12 +13745,15 @@ function EconomiaAnalytics({
                     <th>Municipio</th>
                     <th>Vereda</th>
                     <th>Ronda</th>
+                    <th>Año</th>
                     <th>Estado</th>
                     <th>Personas</th>
                     <th>Ing. productos</th>
                     <th>Ing. gobierno</th>
                     <th>Ing. otros</th>
                     <th>Ing. total</th>
+                    <th>Ing. anual</th>
+                    <th>Ing./persona</th>
                     <th>Jornal</th>
                   </tr>
                 </thead>
@@ -13687,7 +13777,12 @@ function EconomiaAnalytics({
                               <button className="secondary" type="button" disabled={estado === "aprobada"} onClick={() => void cambiarEstadoEncuesta(r.encuestaId, "aprobada")}>
                                 Aprobar
                               </button>
-                              <button className="secondary" type="button" disabled={estado === "devuelta"} onClick={() => void cambiarEstadoEncuesta(r.encuestaId, "devuelta")}>
+                              <button
+                                className="secondary"
+                                type="button"
+                                disabled={estado === "devuelta"}
+                                onClick={() => { setDevolucionId(r.encuestaId); setDevolucionNotas(""); setRevisionMsg(null); }}
+                              >
                                 Devolver
                               </button>
                             </div>
@@ -13697,51 +13792,78 @@ function EconomiaAnalytics({
                           <td>{r.municipio}</td>
                           <td>{r.vereda}</td>
                           <td>{r.ronda}</td>
+                          <td>{r.anio}{r.esPiloto ? " · PILOTO" : ""}</td>
                           <td>{estadoRevisionLabel(estado)}</td>
                           <td>{r.personas}</td>
                           <td>{formatMoney(r.ingProductos)}</td>
                           <td>{formatMoney(r.ingGobierno)}</td>
                           <td>{formatMoney(r.ingOtros)}</td>
                           <td>{formatMoney(r.ingTotal)}</td>
+                          <td>{formatMoney(r.ingAnual)}</td>
+                          <td>{formatMoney(r.ingPerCapita)}</td>
                           <td>{formatMoney(r.jornal)}</td>
                         </tr>
                         {abierto ? (
                           <tr>
-                            <td colSpan={13}>
+                            <td colSpan={16}>
                               <div className="panel">
+                                <div className="panel-heading">Personas del hogar</div>
+                                <div className="chip-list">
+                                  <span className="chip">0–11: {r.ninos}</span><span className="chip">12–17: {r.adolescentes}</span>
+                                  <span className="chip">18–28: {r.jovenes}</span><span className="chip">29–64: {r.adultos}</span>
+                                  <span className="chip">65+: {r.mayores}</span><span className="chip">Total: {r.personas}</span>
+                                </div>
                                 <div className="panel-heading">Productos que generan ingreso</div>
                                 <div className="tracking-table-wrapper">
                                   <table className="tracking-table">
                                     <thead>
                                       <tr>
                                         <th>Producto</th>
+                                        <th>Unidad</th>
+                                        <th>Temporalidad</th>
                                         <th>Producido</th>
                                         <th>Consumido</th>
                                         <th>Vendido</th>
                                         <th>Precio unitario</th>
                                         <th>Ingreso mensual</th>
+                                        <th>Ingreso anual</th>
+                                        <th>Lugares de venta</th>
+                                        <th>Motivo de no venta</th>
                                         <th>Apoyo ACT</th>
                                       </tr>
                                     </thead>
                                     <tbody>
                                       {prods.map((p) => (
                                         <tr key={p.id}>
-                                          <td>{nombreProducto(p)}{p.es_pecuario ? " (pecuario)" : ""}</td>
+                                          <td>{nombreProducto(p)}{p.producto_id ? "" : " · Producto no catalogado"}{p.es_pecuario ? " (pecuario)" : ""}</td>
+                                          <td>{p.unidad ?? prodCatById.get(p.producto_id ?? "")?.unidad_base ?? "-"}</td>
+                                          <td>{p.temporalidad ?? "mensual"}</td>
                                           <td>{p.cantidad_producida ?? 0}</td>
                                           <td>{p.consumo ?? 0}</td>
                                           <td>{p.vendido ?? 0}</td>
                                           <td>{formatMoney(p.precio_unitario ?? 0)}</td>
                                           <td>{formatMoney(p.ingreso_mensual ?? 0)}</td>
+                                          <td>{formatMoney(p.ingreso_anual ?? (p.ingreso_mensual ?? 0) * 12)}</td>
+                                          <td>{lugaresProducto(p.id)}</td>
+                                          <td>{p.motivo_no_venta ?? "-"}</td>
                                           <td>{p.apoyo_act ? "Sí" : "No"}</td>
                                         </tr>
                                       ))}
                                       {prods.length === 0 ? (
                                         <tr>
-                                          <td colSpan={7} className="muted">Sin productos registrados.</td>
+                                          <td colSpan={12} className="muted">Sin productos registrados.</td>
                                         </tr>
                                       ) : null}
                                     </tbody>
                                   </table>
+                                </div>
+                                <div className="chip-list">
+                                  <span className="chip">Productos/mes: {formatMoney(r.ingProductos)}</span>
+                                  <span className="chip">Gobierno/mes: {formatMoney(r.ingGobierno)}</span>
+                                  <span className="chip">Otros/mes: {formatMoney(r.ingOtros)}</span>
+                                  <span className="chip">Total mensual: {formatMoney(r.ingTotal)}</span>
+                                  <span className="chip">Total anual: {formatMoney(r.ingAnual)}</span>
+                                  <span className="chip">Mensual por persona: {formatMoney(r.ingPerCapita)}</span>
                                 </div>
                                 <div className="panel-heading">Apoyos del gobierno</div>
                                 {aps.length === 0 ? (
@@ -13776,7 +13898,7 @@ function EconomiaAnalytics({
                   })}
                   {rows.length === 0 ? (
                     <tr>
-                      <td colSpan={13} className="muted">
+                      <td colSpan={16} className="muted">
                         No hay encuestas para los filtros seleccionados.
                       </td>
                     </tr>

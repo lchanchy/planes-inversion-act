@@ -46,9 +46,10 @@ android {
 
         val supabaseUrl = secretProperty("SUPABASE_URL").ifBlank { defaultSupabaseUrl }
         val supabaseAnonKey = secretProperty("SUPABASE_ANON_KEY")
+        val allowLocalHttp = secretProperty("ALLOW_LOCAL_HTTP").equals("true", ignoreCase = true)
 
-        require(supabaseUrl.startsWith("https://")) {
-            "SUPABASE_URL debe iniciar con https://. Valor actual: $supabaseUrl"
+        require(supabaseUrl.startsWith("https://") || (allowLocalHttp && supabaseUrl.startsWith("http://"))) {
+            "SUPABASE_URL debe usar https://. Para pruebas locales debug use ALLOW_LOCAL_HTTP=true. Valor actual: $supabaseUrl"
         }
         require(supabaseAnonKey.startsWith("eyJ")) {
             "SUPABASE_ANON_KEY no fue leida desde local.properties o no es la Legacy anon key. Revise apps/android/local.properties."

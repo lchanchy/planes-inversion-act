@@ -210,11 +210,23 @@ class AppContainer(context: Context) {
         }
     }
 
+    private val migration9To10 = object : Migration(9, 10) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE economia_encuestas ADD COLUMN anio INTEGER NOT NULL DEFAULT 2026")
+            db.execSQL("ALTER TABLE economia_encuestas ADD COLUMN tipoMedicion TEXT NOT NULL DEFAULT 'linea_base'")
+            db.execSQL("ALTER TABLE economia_encuestas ADD COLUMN numeroMonitoreo INTEGER")
+            db.execSQL("ALTER TABLE economia_encuestas ADD COLUMN serverVersion INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE economia_encuestas ADD COLUMN revision INTEGER NOT NULL DEFAULT 1")
+            db.execSQL("ALTER TABLE economia_encuestas ADD COLUMN notasRevision TEXT")
+            db.execSQL("ALTER TABLE economia_encuestas ADD COLUMN esPiloto INTEGER NOT NULL DEFAULT 0")
+        }
+    }
+
     private val database = Room.databaseBuilder(
         context,
         RestauracionDatabase::class.java,
         "restauracion_offline.db"
-    ).addMigrations(migration1To2, migration2To3, migration3To4, migration4To5, migration5To6, migration6To7, migration7To8, migration8To9).build()
+    ).addMigrations(migration1To2, migration2To3, migration3To4, migration4To5, migration5To6, migration6To7, migration7To8, migration8To9, migration9To10).build()
 
     val sessionStore = SessionStore(context)
 

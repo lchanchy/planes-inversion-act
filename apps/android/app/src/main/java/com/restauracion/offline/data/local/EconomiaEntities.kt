@@ -57,7 +57,7 @@ data class EconomiaProductoEntity(
     val codigo: String,
     val nombre: String,
     val esPecuario: Boolean,
-    val unidadBase: String,          // kg | animal
+    val unidadBase: String,          // g | kg | litro | unidad | animal
     val orden: Int,
     val activo: Boolean
 )
@@ -111,6 +111,9 @@ data class EconomiaEncuestaEntity(
     val equipoId: String?,
     val encuestadorId: String?,
     val fecha: String,                       // ISO yyyy-MM-dd
+    val anio: Int,
+    val tipoMedicion: String,                // linea_base | monitoreo
+    val numeroMonitoreo: Int?,
     val cambioNumPersonas: Boolean?,
     val personasNinos: Int?,
     val personasAdolescentes: Int?,
@@ -122,6 +125,10 @@ data class EconomiaEncuestaEntity(
     val valorJornal: Double?,
     val estado: String = "completada",       // borrador | completada
     val observaciones: String?,
+    val serverVersion: Long = 0,
+    val revision: Int = 1,
+    val notasRevision: String? = null,
+    val esPiloto: Boolean = false,
     val syncState: SyncState = SyncState.PENDING_SYNC,
     val lastError: String? = null
 )
@@ -167,7 +174,15 @@ data class EconomiaEncuestaProductoEntity(
     val precioUnitario: Double?,
     val apoyoAct: Boolean?,
     val syncState: SyncState = SyncState.PENDING_SYNC
-)
+) {
+    val ingresoPeriodo: Double get() = (vendido ?: 0.0) * (precioUnitario ?: 0.0)
+    val ingresoAnual: Double get() = ingresoPeriodo * when (temporalidad ?: "mensual") {
+        "diario" -> 365.0; "semanal" -> 52.0; "quincenal" -> 24.0
+        "trimestral" -> 4.0; "semestral" -> 2.0; "anual" -> 1.0
+        else -> 12.0
+    }
+    val ingresoMensual: Double get() = ingresoAnual / 12.0
+}
 
 @Entity(tableName = "economia_producto_lugares_venta")
 data class EconomiaProductoLugarVentaEntity(

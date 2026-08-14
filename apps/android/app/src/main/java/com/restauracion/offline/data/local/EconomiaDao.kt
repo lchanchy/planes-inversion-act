@@ -141,6 +141,10 @@ interface EconomiaDao {
     // IGNORE: no pisa una encuesta capturada localmente que aun esta pendiente de subir.
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertEncuestasIfNew(items: List<EconomiaEncuestaEntity>)
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertApoyosIfNew(items: List<EconomiaEncuestaApoyoEntity>)
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertPagosIfNew(items: List<EconomiaEncuestaPagoEntity>)
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertProductosIfNew(items: List<EconomiaEncuestaProductoEntity>)
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertLugaresIfNew(items: List<EconomiaProductoLugarVentaEntity>)
 
     // Refleja el estado de revision del servidor solo en encuestas ya sincronizadas
     // (no pisa una edicion local pendiente).
