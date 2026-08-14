@@ -142,6 +142,15 @@ interface EconomiaDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertEncuestasIfNew(items: List<EconomiaEncuestaEntity>)
 
+    // Refleja el estado de revision del servidor solo en encuestas ya sincronizadas
+    // (no pisa una edicion local pendiente).
+    @Query("update economia_encuestas set estado = :estado where id = :id and syncState = 'SYNCED'")
+    suspend fun updateSyncedEncuestaEstado(id: String, estado: String)
+
+    // Encuesta devuelta en la web: se reactiva como pendiente/offline para editar y reenviar.
+    @Query("update economia_encuestas set estado = 'devuelta', syncState = 'PENDING_SYNC' where id = :id and syncState = 'SYNCED'")
+    suspend fun markEncuestaDevuelta(id: String)
+
     @Query("select * from economia_encuestas where familyId = :familyId order by fecha desc")
     fun encuestasForFamily(familyId: String): Flow<List<EconomiaEncuestaEntity>>
 

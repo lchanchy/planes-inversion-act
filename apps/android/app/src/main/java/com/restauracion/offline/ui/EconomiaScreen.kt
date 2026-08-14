@@ -121,11 +121,13 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
     // Bandeja de salida (lista) vs captura (asistente).
     var mode by remember { mutableStateOf("lista") }
     var sincronizando by remember { mutableStateOf(false) }
+    var editandoId by remember { mutableStateOf<String?>(null) }
     val allEncuestas by repo.economiaEncuestasAll().collectAsState(initial = emptyList())
     val allFamilies by repo.economiaAllFamilies().collectAsState(initial = emptyList())
     val famNombre = allFamilies.associate { it.id to "${it.familyCode} - ${it.representativeName}" }
     val resetForm = {
         step = 0
+        editandoId = null
         projectId = null; rondaId = null; familyId = null
         departamento = null; municipioId = null; veredaId = null
         encuestadorId = null; fecha = LocalDate.now().toString()
@@ -136,6 +138,60 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
         pCantidad.clear(); pConsumo.clear(); pVendido.clear(); pPrecio.clear(); pMotivo.clear()
         pTemporalidad.clear(); pApoyoAct.clear(); pLugares.clear()
         observaciones = ""
+    }
+    // Cargar una encuesta existente en el asistente (editar una devuelta/pendiente).
+    val editar: (EconomiaEncuestaEntity) -> Unit = { e ->
+        scope.launch {
+            resetForm()
+            editandoId = e.id
+            projectId = e.projectId
+            rondaId = e.rondaId
+            familyId = e.familyId
+            val fam = allFamilies.firstOrNull { it.id == e.familyId }
+            val muni = fam?.municipalityId?.let { mid -> municipalities.firstOrNull { it.id == mid } }
+            departamento = muni?.department
+            municipioId = fam?.municipalityId
+            veredaId = fam?.villageId
+            encuestadorId = e.encuestadorId
+            fecha = e.fecha
+            cambioPersonas = e.cambioNumPersonas
+            ninos = e.personasNinos?.toString() ?: ""
+            adolescentes = e.personasAdolescentes?.toString() ?: ""
+            jovenes = e.personasJovenes?.toString() ?: ""
+            adultos = e.personasAdultos?.toString() ?: ""
+            mayores = e.personasMayores?.toString() ?: ""
+            recibeApoyo = e.recibeApoyoGobierno
+            recibePagos = e.recibeOtrosPagos
+            valorJornal = numToStr(e.valorJornal)
+            observaciones = e.observaciones ?: ""
+            repo.economiaApoyosOnce(e.id).forEach { a ->
+                apoyoSel[a.tipoApoyoId] = true
+                apoyoValor[a.tipoApoyoId] = numToStr(a.valorMensual)
+                if (a.nombreLibre != null) apoyoOtroNombre = a.nombreLibre
+            }
+            repo.economiaPagosOnce(e.id).forEach { p ->
+                pagoSel[p.tipoPagoId] = true
+                pagoValor[p.tipoPagoId] = numToStr(p.valorMensual)
+            }
+            repo.economiaProductosOnce(e.id).forEach { pr ->
+                val catalogId = pr.productoId ?: return@forEach // "otros" no se editan en el asistente
+                val cat = productosCat.firstOrNull { it.id == catalogId }
+                if (cat != null && !catSel.contains(cat.categoriaId)) catSel.add(cat.categoriaId)
+                if (!prodSel.contains(catalogId)) prodSel.add(catalogId)
+                pCantidad[catalogId] = numToStr(pr.cantidadProducida)
+                pConsumo[catalogId] = numToStr(pr.consumo)
+                pVendido[catalogId] = numToStr(pr.vendido)
+                pMotivo[catalogId] = pr.motivoNoVenta ?: ""
+                pPrecio[catalogId] = numToStr(pr.precioUnitario)
+                if (pr.temporalidad != null) pTemporalidad[catalogId] = pr.temporalidad
+                if (pr.apoyoAct != null) pApoyoAct[catalogId] = pr.apoyoAct
+                val lugares = repo.economiaLugaresOnce(pr.id).map { it.lugarVentaId }.toSet()
+                if (lugares.isNotEmpty()) pLugares[catalogId] = SnapshotStringSet(lugares)
+            }
+            message = "Editando encuesta. Corrija y pulse \"Guardar encuesta\"."
+            mode = "captura"
+        }
+        Unit
     }
 
     Column(
@@ -234,11 +290,16 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
                                                         "${rondas.firstOrNull { it.id == e.rondaId }?.nombre ?: "-"} · ${e.fecha}",
                                                         style = MaterialTheme.typography.bodySmall
                                                     )
+                                                    Text("Revisión: ${estadoRevisionLabel(e.estado)}", style = MaterialTheme.typography.bodySmall)
                                                 }
                                                 EcoSyncChip(e.syncState)
                                             }
                                             if (e.syncState == SyncState.ERROR && e.lastError != null) {
                                                 Text("Error de sync: ${e.lastError}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                                            }
+                                            // Editable si no esta aprobada (offline/devuelta): corregir y reenviar.
+                                            if (e.estado != "aprobada") {
+                                                OutlinedButton(onClick = { editar(e) }) { Text("Editar") }
                                             }
                                         }
                                     }
@@ -434,7 +495,7 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
                             runCatching {
                                 val existente = repo.economiaEncuestaForFamilyRonda(fid, rid)
                                 val encuesta = EconomiaEncuestaEntity(
-                                    id = existente?.id ?: java.util.UUID.randomUUID().toString(),
+                                    id = editandoId ?: existente?.id ?: java.util.UUID.randomUUID().toString(),
                                     projectId = pid,
                                     familyId = fid,
                                     rondaId = rid,
@@ -654,6 +715,17 @@ private val TEMPORALIDADES = listOf(
     "diario" to "Diario", "semanal" to "Semanal", "quincenal" to "Quincenal", "mensual" to "Mensual",
     "trimestral" to "Trimestral", "semestral" to "Semestral", "anual" to "Anual"
 )
+
+private fun numToStr(v: Double?): String =
+    v?.let { if (it % 1.0 == 0.0) it.toLong().toString() else it.toString() } ?: ""
+
+private fun estadoRevisionLabel(estado: String): String = when (estado) {
+    "aprobada" -> "Aprobada"
+    "devuelta" -> "Devuelta (corregir y reenviar)"
+    "cerrada" -> "Cerrada"
+    "borrador" -> "Borrador"
+    else -> "Enviada (pendiente de revisión)"
+}
 
 private fun pasoLabel(step: Int): String = when (step) {
     0 -> "Paso 1 de 4: Datos generales"

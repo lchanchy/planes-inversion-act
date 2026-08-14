@@ -67,6 +67,12 @@ class RestauracionRepository(
     suspend fun economiaEncuestaForFamilyRonda(familyId: String, rondaId: String) =
         db.economiaDao().encuestaForFamilyRonda(familyId, rondaId)
 
+    // Lecturas puntuales de hijos (para editar una encuesta desde la bandeja).
+    suspend fun economiaApoyosOnce(encuestaId: String) = db.economiaDao().apoyosOnce(encuestaId)
+    suspend fun economiaPagosOnce(encuestaId: String) = db.economiaDao().pagosOnce(encuestaId)
+    suspend fun economiaProductosOnce(encuestaId: String) = db.economiaDao().productosEncuestaOnce(encuestaId)
+    suspend fun economiaLugaresOnce(encuestaProductoId: String) = db.economiaDao().lugaresDeProductoOnce(encuestaProductoId)
+
     // Guarda la encuesta completa offline (cabecera + hijos), marcada PENDING_SYNC.
     // Reemplaza los hijos previos: soporta re-guardar/editar una encuesta existente.
     suspend fun guardarEncuestaEconomia(
@@ -235,7 +241,14 @@ class RestauracionRepository(
             eco.replaceFamiliasEconomia(remote.economiaFamilias())
             // Encuestas existentes (para saber que monitoreos ya tiene cada familia).
             // insert-if-new: no pisa capturas locales pendientes.
-            eco.insertEncuestasIfNew(remote.economiaEncuestas())
+            val serverEncuestas = remote.economiaEncuestas()
+            eco.insertEncuestasIfNew(serverEncuestas)
+            // Reflejar el estado de revision (Web -> App), solo en filas ya sincronizadas:
+            // 'devuelta' reactiva la encuesta como pendiente/offline para editar y reenviar.
+            serverEncuestas.forEach { s ->
+                if (s.estado == "devuelta") eco.markEncuestaDevuelta(s.id)
+                else eco.updateSyncedEncuestaEstado(s.id, s.estado)
+            }
         }
     }
 
@@ -636,7 +649,13 @@ class RestauracionRepository(
         // encuesta -> apoyos -> pagos -> productos -> lugares de venta.
         // Aislado del bloque anterior; no altera el orden de planes/entregas.
         val economiaDao = db.economiaDao()
+        // Estados en el servidor: si la web ya aprobo una encuesta, NO re-subirla con datos viejos.
+        val economiaServerEstados = runCatching { remote.economiaEncuestas().associate { it.id to it.estado } }.getOrDefault(emptyMap())
         economiaDao.pendingEncuestas().forEach { item ->
+            if (economiaServerEstados[item.id] == "aprobada") {
+                economiaDao.updateEncuesta(item.copy(syncState = SyncState.SYNCED, estado = "aprobada", lastError = null))
+                return@forEach
+            }
             runCatching {
                 remote.uploadEconomiaEncuesta(item)
                 economiaDao.updateEncuesta(item.copy(syncState = SyncState.SYNCED, lastError = null))
