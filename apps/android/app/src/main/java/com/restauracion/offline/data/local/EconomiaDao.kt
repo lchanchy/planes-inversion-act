@@ -137,6 +137,11 @@ interface EconomiaDao {
     @Query("select * from economia_encuestas order by fecha desc")
     fun allEncuestas(): Flow<List<EconomiaEncuestaEntity>>
 
+    // Descarga de encuestas del servidor (para saber que monitoreos ya tiene cada familia).
+    // IGNORE: no pisa una encuesta capturada localmente que aun esta pendiente de subir.
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertEncuestasIfNew(items: List<EconomiaEncuestaEntity>)
+
     @Query("select * from economia_encuestas where familyId = :familyId order by fecha desc")
     fun encuestasForFamily(familyId: String): Flow<List<EconomiaEncuestaEntity>>
 

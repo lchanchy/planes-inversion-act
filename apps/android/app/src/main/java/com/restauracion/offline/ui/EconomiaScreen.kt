@@ -268,6 +268,25 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
                     }
                     Text("Departamento/Municipio: ${municipioNombre ?: "-"}", style = MaterialTheme.typography.bodySmall)
                     Text("Vereda o comunidad: ${veredaNombre ?: "-"}", style = MaterialTheme.typography.bodySmall)
+                    // Indicador de progreso: que monitoreos ya tiene la familia y cual le corresponde.
+                    val hechasIds = allEncuestas.filter { it.familyId == family.id }.map { it.rondaId }.toSet()
+                    val hechas = rondas.filter { it.id in hechasIds }.sortedBy { it.orden }
+                    val siguiente = rondas.sortedBy { it.orden }.firstOrNull { it.id !in hechasIds }
+                    Text(
+                        "Monitoreos realizados: ${if (hechas.isEmpty()) "ninguno" else hechas.joinToString { it.nombre }}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    if (siguiente != null) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Le corresponde: ${siguiente.nombre}", style = MaterialTheme.typography.bodyMedium)
+                            if (rondaId != siguiente.id) {
+                                OutlinedButton(onClick = { rondaId = siguiente.id }) { Text("Usar") }
+                            }
+                        }
+                    } else {
+                        Text("Ya tiene todos los monitoreos registrados.", style = MaterialTheme.typography.bodySmall)
+                    }
                 } else if (projectId == null) {
                     Text("Seleccione primero el proyecto.", style = MaterialTheme.typography.bodySmall)
                 } else {

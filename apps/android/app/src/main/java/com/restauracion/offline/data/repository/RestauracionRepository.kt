@@ -233,6 +233,9 @@ class RestauracionRepository(
             eco.replaceTiposPago(remote.economiaTiposPago())
             eco.replaceLugaresVenta(remote.economiaLugaresVenta())
             eco.replaceFamiliasEconomia(remote.economiaFamilias())
+            // Encuestas existentes (para saber que monitoreos ya tiene cada familia).
+            // insert-if-new: no pisa capturas locales pendientes.
+            eco.insertEncuestasIfNew(remote.economiaEncuestas())
         }
     }
 

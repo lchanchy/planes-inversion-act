@@ -483,6 +483,14 @@ class SupabaseRestClient(
         }.body<List<EconomiaFamiliaDto>>().map { it.toEntity() }
     }
 
+    // Encuestas existentes (para saber que monitoreos ya tiene cada familia). Solo cabecera.
+    suspend fun economiaEncuestas(): List<EconomiaEncuestaEntity> = withAuth {
+        requireConfigured()
+        client.get("$baseUrl/rest/v1/economia_encuestas?select=id,project_id,family_id,ronda_id,equipo_id,encuestador_id,fecha,cambio_num_personas,personas_ninos,personas_adolescentes,personas_jovenes,personas_adultos,personas_mayores,recibe_apoyo_gobierno,recibe_otros_pagos,valor_jornal,estado,observaciones&is_deleted=eq.false") {
+            authHeaders()
+        }.body<List<EconomiaEncuestaDownloadDto>>().map { it.toEntity() }
+    }
+
     // --- Captura (push) --- upsert por id (Prefer merge-duplicates).
     suspend fun uploadEconomiaEncuesta(item: EconomiaEncuestaEntity) = withAuth {
         requireConfigured()
@@ -1020,6 +1028,50 @@ private data class UserProfileDto(val id: String)
     @SerialName("family_id") val familyId: String? = null,
     val activo: Boolean? = null, val notas: String? = null
 ) { fun toEntity() = EconomiaFamiliaEntity(id, projectId ?: "", familyId ?: "", activo ?: true, notas) }
+
+@Serializable private data class EconomiaEncuestaDownloadDto(
+    val id: String,
+    @SerialName("project_id") val projectId: String? = null,
+    @SerialName("family_id") val familyId: String? = null,
+    @SerialName("ronda_id") val rondaId: String? = null,
+    @SerialName("equipo_id") val equipoId: String? = null,
+    @SerialName("encuestador_id") val encuestadorId: String? = null,
+    val fecha: String? = null,
+    @SerialName("cambio_num_personas") val cambioNumPersonas: Boolean? = null,
+    @SerialName("personas_ninos") val personasNinos: Int? = null,
+    @SerialName("personas_adolescentes") val personasAdolescentes: Int? = null,
+    @SerialName("personas_jovenes") val personasJovenes: Int? = null,
+    @SerialName("personas_adultos") val personasAdultos: Int? = null,
+    @SerialName("personas_mayores") val personasMayores: Int? = null,
+    @SerialName("recibe_apoyo_gobierno") val recibeApoyoGobierno: Boolean? = null,
+    @SerialName("recibe_otros_pagos") val recibeOtrosPagos: Boolean? = null,
+    @SerialName("valor_jornal") val valorJornal: Double? = null,
+    val estado: String? = null,
+    val observaciones: String? = null
+) {
+    fun toEntity() = EconomiaEncuestaEntity(
+        id = id,
+        projectId = projectId ?: "",
+        familyId = familyId ?: "",
+        rondaId = rondaId ?: "",
+        equipoId = equipoId,
+        encuestadorId = encuestadorId,
+        fecha = fecha ?: "",
+        cambioNumPersonas = cambioNumPersonas,
+        personasNinos = personasNinos,
+        personasAdolescentes = personasAdolescentes,
+        personasJovenes = personasJovenes,
+        personasAdultos = personasAdultos,
+        personasMayores = personasMayores,
+        recibeApoyoGobierno = recibeApoyoGobierno,
+        recibeOtrosPagos = recibeOtrosPagos,
+        valorJornal = valorJornal,
+        estado = estado ?: "completada",
+        observaciones = observaciones,
+        syncState = SyncState.SYNCED,
+        lastError = null
+    )
+}
 
 // --- Captura (push) --- las columnas generadas (personas_total, ingreso_mensual) NO se envian.
 @Serializable private data class EconomiaEncuestaUploadDto(
