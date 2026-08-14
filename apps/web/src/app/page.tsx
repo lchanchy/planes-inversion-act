@@ -56,9 +56,11 @@ import type {
   Role,
   UserMunicipalityAssignment,
   Village,
+  EconomiaCategoria,
   EconomiaProductoCatalogo,
   EconomiaTipoApoyo,
   EconomiaTipoPago,
+  EconomiaLugarVenta,
   EconomiaRonda,
   EconomiaEncuesta,
   EconomiaEncuestaApoyo,
@@ -12981,8 +12983,12 @@ function EconomiaAnalytics({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [rondas, setRondas] = useState<EconomiaRonda[]>([]);
   const [productosCat, setProductosCat] = useState<EconomiaProductoCatalogo[]>([]);
+  const [categoriasCat, setCategoriasCat] = useState<EconomiaCategoria[]>([]);
+  const [lugaresVenta, setLugaresVenta] = useState<EconomiaLugarVenta[]>([]);
   const [tiposApoyo, setTiposApoyo] = useState<EconomiaTipoApoyo[]>([]);
   const [tiposPago, setTiposPago] = useState<EconomiaTipoPago[]>([]);
+  const [catalogoMsg, setCatalogoMsg] = useState<string | null>(null);
+  const [subiendoCatalogo, setSubiendoCatalogo] = useState(false);
   const [encuestas, setEncuestas] = useState<EconomiaEncuesta[]>([]);
   const [apoyos, setApoyos] = useState<EconomiaEncuestaApoyo[]>([]);
   const [pagos, setPagos] = useState<EconomiaEncuestaPago[]>([]);
@@ -13002,9 +13008,11 @@ function EconomiaAnalytics({
     setLoading(true);
     setSchemaError(null);
     setLoadError(null);
-    const [rondasRes, productosCatRes, tiposApoyoRes, tiposPagoRes, encuestasRes, apoyosRes, pagosRes, productosRes] = await Promise.all([
+    const [rondasRes, productosCatRes, categoriasRes, lugaresRes, tiposApoyoRes, tiposPagoRes, encuestasRes, apoyosRes, pagosRes, productosRes] = await Promise.all([
       supabase.from("economia_rondas").select("*").eq("is_deleted", false).order("orden"),
       supabase.from("economia_productos").select("*").eq("is_deleted", false).order("orden"),
+      supabase.from("economia_categorias").select("*").eq("is_deleted", false).order("orden"),
+      supabase.from("economia_lugares_venta").select("*").eq("is_deleted", false).order("orden"),
       supabase.from("economia_tipos_apoyo").select("*").eq("is_deleted", false).order("orden"),
       supabase.from("economia_tipos_pago").select("*").eq("is_deleted", false).order("orden"),
       supabase.from("economia_encuestas").select("*").eq("is_deleted", false),
@@ -13012,7 +13020,7 @@ function EconomiaAnalytics({
       supabase.from("economia_encuesta_pagos").select("*").eq("is_deleted", false),
       supabase.from("economia_encuesta_productos").select("*").eq("is_deleted", false)
     ]);
-    const results = [rondasRes, productosCatRes, tiposApoyoRes, tiposPagoRes, encuestasRes, apoyosRes, pagosRes, productosRes];
+    const results = [rondasRes, productosCatRes, categoriasRes, lugaresRes, tiposApoyoRes, tiposPagoRes, encuestasRes, apoyosRes, pagosRes, productosRes];
     const missing = results.some((r) => r.error && isMissingTableError(r.error));
     if (missing) {
       setSchemaError(
@@ -13029,6 +13037,8 @@ function EconomiaAnalytics({
     }
     setRondas((rondasRes.data as EconomiaRonda[]) ?? []);
     setProductosCat((productosCatRes.data as EconomiaProductoCatalogo[]) ?? []);
+    setCategoriasCat((categoriasRes.data as EconomiaCategoria[]) ?? []);
+    setLugaresVenta((lugaresRes.data as EconomiaLugarVenta[]) ?? []);
     setTiposApoyo((tiposApoyoRes.data as EconomiaTipoApoyo[]) ?? []);
     setTiposPago((tiposPagoRes.data as EconomiaTipoPago[]) ?? []);
     setEncuestas((encuestasRes.data as EconomiaEncuesta[]) ?? []);
@@ -13075,6 +13085,122 @@ function EconomiaAnalytics({
     }
     setRevisionMsg(estado === "aprobada" ? "Encuesta aprobada." : "Encuesta devuelta. El técnico la verá para corregir tras “Descargar”.");
     await loadEconomia();
+  }
+
+  async function descargarCatalogos() {
+    const ExcelJS = await import("exceljs");
+    const workbook = new ExcelJS.Workbook();
+    const catCodigoById = new Map(categoriasCat.map((c) => [c.id, c.codigo]));
+
+    const sp = workbook.addWorksheet("Productos");
+    sp.addRow(["categoria_codigo", "codigo", "nombre", "es_pecuario", "unidad_base", "orden", "activo"]);
+    productosCat.forEach((p) =>
+      sp.addRow([catCodigoById.get(p.categoria_id) ?? "", p.codigo, p.nombre, p.es_pecuario ? "SI" : "NO", p.unidad_base, p.orden, p.activo ? "SI" : "NO"])
+    );
+    sp.getRow(1).font = { bold: true };
+
+    const simples: Array<[string, { codigo: string; nombre: string; orden: number; activo: boolean }[]]> = [
+      ["Categorias", categoriasCat],
+      ["LugaresVenta", lugaresVenta],
+      ["TiposApoyo", tiposApoyo],
+      ["TiposPago", tiposPago]
+    ];
+    simples.forEach(([nombre, filas]) => {
+      const s = workbook.addWorksheet(nombre);
+      s.addRow(["codigo", "nombre", "orden", "activo"]);
+      filas.forEach((f) => s.addRow([f.codigo, f.nombre, f.orden, f.activo ? "SI" : "NO"]));
+      s.getRow(1).font = { bold: true };
+    });
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    saveBlob(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), `economia-catalogos-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  }
+
+  async function subirCatalogos(file: File | null) {
+    if (!file) return;
+    setSubiendoCatalogo(true);
+    setCatalogoMsg(null);
+    try {
+      const ExcelJS = await import("exceljs");
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(await file.arrayBuffer());
+      const siNo = (v: string) => !(v.trim().toUpperCase() === "NO" || v.trim() === "0" || v.trim().toLowerCase() === "false");
+      const leer = (nombre: string, campos: string[]) => {
+        const sheet = workbook.worksheets.find((s) => normalizeHeader(s.name) === normalizeHeader(nombre));
+        if (!sheet) return [] as Array<Record<string, string>>;
+        const headers = excelHeaderMap(sheet);
+        const filas: Array<Record<string, string>> = [];
+        for (let n = 2; n <= sheet.rowCount; n += 1) {
+          const row = sheet.getRow(n);
+          if (!excelRowHasValue(row)) continue;
+          const obj: Record<string, string> = {};
+          campos.forEach((campo) => {
+            obj[campo] = materialExcelValue(row, headers, [campo]);
+          });
+          filas.push(obj);
+        }
+        return filas;
+      };
+      const resumen: string[] = [];
+
+      // Categorias primero (los productos referencian su codigo).
+      const cats = leer("Categorias", ["codigo", "nombre", "orden", "activo"]).filter((r) => r.codigo);
+      if (cats.length) {
+        const { error } = await supabase.from("economia_categorias").upsert(
+          cats.map((r) => ({ codigo: r.codigo, nombre: r.nombre || r.codigo, orden: Number(r.orden) || 0, activo: siNo(r.activo || "SI") })),
+          { onConflict: "codigo" }
+        );
+        if (error) throw new Error(`Categorías: ${getErrorMessage(error)}`);
+        resumen.push(`${cats.length} categoría(s)`);
+      }
+      const { data: catsNow } = await supabase.from("economia_categorias").select("id,codigo").eq("is_deleted", false);
+      const catIdByCodigo = new Map(((catsNow as { id: string; codigo: string }[]) ?? []).map((c) => [c.codigo, c.id]));
+
+      // Productos.
+      const prods = leer("Productos", ["categoria_codigo", "codigo", "nombre", "es_pecuario", "unidad_base", "orden", "activo"]).filter((r) => r.codigo);
+      if (prods.length) {
+        const payload = prods.map((r) => {
+          const catId = catIdByCodigo.get(r.categoria_codigo);
+          if (!catId) throw new Error(`Producto "${r.codigo}": la categoría "${r.categoria_codigo}" no existe (créela en la hoja Categorias).`);
+          const unidad = (r.unidad_base || "kg").toLowerCase() === "animal" ? "animal" : "kg";
+          return {
+            categoria_id: catId,
+            codigo: r.codigo,
+            nombre: r.nombre || r.codigo,
+            es_pecuario: siNo(r.es_pecuario || (unidad === "animal" ? "SI" : "NO")),
+            unidad_base: unidad,
+            orden: Number(r.orden) || 0,
+            activo: siNo(r.activo || "SI")
+          };
+        });
+        const { error } = await supabase.from("economia_productos").upsert(payload, { onConflict: "codigo" });
+        if (error) throw new Error(`Productos: ${getErrorMessage(error)}`);
+        resumen.push(`${payload.length} producto(s)`);
+      }
+
+      // Catalogos simples.
+      const simples: Array<[string, string]> = [
+        ["LugaresVenta", "economia_lugares_venta"],
+        ["TiposApoyo", "economia_tipos_apoyo"],
+        ["TiposPago", "economia_tipos_pago"]
+      ];
+      for (const [hoja, tabla] of simples) {
+        const filas = leer(hoja, ["codigo", "nombre", "orden", "activo"]).filter((r) => r.codigo);
+        if (!filas.length) continue;
+        const { error } = await supabase.from(tabla).upsert(
+          filas.map((r) => ({ codigo: r.codigo, nombre: r.nombre || r.codigo, orden: Number(r.orden) || 0, activo: siNo(r.activo || "SI") })),
+          { onConflict: "codigo" }
+        );
+        if (error) throw new Error(`${hoja}: ${getErrorMessage(error)}`);
+        resumen.push(`${filas.length} de ${hoja}`);
+      }
+
+      setCatalogoMsg(resumen.length ? `Actualizado: ${resumen.join(", ")}. Recuerde "Descargar" en la app.` : "El archivo no tenía filas para actualizar.");
+      await loadEconomia();
+    } catch (e) {
+      setCatalogoMsg(`No fue posible subir (¿rol administrador y hojas correctas?): ${getErrorMessage(e)}`);
+    }
+    setSubiendoCatalogo(false);
   }
 
   const municById = useMemo(() => new Map(municipalities.map((m) => [m.id, m] as const)), [municipalities]);
@@ -13364,6 +13490,31 @@ function EconomiaAnalytics({
               </button>
             </div>
             {rondaMsg ? <div className="muted">{rondaMsg}</div> : null}
+          </div>
+
+          <div className="panel">
+            <div className="panel-heading">Catálogos de Economía (productos, lugares de venta, categorías) por Excel</div>
+            <div className="muted">
+              Descargue el Excel, edítelo (agregar/quitar/renombrar productos, lugares de venta, categorías, tipos de apoyo/pago) y vuélvalo a subir. Se actualiza por &quot;codigo&quot; (upsert). Hojas: Productos, Categorias, LugaresVenta, TiposApoyo, TiposPago. (Requiere rol administrador.)
+            </div>
+            <div className="chip-list">
+              <button className="secondary" type="button" onClick={() => void descargarCatalogos()}>Descargar catálogos (Excel)</button>
+              <label className="secondary" style={{ cursor: "pointer" }}>
+                {subiendoCatalogo ? "Subiendo…" : "Subir catálogos (Excel)"}
+                <input
+                  type="file"
+                  accept=".xlsx"
+                  disabled={subiendoCatalogo}
+                  style={{ display: "none" }}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0] ?? null;
+                    e.target.value = "";
+                    void subirCatalogos(f);
+                  }}
+                />
+              </label>
+            </div>
+            {catalogoMsg ? <div className="muted">{catalogoMsg}</div> : null}
           </div>
 
           <div className="summary-grid">

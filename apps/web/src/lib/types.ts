@@ -465,6 +465,14 @@ export type EconomiaTipoPago = {
   activo: boolean;
 };
 
+export type EconomiaLugarVenta = {
+  id: string;
+  codigo: string;
+  nombre: string;
+  orden: number;
+  activo: boolean;
+};
+
 export type EconomiaRonda = {
   id: string;
   codigo: string;
