@@ -179,23 +179,71 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
                 val pendientes = allEncuestas.count { it.syncState != SyncState.SYNCED }
                 Text("${allEncuestas.size} encuesta(s) · $pendientes pendiente(s) de enviar", style = MaterialTheme.typography.bodySmall)
             }
-            if (allEncuestas.isEmpty()) {
-                EcoPanel { Text("No hay encuestas guardadas todavía. Pulse \"Nueva encuesta\".", style = MaterialTheme.typography.bodyMedium) }
-            } else {
-                allEncuestas.forEach { e ->
-                    EcoPanel {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(famNombre[e.familyId] ?: "(familia)", style = MaterialTheme.typography.titleSmall)
-                                Text(
-                                    "${rondas.firstOrNull { it.id == e.rondaId }?.nombre ?: "-"} · ${e.fecha}",
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                                if (e.syncState == SyncState.ERROR && e.lastError != null) {
-                                    Text(e.lastError, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            var outboxExpanded by remember { mutableStateOf(true) }
+            Box(modifier = Modifier.fillMaxWidth().glassmorphism()) {
+                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Bandeja de salida (${allEncuestas.size})", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                            Text("Encuestas creadas y enviadas", style = MaterialTheme.typography.bodySmall)
+                        }
+                        OutlinedButton(onClick = { outboxExpanded = !outboxExpanded }) {
+                            Text(if (outboxExpanded) "Ocultar" else "Abrir")
+                        }
+                    }
+                    if (outboxExpanded) {
+                        if (allEncuestas.isEmpty()) {
+                            Text(
+                                "No hay encuestas en la bandeja de salida.",
+                                modifier = Modifier.padding(16.dp),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            var selectedTab by remember { mutableStateOf(0) }
+                            val tabs = listOf("Solo guardados offline", "Sincronizados")
+                            androidx.compose.material3.TabRow(selectedTabIndex = selectedTab) {
+                                tabs.forEachIndexed { index, title ->
+                                    androidx.compose.material3.Tab(
+                                        selected = selectedTab == index,
+                                        onClick = { selectedTab = index },
+                                        text = { Text(title) }
+                                    )
                                 }
                             }
-                            EcoSyncChip(e.syncState)
+                            val mostradas = if (selectedTab == 0) {
+                                allEncuestas.filter { it.syncState != SyncState.SYNCED }
+                            } else {
+                                allEncuestas.filter { it.syncState == SyncState.SYNCED }
+                            }
+                            if (mostradas.isEmpty()) {
+                                Text(
+                                    "No hay encuestas en esta categoría.",
+                                    modifier = Modifier.padding(16.dp),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            } else {
+                                mostradas.forEach { e ->
+                                    Box(modifier = Modifier.fillMaxWidth().glassmorphism()) {
+                                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(famNombre[e.familyId] ?: "(familia)", style = MaterialTheme.typography.titleSmall)
+                                                    Text(
+                                                        "${rondas.firstOrNull { it.id == e.rondaId }?.nombre ?: "-"} · ${e.fecha}",
+                                                        style = MaterialTheme.typography.bodySmall
+                                                    )
+                                                }
+                                                EcoSyncChip(e.syncState)
+                                            }
+                                            if (e.syncState == SyncState.ERROR && e.lastError != null) {
+                                                Text("Error de sync: ${e.lastError}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
