@@ -12927,6 +12927,21 @@ function formatMoney(value: number) {
   }).format(value);
 }
 
+function estadoRevisionLabel(estado: string): string {
+  switch (estado) {
+    case "aprobada":
+      return "Aprobada";
+    case "devuelta":
+      return "Devuelta para corrección";
+    case "cerrada":
+      return "Cerrada";
+    case "borrador":
+      return "Borrador";
+    default:
+      return "Enviada (pendiente de revisión)";
+  }
+}
+
 // ==========================================================================
 // Fase 8: Economia Familiar - modulo web analitico (solo lectura + exportacion).
 // Carga sus propias tablas economia_* (aislado del loadAll principal) y presenta
@@ -13046,6 +13061,15 @@ function EconomiaAnalytics({
       await loadEconomia();
     }
     setAgregandoRonda(false);
+  }
+
+  async function cambiarEstadoEncuesta(encuestaId: string, estado: string) {
+    const { error } = await supabase.from("economia_encuestas").update({ estado }).eq("id", encuestaId);
+    if (error) {
+      setRondaMsg(`No fue posible cambiar el estado (¿rol administrador?): ${getErrorMessage(error)}`);
+      return;
+    }
+    await loadEconomia();
   }
 
   const municById = useMemo(() => new Map(municipalities.map((m) => [m.id, m] as const)), [municipalities]);
@@ -13481,6 +13505,7 @@ function EconomiaAnalytics({
                     const prods = productos.filter((p) => p.encuesta_id === r.encuestaId);
                     const aps = apoyos.filter((a) => a.encuesta_id === r.encuestaId);
                     const pgs = pagos.filter((p) => p.encuesta_id === r.encuestaId);
+                    const estado = encuestas.find((e) => e.id === r.encuestaId)?.estado ?? "completada";
                     return (
                       <Fragment key={r.encuestaId}>
                         <tr>
@@ -13505,6 +13530,16 @@ function EconomiaAnalytics({
                           <tr>
                             <td colSpan={12}>
                               <div className="panel">
+                                <div className="panel-heading">Revisión: {estadoRevisionLabel(estado)}</div>
+                                <div className="chip-list">
+                                  <button className="secondary" type="button" disabled={estado === "aprobada"} onClick={() => void cambiarEstadoEncuesta(r.encuestaId, "aprobada")}>
+                                    Aprobar
+                                  </button>
+                                  <button className="secondary" type="button" disabled={estado === "devuelta"} onClick={() => void cambiarEstadoEncuesta(r.encuestaId, "devuelta")}>
+                                    Devolver para corrección
+                                  </button>
+                                </div>
+                                <div className="muted">Aprobar deja la encuesta como definitiva. Devolver la reactiva en la app del técnico para editar y reenviar.</div>
                                 <div className="panel-heading">Productos que generan ingreso</div>
                                 <div className="tracking-table-wrapper">
                                   <table className="tracking-table">
