@@ -13418,10 +13418,6 @@ function EconomiaAnalytics({
       <div className="toolbar">
         <div>
           <h2>Economía Familiar</h2>
-          <div className="muted">
-            Fuentes de ingreso por familia y su comparación por vereda, municipio y departamento.
-            {projects.length > 0 ? "" : " (Seleccione un proyecto para ver datos.)"}
-          </div>
         </div>
         <button className="secondary" type="button" onClick={() => void exportarExcel()} disabled={loading}>
           Descargar Excel Economía
@@ -13466,9 +13462,6 @@ function EconomiaAnalytics({
           <>
           <div className="panel">
             <div className="panel-heading">Monitoreos (rondas)</div>
-            <div className="muted">
-              Puede crear los monitoreos que necesite, sin límite. Cada uno se vuelve una columna en la comparación entre rondas y aparece en la app tras &quot;Descargar&quot;. (Requiere rol administrador.)
-            </div>
             <div className="chip-list">
               {rondas.map((r) => (
                 <span key={r.id} className="chip">
@@ -13493,10 +13486,7 @@ function EconomiaAnalytics({
           </div>
 
           <div className="panel">
-            <div className="panel-heading">Catálogos de Economía (productos, lugares de venta, categorías) por Excel</div>
-            <div className="muted">
-              Descargue el Excel, edítelo (agregar/quitar/renombrar productos, lugares de venta, categorías, tipos de apoyo/pago) y vuélvalo a subir. Se actualiza por &quot;codigo&quot; (upsert). Hojas: Productos, Categorias, LugaresVenta, TiposApoyo, TiposPago. (Requiere rol administrador.)
-            </div>
+            <div className="panel-heading">Catálogos por Excel</div>
             <div className="chip-list">
               <button className="secondary" type="button" onClick={() => void descargarCatalogos()}>Descargar catálogos (Excel)</button>
               <label className="secondary" style={{ cursor: "pointer" }}>
@@ -13607,7 +13597,6 @@ function EconomiaAnalytics({
                   <option value="vereda">Vereda</option>
                 </select>
               </label>
-              <div className="muted">Cada ronda es una columna; se agregan solas al crear nuevas rondas. El ingreso es el total mensual (productos + gobierno + otros).</div>
             </div>
             <div className="tracking-table-wrapper">
               <table className="tracking-table">
@@ -13646,8 +13635,7 @@ function EconomiaAnalytics({
           ) : null}
 
           <div className="panel">
-            <div className="panel-heading">Encuestas — revisar (aprobar / devolver)</div>
-            <div className="muted">Aprobar deja la encuesta como definitiva. Devolver la reactiva en la app del técnico para corregir y reenviar. Pulse &quot;Ver&quot; para el desglose de ingresos.</div>
+            <div className="panel-heading">Encuestas</div>
             <div className="panel grid compact-panel">
               <label>
                 Estado
