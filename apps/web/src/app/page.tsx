@@ -12994,6 +12994,9 @@ function EconomiaAnalytics({
   const [nuevoMonitoreo, setNuevoMonitoreo] = useState("");
   const [rondaMsg, setRondaMsg] = useState<string | null>(null);
   const [agregandoRonda, setAgregandoRonda] = useState(false);
+  const [mostrarAnalisis, setMostrarAnalisis] = useState(false);
+  const [estadoFilter, setEstadoFilter] = useState("all");
+  const [revisionMsg, setRevisionMsg] = useState<string | null>(null);
 
   const loadEconomia = useCallback(async () => {
     setLoading(true);
@@ -13064,11 +13067,13 @@ function EconomiaAnalytics({
   }
 
   async function cambiarEstadoEncuesta(encuestaId: string, estado: string) {
+    setRevisionMsg(null);
     const { error } = await supabase.from("economia_encuestas").update({ estado }).eq("id", encuestaId);
     if (error) {
-      setRondaMsg(`No fue posible cambiar el estado (¿rol administrador?): ${getErrorMessage(error)}`);
+      setRevisionMsg(`No fue posible cambiar el estado (¿tiene rol administrador?): ${getErrorMessage(error)}`);
       return;
     }
+    setRevisionMsg(estado === "aprobada" ? "Encuesta aprobada." : "Encuesta devuelta. El técnico la verá para corregir tras “Descargar”.");
     await loadEconomia();
   }
 
@@ -13325,6 +13330,14 @@ function EconomiaAnalytics({
             </label>
           </div>
 
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <button className="secondary" type="button" onClick={() => setMostrarAnalisis((v) => !v)}>
+              {mostrarAnalisis ? "Ocultar análisis, comparaciones y monitoreos" : "Mostrar análisis, comparaciones y monitoreos"}
+            </button>
+          </div>
+
+          {mostrarAnalisis ? (
+          <>
           <div className="panel">
             <div className="panel-heading">Monitoreos (rondas)</div>
             <div className="muted">
@@ -13478,19 +13491,35 @@ function EconomiaAnalytics({
             </div>
           </div>
 
+          </>
+          ) : null}
+
           <div className="panel">
-            <div className="panel-heading">Detalle por familia</div>
-            <div className="muted">Pulse &quot;Ver&quot; para desglosar los ingresos de cada familia por fuente (productos con cantidades y valor, apoyos del gobierno y otros ingresos).</div>
+            <div className="panel-heading">Encuestas — revisar (aprobar / devolver)</div>
+            <div className="muted">Aprobar deja la encuesta como definitiva. Devolver la reactiva en la app del técnico para corregir y reenviar. Pulse &quot;Ver&quot; para el desglose de ingresos.</div>
+            <div className="panel grid compact-panel">
+              <label>
+                Estado
+                <select value={estadoFilter} onChange={(e) => setEstadoFilter(e.target.value)}>
+                  <option value="all">Todos</option>
+                  <option value="completada">Enviadas (por revisar)</option>
+                  <option value="aprobada">Aprobadas</option>
+                  <option value="devuelta">Devueltas</option>
+                </select>
+              </label>
+            </div>
+            {revisionMsg ? <div className="muted">{revisionMsg}</div> : null}
             <div className="tracking-table-wrapper">
               <table className="tracking-table">
                 <thead>
                   <tr>
-                    <th></th>
+                    <th>Acciones</th>
                     <th>Familia</th>
                     <th>Departamento</th>
                     <th>Municipio</th>
                     <th>Vereda</th>
                     <th>Ronda</th>
+                    <th>Estado</th>
                     <th>Personas</th>
                     <th>Ing. productos</th>
                     <th>Ing. gobierno</th>
@@ -13500,7 +13529,9 @@ function EconomiaAnalytics({
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((r) => {
+                  {rows
+                    .filter((r) => estadoFilter === "all" || (encuestas.find((e) => e.id === r.encuestaId)?.estado ?? "completada") === estadoFilter)
+                    .map((r) => {
                     const abierto = expandedEncuesta === r.encuestaId;
                     const prods = productos.filter((p) => p.encuesta_id === r.encuestaId);
                     const aps = apoyos.filter((a) => a.encuesta_id === r.encuestaId);
@@ -13510,15 +13541,24 @@ function EconomiaAnalytics({
                       <Fragment key={r.encuestaId}>
                         <tr>
                           <td>
-                            <button className="secondary" type="button" onClick={() => setExpandedEncuesta(abierto ? null : r.encuestaId)}>
-                              {abierto ? "Ocultar" : "Ver"}
-                            </button>
+                            <div className="chip-list">
+                              <button className="secondary" type="button" onClick={() => setExpandedEncuesta(abierto ? null : r.encuestaId)}>
+                                {abierto ? "Ocultar" : "Ver"}
+                              </button>
+                              <button className="secondary" type="button" disabled={estado === "aprobada"} onClick={() => void cambiarEstadoEncuesta(r.encuestaId, "aprobada")}>
+                                Aprobar
+                              </button>
+                              <button className="secondary" type="button" disabled={estado === "devuelta"} onClick={() => void cambiarEstadoEncuesta(r.encuestaId, "devuelta")}>
+                                Devolver
+                              </button>
+                            </div>
                           </td>
                           <td>{r.familia}</td>
                           <td>{r.departamento}</td>
                           <td>{r.municipio}</td>
                           <td>{r.vereda}</td>
                           <td>{r.ronda}</td>
+                          <td>{estadoRevisionLabel(estado)}</td>
                           <td>{r.personas}</td>
                           <td>{formatMoney(r.ingProductos)}</td>
                           <td>{formatMoney(r.ingGobierno)}</td>
@@ -13528,18 +13568,8 @@ function EconomiaAnalytics({
                         </tr>
                         {abierto ? (
                           <tr>
-                            <td colSpan={12}>
+                            <td colSpan={13}>
                               <div className="panel">
-                                <div className="panel-heading">Revisión: {estadoRevisionLabel(estado)}</div>
-                                <div className="chip-list">
-                                  <button className="secondary" type="button" disabled={estado === "aprobada"} onClick={() => void cambiarEstadoEncuesta(r.encuestaId, "aprobada")}>
-                                    Aprobar
-                                  </button>
-                                  <button className="secondary" type="button" disabled={estado === "devuelta"} onClick={() => void cambiarEstadoEncuesta(r.encuestaId, "devuelta")}>
-                                    Devolver para corrección
-                                  </button>
-                                </div>
-                                <div className="muted">Aprobar deja la encuesta como definitiva. Devolver la reactiva en la app del técnico para editar y reenviar.</div>
                                 <div className="panel-heading">Productos que generan ingreso</div>
                                 <div className="tracking-table-wrapper">
                                   <table className="tracking-table">
@@ -13607,7 +13637,7 @@ function EconomiaAnalytics({
                   })}
                   {rows.length === 0 ? (
                     <tr>
-                      <td colSpan={12} className="muted">
+                      <td colSpan={13} className="muted">
                         No hay encuestas para los filtros seleccionados.
                       </td>
                     </tr>
@@ -13617,6 +13647,7 @@ function EconomiaAnalytics({
             </div>
           </div>
 
+          {mostrarAnalisis ? (
           <div className="panel">
             <div className="panel-heading">Productos con más ingreso</div>
             <div className="tracking-table-wrapper">
@@ -13647,6 +13678,7 @@ function EconomiaAnalytics({
               </table>
             </div>
           </div>
+          ) : null}
         </>
       ) : null}
     </section>
