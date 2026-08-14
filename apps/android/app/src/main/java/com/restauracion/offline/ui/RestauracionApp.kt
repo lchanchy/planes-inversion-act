@@ -87,7 +87,7 @@ import androidx.compose.ui.unit.IntSize
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 
-private enum class Screen { LOGIN, HOME, FAMILY, PLAN, DELIVERY, REASSIGN, ECONOMIA }
+private enum class Screen { LOGIN, MENU, HOME, FAMILY, PLAN, DELIVERY, REASSIGN, ECONOMIA }
 
 private val BrandDark = Color(0xFF145F3B)
 private val BrandPrimary = Color(0xFF1F7A4F)
@@ -150,7 +150,7 @@ fun RestauracionApp(container: AppContainer) {
         val savedScreen = runCatching { Screen.valueOf(container.repository.lastScreen().orEmpty()) }.getOrNull()
         when {
             savedScreen != null && savedScreen != Screen.LOGIN -> savedScreen
-            container.repository.hasSession() -> Screen.HOME
+            container.repository.hasSession() -> Screen.MENU
             else -> Screen.LOGIN
         }
     }
@@ -205,13 +205,39 @@ fun RestauracionApp(container: AppContainer) {
                                 selectedProjectId = null
                                 selectedFamilyId = null
                                 selectedPlanId = null
-                                screenName = Screen.HOME.name
+                                screenName = Screen.MENU.name
                             }.onFailure {
                                 message = it.message ?: "No fue posible iniciar sesion."
                             }
                         }
                     },
-                    onOffline = { screenName = Screen.HOME.name }
+                    onOffline = { screenName = Screen.MENU.name }
+                )
+
+                Screen.MENU -> ModuleMenuScreen(
+                    message = message,
+                    onDownload = {
+                        scope.launch {
+                            runCatching { container.repository.downloadInitialData() }
+                                .onSuccess { message = "Catalogos actualizados." }
+                                .onFailure { message = it.message ?: "Error descargando datos." }
+                        }
+                    },
+                    onSync = {
+                        scope.launch {
+                            runCatching { container.repository.syncPending() }
+                                .onSuccess { message = "Sincronizacion enviada." }
+                                .onFailure { message = it.message ?: "Error sincronizando." }
+                        }
+                    },
+                    onLogout = {
+                        scope.launch {
+                            container.sessionStore.clear()
+                            screenName = Screen.LOGIN.name
+                        }
+                    },
+                    onOpenPlanes = { screenName = Screen.HOME.name },
+                    onOpenEconomia = { screenName = Screen.ECONOMIA.name }
                 )
 
                 Screen.HOME -> HomeScreen(
@@ -243,12 +269,12 @@ fun RestauracionApp(container: AppContainer) {
                         selectedPlanId = null
                         screenName = Screen.FAMILY.name
                     },
-                    onOpenEconomia = { screenName = Screen.ECONOMIA.name }
+                    onBack = { screenName = Screen.MENU.name }
                 )
 
                 Screen.ECONOMIA -> EconomiaScreen(
                     container = container,
-                    onBack = { screenName = Screen.HOME.name }
+                    onBack = { screenName = Screen.MENU.name }
                 )
 
                 Screen.FAMILY -> {
@@ -436,6 +462,43 @@ private fun LoginScreen(
 }
 
 @Composable
+private fun ModuleMenuScreen(
+    message: String?,
+    onDownload: () -> Unit,
+    onSync: () -> Unit,
+    onLogout: () -> Unit,
+    onOpenPlanes: () -> Unit,
+    onOpenEconomia: () -> Unit
+) {
+    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        AppHeader(chip = "Menú principal")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = onDownload) { Text("Descargar") }
+            Button(onClick = onSync) { Text("Sincronizar") }
+            OutlinedButton(onClick = onLogout) { Text("Salir") }
+        }
+        message?.let { Text(friendlyMessage(it), color = MaterialTheme.colorScheme.primary) }
+        Text("¿Qué desea trabajar?", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+        androidx.compose.foundation.layout.Box(
+            modifier = Modifier.fillMaxWidth().glassmorphism().clickable { onOpenPlanes() }
+        ) {
+            Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Planes Operativos", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
+                Text("Proyectos, planes operativos, entregas y actas.", style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+        androidx.compose.foundation.layout.Box(
+            modifier = Modifier.fillMaxWidth().glassmorphism().clickable { onOpenEconomia() }
+        ) {
+            Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Economía Familiar", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
+                Text("Encuestas de ingresos económicos de las familias.", style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+    }
+}
+
+@Composable
 private fun HomeScreen(
     container: AppContainer,
     message: String?,
@@ -443,20 +506,19 @@ private fun HomeScreen(
     onSync: () -> Unit,
     onLogout: () -> Unit,
     onOpenProject: (ProjectEntity) -> Unit,
-    onOpenEconomia: () -> Unit
+    onBack: () -> Unit
 ) {
     // ponytail: auto-actualizar catalogos al entrar a la pantalla principal sin depender del boton manual
     LaunchedEffect(Unit) { onDownload() }
 
     val projects by container.repository.projects.collectAsState(initial = emptyList())
     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        AppHeader(chip = "Proyectos")
+        AppHeader(chip = "Planes Operativos", onBack = onBack)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = onDownload) { Text("Descargar") }
             Button(onClick = onSync) { Text("Sincronizar") }
             OutlinedButton(onClick = onLogout) { Text("Salir") }
         }
-        Button(onClick = onOpenEconomia, modifier = Modifier.fillMaxWidth()) { Text("Economía Familiar") }
         message?.let { Text(friendlyMessage(it), color = MaterialTheme.colorScheme.primary) }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(projects) { project ->
