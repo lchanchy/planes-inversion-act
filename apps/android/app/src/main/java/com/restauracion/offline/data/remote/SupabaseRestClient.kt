@@ -516,7 +516,8 @@ class SupabaseRestClient(
                 recibeOtrosPagos = item.recibeOtrosPagos,
                 valorJornal = item.valorJornal,
                 estado = item.estado,
-                observaciones = item.observaciones
+                observaciones = item.observaciones,
+                createdBy = sessionStore.userId
             )
             setBody(json.encodeToString(payload))
         }
@@ -1092,7 +1093,8 @@ private data class UserProfileDto(val id: String)
     @SerialName("recibe_otros_pagos") val recibeOtrosPagos: Boolean?,
     @SerialName("valor_jornal") val valorJornal: Double?,
     val estado: String,
-    val observaciones: String?
+    val observaciones: String?,
+    @SerialName("created_by") val createdBy: String?
 )
 
 @Serializable private data class EconomiaApoyoUploadDto(

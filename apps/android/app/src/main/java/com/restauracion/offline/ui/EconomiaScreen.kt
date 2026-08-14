@@ -59,7 +59,6 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
     // Catalogos
     val projects by repo.projects.collectAsState(initial = emptyList())
     val rondas by repo.economiaRondas().collectAsState(initial = emptyList())
-    val encuestadores by repo.economiaEncuestadores().collectAsState(initial = emptyList())
     val categorias by repo.economiaCategorias().collectAsState(initial = emptyList())
     val productosCat by repo.economiaProductos().collectAsState(initial = emptyList())
     val tiposApoyo by repo.economiaTiposApoyo().collectAsState(initial = emptyList())
@@ -75,7 +74,6 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
     var departamento by remember { mutableStateOf<String?>(null) }
     var municipioId by remember { mutableStateOf<String?>(null) }
     var veredaId by remember { mutableStateOf<String?>(null) }
-    var encuestadorId by remember { mutableStateOf<String?>(null) }
     var fecha by remember { mutableStateOf(LocalDate.now().toString()) }
 
     val families by repo.families(projectId.orEmpty()).collectAsState(initial = emptyList())
@@ -130,7 +128,7 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
         editandoId = null
         projectId = null; rondaId = null; familyId = null
         departamento = null; municipioId = null; veredaId = null
-        encuestadorId = null; fecha = LocalDate.now().toString()
+        fecha = LocalDate.now().toString()
         cambioPersonas = null; ninos = ""; adolescentes = ""; jovenes = ""; adultos = ""; mayores = ""
         recibeApoyo = null; apoyoSel.clear(); apoyoValor.clear(); apoyoOtroNombre = ""
         recibePagos = null; pagoSel.clear(); pagoValor.clear(); valorJornal = ""
@@ -152,7 +150,6 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
             departamento = muni?.department
             municipioId = fam?.municipalityId
             veredaId = fam?.villageId
-            encuestadorId = e.encuestadorId
             fecha = e.fecha
             cambioPersonas = e.cambioNumPersonas
             ninos = e.personasNinos?.toString() ?: ""
@@ -388,7 +385,6 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
                         ) { familyId = it }
                     }
                 }
-                EcoSelector("Encuestador", encuestadores.firstOrNull { it.id == encuestadorId }?.nombre, encuestadores.map { it.id to it.nombre }) { encuestadorId = it }
                 OutlinedTextField(value = fecha, onValueChange = { fecha = it }, label = { Text("Fecha (AAAA-MM-DD)") }, modifier = Modifier.fillMaxWidth())
             }
 
@@ -500,7 +496,7 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
                                     familyId = fid,
                                     rondaId = rid,
                                     equipoId = null,
-                                    encuestadorId = encuestadorId,
+                                    encuestadorId = null,
                                     fecha = fecha,
                                     cambioNumPersonas = cambioPersonas,
                                     personasNinos = ninos.toIntOrNull(),
