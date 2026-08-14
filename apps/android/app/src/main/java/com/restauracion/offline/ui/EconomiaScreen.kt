@@ -57,7 +57,6 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
 
     // Catalogos
-    val projects by repo.projects.collectAsState(initial = emptyList())
     val rondas by repo.economiaRondas().collectAsState(initial = emptyList())
     val categorias by repo.economiaCategorias().collectAsState(initial = emptyList())
     val productosCat by repo.economiaProductos().collectAsState(initial = emptyList())
@@ -76,8 +75,8 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
     var veredaId by remember { mutableStateOf<String?>(null) }
     var fecha by remember { mutableStateOf(LocalDate.now().toString()) }
 
-    val families by repo.families(projectId.orEmpty()).collectAsState(initial = emptyList())
-    val family = families.firstOrNull { it.id == familyId }
+    val allFamilies by repo.economiaAllFamilies().collectAsState(initial = emptyList())
+    val family = allFamilies.firstOrNull { it.id == familyId }
     val municipioNombre = family?.municipalityId?.let { mid -> municipalities.firstOrNull { it.id == mid }?.name }
     val veredaNombre = family?.villageId?.let { vid -> villages.firstOrNull { it.id == vid }?.name }
 
@@ -121,7 +120,6 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
     var sincronizando by remember { mutableStateOf(false) }
     var editandoId by remember { mutableStateOf<String?>(null) }
     val allEncuestas by repo.economiaEncuestasAll().collectAsState(initial = emptyList())
-    val allFamilies by repo.economiaAllFamilies().collectAsState(initial = emptyList())
     val famNombre = allFamilies.associate { it.id to "${it.familyCode} - ${it.representativeName}" }
     val resetForm = {
         step = 0
@@ -310,50 +308,32 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
         when (step) {
             0 -> EcoPanel {
                 EcoTitle("1. Datos generales")
-                EcoSelector("Proyecto", projects.firstOrNull { it.id == projectId }?.name, projects.map { it.id to it.name }) {
-                    projectId = it; familyId = null; departamento = null; municipioId = null; veredaId = null
-                }
-                EcoSelector("Ronda de monitoreo", rondas.firstOrNull { it.id == rondaId }?.nombre, rondas.map { it.id to it.nombre }) { rondaId = it }
-                // Familia: filtro en cascada Departamento -> Municipio -> Vereda -> Familia
-                // (hay muchas familias; se van acotando por territorio).
+                // Familia primero (cascada Departamento -> Municipio -> Vereda -> Familia).
+                // El PROYECTO se toma de la familia; la RONDA se asigna sola segun lo que ya tenga.
                 if (family != null) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text("Familia", style = MaterialTheme.typography.bodySmall)
                             Text("${family.familyCode} - ${family.representativeName}", style = MaterialTheme.typography.bodyMedium)
                         }
-                        OutlinedButton(onClick = { familyId = null }) { Text("Cambiar") }
+                        OutlinedButton(onClick = { familyId = null; projectId = null; rondaId = null }) { Text("Cambiar") }
                     }
                     Text("Departamento/Municipio: ${municipioNombre ?: "-"}", style = MaterialTheme.typography.bodySmall)
                     Text("Vereda o comunidad: ${veredaNombre ?: "-"}", style = MaterialTheme.typography.bodySmall)
-                    // Indicador de progreso: que monitoreos ya tiene la familia y cual le corresponde.
-                    val hechasIds = allEncuestas.filter { it.familyId == family.id }.map { it.rondaId }.toSet()
+                    val hechasIds = allEncuestas.filter { it.familyId == family.id && it.id != editandoId }.map { it.rondaId }.toSet()
                     val hechas = rondas.filter { it.id in hechasIds }.sortedBy { it.orden }
-                    val siguiente = rondas.sortedBy { it.orden }.firstOrNull { it.id !in hechasIds }
                     Text(
                         "Monitoreos realizados: ${if (hechas.isEmpty()) "ninguno" else hechas.joinToString { it.nombre }}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary
                     )
-                    if (siguiente != null) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("Le corresponde: ${siguiente.nombre}", style = MaterialTheme.typography.bodyMedium)
-                            if (rondaId != siguiente.id) {
-                                OutlinedButton(onClick = { rondaId = siguiente.id }) { Text("Usar") }
-                            }
-                        }
-                    } else {
-                        Text("Ya tiene todos los monitoreos registrados.", style = MaterialTheme.typography.bodySmall)
-                    }
-                } else if (projectId == null) {
-                    Text("Seleccione primero el proyecto.", style = MaterialTheme.typography.bodySmall)
                 } else {
-                    val municipiosDeFamilias = families.mapNotNull { it.municipalityId }.toSet()
+                    val municipiosDeFamilias = allFamilies.mapNotNull { it.municipalityId }.toSet()
                     val municById = municipalities.associateBy { it.id }
                     val departamentos = municipiosDeFamilias.mapNotNull { municById[it]?.department }.distinct().sorted()
                     if (departamentos.isEmpty()) {
                         Text(
-                            "No hay familias descargadas (o falta actualizar). Vuelva al inicio y pulse \"Descargar\".",
+                            "No hay familias descargadas (o falta actualizar). Vuelva al menú y pulse \"Descargar\".",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -370,22 +350,38 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
                         }
                     }
                     if (municipioId != null) {
-                        val veredaIds = families.filter { it.municipalityId == municipioId }.mapNotNull { it.villageId }.toSet()
+                        val veredaIds = allFamilies.filter { it.municipalityId == municipioId }.mapNotNull { it.villageId }.toSet()
                         val veredas = villages.filter { it.id in veredaIds }.sortedBy { it.name }
                         EcoSelector("Vereda (opcional)", veredas.firstOrNull { it.id == veredaId }?.name, veredas.map { it.id to it.name }) {
                             veredaId = it
                         }
-                        val familiasFiltradas = families
+                        val familiasFiltradas = allFamilies
                             .filter { it.municipalityId == municipioId && (veredaId == null || it.villageId == veredaId) }
                             .sortedBy { it.familyCode }
                         EcoSelector(
                             "Familia (${familiasFiltradas.size})",
                             null,
                             familiasFiltradas.map { it.id to "${it.familyCode} - ${it.representativeName}" }
-                        ) { familyId = it }
+                        ) { fid ->
+                            familyId = fid
+                            projectId = allFamilies.firstOrNull { it.id == fid }?.projectId
+                            // Ronda automatica: la primera (por orden) que la familia aun no tiene.
+                            val hechas = allEncuestas.filter { it.familyId == fid }.map { it.rondaId }.toSet()
+                            rondaId = rondas.sortedBy { it.orden }.firstOrNull { it.id !in hechas }?.id
+                        }
                     }
                 }
                 OutlinedTextField(value = fecha, onValueChange = { fecha = it }, label = { Text("Fecha (AAAA-MM-DD)") }, modifier = Modifier.fillMaxWidth())
+                // Ronda de monitoreo (ultimo): asignada automaticamente segun lo que ya tiene la familia.
+                if (family != null) {
+                    val rondaNombre = rondas.firstOrNull { it.id == rondaId }?.nombre
+                    if (rondaNombre != null) {
+                        Text("Ronda de monitoreo: $rondaNombre", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                        Text("Se asigna sola: es la que le corresponde a esta familia.", style = MaterialTheme.typography.bodySmall)
+                    } else {
+                        Text("Esta familia ya tiene todos los monitoreos registrados.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    }
+                }
             }
 
             1 -> EcoPanel {
@@ -732,9 +728,9 @@ private fun pasoLabel(step: Int): String = when (step) {
 
 private fun validarPaso(step: Int, projectId: String?, rondaId: String?, familyId: String?): String? {
     if (step == 0) {
-        if (projectId == null) return "Seleccione el proyecto."
-        if (rondaId == null) return "Seleccione la ronda de monitoreo."
         if (familyId == null) return "Seleccione la familia."
+        if (projectId == null) return "No fue posible determinar el proyecto de la familia."
+        if (rondaId == null) return "Esta familia ya tiene todos los monitoreos registrados."
     }
     return null
 }
