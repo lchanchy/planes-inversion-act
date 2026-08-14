@@ -12976,6 +12976,9 @@ function EconomiaAnalytics({
   const [nivel, setNivel] = useState<EconomiaNivel>("municipio");
   const [comparaNivel, setComparaNivel] = useState<"familia" | EconomiaNivel>("familia");
   const [expandedEncuesta, setExpandedEncuesta] = useState<string | null>(null);
+  const [nuevoMonitoreo, setNuevoMonitoreo] = useState("");
+  const [rondaMsg, setRondaMsg] = useState<string | null>(null);
+  const [agregandoRonda, setAgregandoRonda] = useState(false);
 
   const loadEconomia = useCallback(async () => {
     setLoading(true);
@@ -13020,6 +13023,30 @@ function EconomiaAnalytics({
   useEffect(() => {
     void loadEconomia();
   }, [loadEconomia]);
+
+  async function agregarRonda() {
+    const nombre = nuevoMonitoreo.trim();
+    if (!nombre) return;
+    setAgregandoRonda(true);
+    setRondaMsg(null);
+    const orden = rondas.reduce((max, r) => Math.max(max, r.orden), 0) + 1;
+    const base = nombre
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "");
+    const codigo = `${base || "monitoreo"}_${orden}`;
+    const { error } = await supabase.from("economia_rondas").insert({ codigo, nombre, orden });
+    if (error) {
+      setRondaMsg(`No fue posible agregar (¿tiene rol administrador?): ${getErrorMessage(error)}`);
+    } else {
+      setNuevoMonitoreo("");
+      setRondaMsg(`Monitoreo "${nombre}" agregado. Ya aparece en la comparación y en la app tras "Descargar".`);
+      await loadEconomia();
+    }
+    setAgregandoRonda(false);
+  }
 
   const municById = useMemo(() => new Map(municipalities.map((m) => [m.id, m] as const)), [municipalities]);
   const villById = useMemo(() => new Map(villages.map((v) => [v.id, v] as const)), [villages]);
@@ -13272,6 +13299,34 @@ function EconomiaAnalytics({
                 <option value="vereda">Vereda</option>
               </select>
             </label>
+          </div>
+
+          <div className="panel">
+            <div className="panel-heading">Monitoreos (rondas)</div>
+            <div className="muted">
+              Puede crear los monitoreos que necesite, sin límite. Cada uno se vuelve una columna en la comparación entre rondas y aparece en la app tras &quot;Descargar&quot;. (Requiere rol administrador.)
+            </div>
+            <div className="chip-list">
+              {rondas.map((r) => (
+                <span key={r.id} className="chip">
+                  {r.nombre}
+                </span>
+              ))}
+            </div>
+            <div className="panel grid compact-panel">
+              <label>
+                Nuevo monitoreo
+                <input
+                  value={nuevoMonitoreo}
+                  onChange={(e) => setNuevoMonitoreo(e.target.value)}
+                  placeholder="Ej: Monitoreo 4"
+                />
+              </label>
+              <button className="secondary" type="button" onClick={() => void agregarRonda()} disabled={agregandoRonda || !nuevoMonitoreo.trim()}>
+                {agregandoRonda ? "Agregando…" : "Agregar monitoreo"}
+              </button>
+            </div>
+            {rondaMsg ? <div className="muted">{rondaMsg}</div> : null}
           </div>
 
           <div className="summary-grid">
