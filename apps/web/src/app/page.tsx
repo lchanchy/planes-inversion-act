@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback, createContext, useContext } from "react";
+import { useEffect, useMemo, useState, useCallback, createContext, useContext, Fragment } from "react";
 import {
   AlignmentType,
   BorderStyle,
@@ -57,6 +57,8 @@ import type {
   UserMunicipalityAssignment,
   Village,
   EconomiaProductoCatalogo,
+  EconomiaTipoApoyo,
+  EconomiaTipoPago,
   EconomiaRonda,
   EconomiaEncuesta,
   EconomiaEncuestaApoyo,
@@ -12964,6 +12966,8 @@ function EconomiaAnalytics({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [rondas, setRondas] = useState<EconomiaRonda[]>([]);
   const [productosCat, setProductosCat] = useState<EconomiaProductoCatalogo[]>([]);
+  const [tiposApoyo, setTiposApoyo] = useState<EconomiaTipoApoyo[]>([]);
+  const [tiposPago, setTiposPago] = useState<EconomiaTipoPago[]>([]);
   const [encuestas, setEncuestas] = useState<EconomiaEncuesta[]>([]);
   const [apoyos, setApoyos] = useState<EconomiaEncuestaApoyo[]>([]);
   const [pagos, setPagos] = useState<EconomiaEncuestaPago[]>([]);
@@ -12971,20 +12975,23 @@ function EconomiaAnalytics({
   const [rondaFilter, setRondaFilter] = useState<string>("all");
   const [nivel, setNivel] = useState<EconomiaNivel>("municipio");
   const [comparaNivel, setComparaNivel] = useState<"familia" | EconomiaNivel>("familia");
+  const [expandedEncuesta, setExpandedEncuesta] = useState<string | null>(null);
 
   const loadEconomia = useCallback(async () => {
     setLoading(true);
     setSchemaError(null);
     setLoadError(null);
-    const [rondasRes, productosCatRes, encuestasRes, apoyosRes, pagosRes, productosRes] = await Promise.all([
+    const [rondasRes, productosCatRes, tiposApoyoRes, tiposPagoRes, encuestasRes, apoyosRes, pagosRes, productosRes] = await Promise.all([
       supabase.from("economia_rondas").select("*").eq("is_deleted", false).order("orden"),
       supabase.from("economia_productos").select("*").eq("is_deleted", false).order("orden"),
+      supabase.from("economia_tipos_apoyo").select("*").eq("is_deleted", false).order("orden"),
+      supabase.from("economia_tipos_pago").select("*").eq("is_deleted", false).order("orden"),
       supabase.from("economia_encuestas").select("*").eq("is_deleted", false),
       supabase.from("economia_encuesta_apoyos").select("*").eq("is_deleted", false),
       supabase.from("economia_encuesta_pagos").select("*").eq("is_deleted", false),
       supabase.from("economia_encuesta_productos").select("*").eq("is_deleted", false)
     ]);
-    const results = [rondasRes, productosCatRes, encuestasRes, apoyosRes, pagosRes, productosRes];
+    const results = [rondasRes, productosCatRes, tiposApoyoRes, tiposPagoRes, encuestasRes, apoyosRes, pagosRes, productosRes];
     const missing = results.some((r) => r.error && isMissingTableError(r.error));
     if (missing) {
       setSchemaError(
@@ -13001,6 +13008,8 @@ function EconomiaAnalytics({
     }
     setRondas((rondasRes.data as EconomiaRonda[]) ?? []);
     setProductosCat((productosCatRes.data as EconomiaProductoCatalogo[]) ?? []);
+    setTiposApoyo((tiposApoyoRes.data as EconomiaTipoApoyo[]) ?? []);
+    setTiposPago((tiposPagoRes.data as EconomiaTipoPago[]) ?? []);
     setEncuestas((encuestasRes.data as EconomiaEncuesta[]) ?? []);
     setApoyos((apoyosRes.data as EconomiaEncuestaApoyo[]) ?? []);
     setPagos((pagosRes.data as EconomiaEncuestaPago[]) ?? []);
@@ -13017,6 +13026,11 @@ function EconomiaAnalytics({
   const famById = useMemo(() => new Map(families.map((f) => [f.id, f] as const)), [families]);
   const rondaById = useMemo(() => new Map(rondas.map((r) => [r.id, r] as const)), [rondas]);
   const prodCatById = useMemo(() => new Map(productosCat.map((p) => [p.id, p] as const)), [productosCat]);
+  const tipoApoyoById = useMemo(() => new Map(tiposApoyo.map((t) => [t.id, t] as const)), [tiposApoyo]);
+  const tipoPagoById = useMemo(() => new Map(tiposPago.map((t) => [t.id, t] as const)), [tiposPago]);
+
+  const nombreProducto = (p: EconomiaEncuestaProducto): string =>
+    p.producto_id ? prodCatById.get(p.producto_id)?.nombre ?? "(producto)" : p.nombre_otro ?? "Otro producto";
 
   const rows = useMemo<EconomiaRow[]>(() => {
     const familyIds = new Set(families.map((f) => f.id));
@@ -13187,6 +13201,31 @@ function EconomiaAnalytics({
       s4.addRow([row.clave, ...row.valores.map((v) => (v == null ? "" : v)), row.variacion == null ? "" : Math.round(row.variacion)])
     );
     s4.getRow(1).font = { bold: true };
+
+    // Detalle desglosado: por cada familia, cada fuente (producto/apoyo/otro) con cantidades y valor.
+    const s5 = workbook.addWorksheet("Detalle ingresos");
+    s5.addRow(["Familia", "Departamento", "Municipio", "Vereda", "Ronda", "Fuente", "Detalle", "Producido", "Consumido", "Vendido", "Precio unitario", "Valor/Ingreso mensual", "Apoyo ACT"]);
+    rows.forEach((r) => {
+      productos.filter((p) => p.encuesta_id === r.encuestaId).forEach((p) => {
+        s5.addRow([
+          r.familia, r.departamento, r.municipio, r.vereda, r.ronda, "Producto", nombreProducto(p),
+          p.cantidad_producida ?? 0, p.consumo ?? 0, p.vendido ?? 0, p.precio_unitario ?? 0, p.ingreso_mensual ?? 0, p.apoyo_act ? "Si" : "No"
+        ]);
+      });
+      apoyos.filter((a) => a.encuesta_id === r.encuestaId).forEach((a) => {
+        s5.addRow([
+          r.familia, r.departamento, r.municipio, r.vereda, r.ronda, "Apoyo gobierno",
+          tipoApoyoById.get(a.tipo_apoyo_id)?.nombre ?? a.nombre_libre ?? "Apoyo", "", "", "", "", a.valor_mensual ?? 0, ""
+        ]);
+      });
+      pagos.filter((p) => p.encuesta_id === r.encuestaId).forEach((p) => {
+        s5.addRow([
+          r.familia, r.departamento, r.municipio, r.vereda, r.ronda, "Otro ingreso",
+          tipoPagoById.get(p.tipo_pago_id)?.nombre ?? "Ingreso", "", "", "", "", p.valor_mensual ?? 0, ""
+        ]);
+      });
+    });
+    s5.getRow(1).font = { bold: true };
 
     const buffer = await workbook.xlsx.writeBuffer();
     saveBlob(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), `economia-familiar-${new Date().toISOString().slice(0, 10)}.xlsx`);
@@ -13362,10 +13401,12 @@ function EconomiaAnalytics({
 
           <div className="panel">
             <div className="panel-heading">Detalle por familia</div>
+            <div className="muted">Pulse &quot;Ver&quot; para desglosar los ingresos de cada familia por fuente (productos con cantidades y valor, apoyos del gobierno y otros ingresos).</div>
             <div className="tracking-table-wrapper">
               <table className="tracking-table">
                 <thead>
                   <tr>
+                    <th></th>
                     <th>Familia</th>
                     <th>Departamento</th>
                     <th>Municipio</th>
@@ -13380,24 +13421,103 @@ function EconomiaAnalytics({
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((r) => (
-                    <tr key={r.encuestaId}>
-                      <td>{r.familia}</td>
-                      <td>{r.departamento}</td>
-                      <td>{r.municipio}</td>
-                      <td>{r.vereda}</td>
-                      <td>{r.ronda}</td>
-                      <td>{r.personas}</td>
-                      <td>{formatMoney(r.ingProductos)}</td>
-                      <td>{formatMoney(r.ingGobierno)}</td>
-                      <td>{formatMoney(r.ingOtros)}</td>
-                      <td>{formatMoney(r.ingTotal)}</td>
-                      <td>{formatMoney(r.jornal)}</td>
-                    </tr>
-                  ))}
+                  {rows.map((r) => {
+                    const abierto = expandedEncuesta === r.encuestaId;
+                    const prods = productos.filter((p) => p.encuesta_id === r.encuestaId);
+                    const aps = apoyos.filter((a) => a.encuesta_id === r.encuestaId);
+                    const pgs = pagos.filter((p) => p.encuesta_id === r.encuestaId);
+                    return (
+                      <Fragment key={r.encuestaId}>
+                        <tr>
+                          <td>
+                            <button className="secondary" type="button" onClick={() => setExpandedEncuesta(abierto ? null : r.encuestaId)}>
+                              {abierto ? "Ocultar" : "Ver"}
+                            </button>
+                          </td>
+                          <td>{r.familia}</td>
+                          <td>{r.departamento}</td>
+                          <td>{r.municipio}</td>
+                          <td>{r.vereda}</td>
+                          <td>{r.ronda}</td>
+                          <td>{r.personas}</td>
+                          <td>{formatMoney(r.ingProductos)}</td>
+                          <td>{formatMoney(r.ingGobierno)}</td>
+                          <td>{formatMoney(r.ingOtros)}</td>
+                          <td>{formatMoney(r.ingTotal)}</td>
+                          <td>{formatMoney(r.jornal)}</td>
+                        </tr>
+                        {abierto ? (
+                          <tr>
+                            <td colSpan={12}>
+                              <div className="panel">
+                                <div className="panel-heading">Productos que generan ingreso</div>
+                                <div className="tracking-table-wrapper">
+                                  <table className="tracking-table">
+                                    <thead>
+                                      <tr>
+                                        <th>Producto</th>
+                                        <th>Producido</th>
+                                        <th>Consumido</th>
+                                        <th>Vendido</th>
+                                        <th>Precio unitario</th>
+                                        <th>Ingreso mensual</th>
+                                        <th>Apoyo ACT</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {prods.map((p) => (
+                                        <tr key={p.id}>
+                                          <td>{nombreProducto(p)}{p.es_pecuario ? " (pecuario)" : ""}</td>
+                                          <td>{p.cantidad_producida ?? 0}</td>
+                                          <td>{p.consumo ?? 0}</td>
+                                          <td>{p.vendido ?? 0}</td>
+                                          <td>{formatMoney(p.precio_unitario ?? 0)}</td>
+                                          <td>{formatMoney(p.ingreso_mensual ?? 0)}</td>
+                                          <td>{p.apoyo_act ? "Sí" : "No"}</td>
+                                        </tr>
+                                      ))}
+                                      {prods.length === 0 ? (
+                                        <tr>
+                                          <td colSpan={7} className="muted">Sin productos registrados.</td>
+                                        </tr>
+                                      ) : null}
+                                    </tbody>
+                                  </table>
+                                </div>
+                                <div className="panel-heading">Apoyos del gobierno</div>
+                                {aps.length === 0 ? (
+                                  <div className="muted">Ninguno.</div>
+                                ) : (
+                                  <ul>
+                                    {aps.map((a) => (
+                                      <li key={a.id}>
+                                        {tipoApoyoById.get(a.tipo_apoyo_id)?.nombre ?? a.nombre_libre ?? "Apoyo"}: {formatMoney(a.valor_mensual ?? 0)} / mes
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                                <div className="panel-heading">Otros ingresos</div>
+                                {pgs.length === 0 ? (
+                                  <div className="muted">Ninguno.</div>
+                                ) : (
+                                  <ul>
+                                    {pgs.map((p) => (
+                                      <li key={p.id}>
+                                        {tipoPagoById.get(p.tipo_pago_id)?.nombre ?? "Ingreso"}: {formatMoney(p.valor_mensual ?? 0)} / mes
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
+                    );
+                  })}
                   {rows.length === 0 ? (
                     <tr>
-                      <td colSpan={11} className="muted">
+                      <td colSpan={12} className="muted">
                         No hay encuestas para los filtros seleccionados.
                       </td>
                     </tr>
