@@ -398,14 +398,16 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
                         ) { fid ->
                             familyId = fid
                             projectId = allFamilies.firstOrNull { it.id == fid }?.projectId
-                            // Ronda automatica: la primera (por orden) que la familia aun no tiene.
                             val hechas = allEncuestas.filter { it.familyId == fid }.map { it.rondaId }.toSet()
-                            rondaId = rondas.sortedBy { it.orden }.firstOrNull { it.id !in hechas }?.id
-                                ?: rondas.sortedBy { it.orden }.firstOrNull()?.id
                             val previas = allEncuestas.filter { it.familyId == fid && it.estado == "aprobada" }
-                            val tieneBase = previas.any { it.tipoMedicion == "linea_base" }
-                            tipoMedicion = if (tieneBase) "monitoreo" else "linea_base"
-                            numeroMonitoreo = if (tieneBase) (previas.mapNotNull { it.numeroMonitoreo }.maxOrNull() ?: 0) + 1 else null
+                            val siguiente = nextEconomiaMeasurement(
+                                rondas.map { it.id to it.orden },
+                                hechas,
+                                previas.map { it.tipoMedicion to it.numeroMonitoreo }
+                            )
+                            rondaId = siguiente.roundId
+                            tipoMedicion = siguiente.type
+                            numeroMonitoreo = siguiente.monitorNumber
                         }
                     }
                 }
@@ -897,6 +899,22 @@ private val TEMPORALIDADES = listOf(
 )
 private val UNIDADES = listOf("g" to "Gramos","kg" to "Kilogramos","litro" to "Litros","unidad" to "Unidades","animal" to "Animales")
 
+internal data class NextEconomiaMeasurement(val roundId: String?, val type: String, val monitorNumber: Int?)
+
+internal fun nextEconomiaMeasurement(
+    rounds: List<Pair<String, Int>>,
+    completedRoundIds: Set<String>,
+    approvedMeasurements: List<Pair<String, Int?>>
+): NextEconomiaMeasurement {
+    val nextRoundId = rounds.sortedBy { it.second }.firstOrNull { it.first !in completedRoundIds }?.first
+    val hasBaseline = approvedMeasurements.any { it.first == "linea_base" }
+    return NextEconomiaMeasurement(
+        roundId = nextRoundId,
+        type = if (hasBaseline) "monitoreo" else "linea_base",
+        monitorNumber = if (hasBaseline) (approvedMeasurements.mapNotNull { it.second }.maxOrNull() ?: 0) + 1 else null
+    )
+}
+
 private fun numToStr(v: Double?): String =
     v?.let { if (it % 1.0 == 0.0) it.toLong().toString() else it.toString() } ?: ""
 
@@ -915,7 +933,7 @@ private fun pasoLabel(step: Int): String = when (step) {
     else -> "Paso 4 de 4: Productos"
 }
 
-private fun validarPaso(step: Int, projectId: String?, rondaId: String?, familyId: String?): String? {
+internal fun validarPaso(step: Int, projectId: String?, rondaId: String?, familyId: String?): String? {
     if (step == 0) {
         if (familyId == null) return "Seleccione la familia."
         if (projectId == null) return "No fue posible determinar el proyecto de la familia."
