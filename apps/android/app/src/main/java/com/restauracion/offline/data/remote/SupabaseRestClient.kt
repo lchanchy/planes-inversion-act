@@ -2,6 +2,7 @@ package com.restauracion.offline.data.remote
 
 import com.restauracion.offline.BuildConfig
 import com.restauracion.offline.data.SessionStore
+import com.restauracion.offline.data.PendingSyncLog
 import com.restauracion.offline.data.local.ActivityCatalogEntity
 import com.restauracion.offline.data.local.CounterpartCatalogEntity
 import com.restauracion.offline.data.local.EconomiaCategoriaEntity
@@ -77,6 +78,10 @@ class SupabaseRestClient(
     // Serializa la renovacion de sesion: evita que varias peticiones renueven a la vez
     // con el mismo refresh token (Supabase los rota, y el segundo uso da 'refresh_token_already_used').
     private val refreshMutex = Mutex()
+    private var downloadedRowCount = 0
+
+    fun resetDownloadedRowCount() { downloadedRowCount = 0 }
+    fun downloadedRowCount(): Int = downloadedRowCount
 
     suspend fun login(email: String, password: String) {
         requireConfigured()
@@ -455,6 +460,16 @@ class SupabaseRestClient(
         pagedGet<EconomiaEncuestaDownloadDto>("economia_encuestas?select=id,project_id,family_id,ronda_id,equipo_id,encuestador_id,fecha,anio,tipo_medicion,numero_monitoreo,cambio_num_personas,personas_ninos,personas_adolescentes,personas_jovenes,personas_adultos,personas_mayores,recibe_apoyo_gobierno,recibe_otros_pagos,valor_jornal,estado,observaciones,server_version,revision,notas_revision,es_piloto&is_deleted=eq.false").map { it.toEntity() }
     }
 
+    suspend fun recordSyncLog(log: PendingSyncLog, deviceId: String) = withAuth {
+        requireConfigured()
+        val userId = resolveProfileId(sessionStore.userId ?: error("No hay usuario para registrar la sincronizacion."))
+        client.post("$baseUrl/rest/v1/sync_logs") {
+            authHeaders()
+            contentType(ContentType.Application.Json)
+            setBody(SyncLogUploadDto(userId, deviceId, log.startedAt, log.finishedAt, log.status, log.details))
+        }
+    }
+
     private suspend inline fun <reified T> pagedGet(resourceAndQuery: String): List<T> {
         val result = mutableListOf<T>()
         var offset = 0
@@ -462,6 +477,7 @@ class SupabaseRestClient(
             val page = client.get(
                 "$baseUrl/rest/v1/$resourceAndQuery&order=id.asc&limit=$PAGE_SIZE&offset=$offset"
             ) { authHeaders() }.body<List<T>>()
+            downloadedRowCount += page.size
             result += page
             offset += page.size
         } while (page.size == PAGE_SIZE)
@@ -1237,4 +1253,14 @@ private data class UserProfileDto(val id: String)
     @SerialName("server_version") val serverVersion: Long,
     val revision: Int,
     val estado: String
+)
+
+@Serializable
+private data class SyncLogUploadDto(
+    @SerialName("user_id") val userId: String,
+    @SerialName("device_id") val deviceId: String,
+    @SerialName("started_at") val startedAt: String,
+    @SerialName("finished_at") val finishedAt: String,
+    val status: String,
+    val details: Map<String, String>
 )

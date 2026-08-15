@@ -56,6 +56,7 @@ import type {
   QuarterlyProgress,
   QuarterlyProgressType,
   Role,
+  SyncLog,
   UserMunicipalityAssignment,
   Village,
   EconomiaCategoria,
@@ -87,6 +88,7 @@ type ViewKey =
   | "phase5_maintenance"
   | "phase5_acts"
   | "audit"
+  | "diagnostics"
   | "phase8_economia";
 type Phase5Tab = "consolidated" | "etec" | "indicators" | "maintenance" | "acts";
 type Notice = { type: "info" | "error"; message: string } | null;
@@ -640,9 +642,10 @@ function AdminApp({ session }: { session: Session }) {
     { key: "phase5_maintenance", label: "Herramienta de mantenimiento" },
     { key: "phase5_acts", label: "Actas de entrega" },
     { key: "audit", label: "Auditoría" },
+    { key: "diagnostics", label: "Diagnóstico de sincronización" },
     { key: "phase8_economia", label: "Economía Familiar" }
   ];
-  const views = allViews.filter((item) => item.key !== "audit" || canViewAudit);
+  const views = allViews.filter((item) => !["audit", "diagnostics"].includes(item.key) || canViewAudit);
   const selectedPhase5Tab = phase5TabFromView(view);
 
   const loadPhase5 = useCallback(async () => {
@@ -865,6 +868,7 @@ function AdminApp({ session }: { session: Session }) {
             />
           ) : null}
           {view === "audit" ? <AuditLogsView projects={projects} profiles={profiles} /> : null}
+          {view === "diagnostics" ? <SyncDiagnosticsView projects={projects} profiles={profiles} projectUsers={projectUsers} /> : null}
           {view === "phase8_economia" ? (
             <EconomiaAnalytics
               projects={scoped.projects}
@@ -877,6 +881,97 @@ function AdminApp({ session }: { session: Session }) {
       </main>
     </div>
   );
+}
+
+const SYNC_PAGE_SIZE = 100;
+
+function SyncDiagnosticsView({ projects, profiles, projectUsers }: { projects: Project[]; profiles: Profile[]; projectUsers: ProjectUser[] }) {
+  const [rows, setRows] = useState<SyncLog[]>([]);
+  const [projectId, setProjectId] = useState("");
+  const [userId, setUserId] = useState("");
+  const [status, setStatus] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [page, setPage] = useState(0);
+  const [count, setCount] = useState(0);
+  const [pendingConflicts, setPendingConflicts] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [notice, setNotice] = useState<Notice>(null);
+  const profileById = useMemo(() => new Map(profiles.map((item) => [item.id, item.full_name])), [profiles]);
+  const projectUserIds = useMemo(() => projectId ? projectUsers.filter((item) => item.project_id === projectId && item.status === "active").map((item) => item.user_id) : [], [projectId, projectUsers]);
+
+  const buildQuery = useCallback((from: number, to: number, includeCount = false) => {
+    let query = supabase.from("sync_logs").select("*", includeCount ? { count: "exact" } : undefined)
+      .order("started_at", { ascending: false }).order("id").range(from, to);
+    if (projectId) query = query.in("user_id", projectUserIds.length ? projectUserIds : ["00000000-0000-0000-0000-000000000000"]);
+    if (userId) query = query.eq("user_id", userId);
+    if (status) query = query.eq("status", status);
+    if (dateFrom) query = query.gte("started_at", `${dateFrom}T00:00:00`);
+    return query;
+  }, [dateFrom, projectId, projectUserIds, status, userId]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setNotice(null);
+    const [logs, conflicts] = await Promise.all([
+      buildQuery(page * SYNC_PAGE_SIZE, (page + 1) * SYNC_PAGE_SIZE - 1, true),
+      supabase.from("economia_sync_conflictos").select("id", { count: "exact", head: true }).eq("estado", "pendiente")
+    ]);
+    if (logs.error) setNotice({ type: "error", message: getErrorMessage(logs.error) });
+    else { setRows((logs.data ?? []) as SyncLog[]); setCount(logs.count ?? 0); }
+    if (!conflicts.error) setPendingConflicts(conflicts.count ?? 0);
+    setLoading(false);
+  }, [buildQuery, page]);
+
+  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { setPage(0); }, [projectId, userId, status, dateFrom]);
+
+  async function exportExcel() {
+    setLoading(true);
+    const result = await fetchAllPages<SyncLog>((from, to) => buildQuery(from, to));
+    if (result.error) { setNotice({ type: "error", message: getErrorMessage(result.error) }); setLoading(false); return; }
+    const ExcelJS = await import("exceljs");
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Sincronizaciones");
+    sheet.columns = [
+      { header: "inicio", key: "start", width: 24 }, { header: "fin", key: "finish", width: 24 },
+      { header: "duracion_segundos", key: "duration", width: 20 }, { header: "usuario", key: "user", width: 30 },
+      { header: "dispositivo", key: "device", width: 24 }, { header: "estado", key: "status", width: 14 },
+      { header: "operacion", key: "operation", width: 16 }, { header: "solicitados", key: "requested", width: 14 },
+      { header: "procesados", key: "processed", width: 14 }, { header: "version_app", key: "version", width: 14 },
+      { header: "error", key: "error", width: 80 }
+    ];
+    (result.data ?? []).forEach((row) => sheet.addRow(syncLogExcelRow(row, profileById)));
+    sheet.getRow(1).font = { bold: true }; sheet.views = [{ state: "frozen", ySplit: 1 }];
+    const buffer = await workbook.xlsx.writeBuffer();
+    saveBlob(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), "diagnostico-sincronizacion.xlsx");
+    setLoading(false);
+  }
+
+  const recentErrors = rows.filter((row) => row.status === "error" || row.status === "partial").length;
+  return <div className="stack">
+    <div className="section-title"><div><h2>Diagnóstico de sincronización</h2><div className="muted">Seguimiento técnico de descargas y envíos de Android.</div></div></div>
+    <AlertNotice notice={notice} onClose={() => setNotice(null)} />
+    {(recentErrors > 0 || pendingConflicts > 0) ? <div className="alert error">Atención: {recentErrors} sincronización(es) con novedad en esta página y {pendingConflicts} conflicto(s) de Economía Familiar pendiente(s).</div> : <div className="alert info">Sin novedades en la página consultada. Conflictos pendientes: {pendingConflicts}.</div>}
+    <div className="filters-grid">
+      <label>Proyecto<select value={projectId} onChange={(e) => setProjectId(e.target.value)}><option value="">Todos</option>{projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+      <label>Usuario<select value={userId} onChange={(e) => setUserId(e.target.value)}><option value="">Todos</option>{profiles.map((p) => <option key={p.id} value={p.id}>{p.full_name}</option>)}</select></label>
+      <label>Estado<select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Todos</option><option value="success">Exitosa</option><option value="partial">Parcial</option><option value="error">Error</option></select></label>
+      <label>Desde<input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} /></label>
+      <div className="form-actions"><button type="button" onClick={exportExcel} disabled={loading}>Exportar Excel</button></div>
+    </div>
+    <div className="muted">{count} sincronización(es). Página {page + 1} de {Math.max(1, Math.ceil(count / SYNC_PAGE_SIZE))}.</div>
+    <div className="table-wrap"><table><thead><tr><th>Inicio</th><th>Usuario</th><th>Dispositivo</th><th>Estado</th><th>Operación</th><th>Procesados</th><th>Duración</th><th>Error</th></tr></thead><tbody>
+      {rows.map((row) => <tr key={row.id} style={row.status === "error" || row.status === "partial" ? { color: "var(--danger, #b42318)" } : undefined}><td>{new Date(row.started_at).toLocaleString("es-CO")}</td><td>{profileById.get(row.user_id ?? "") ?? "Sin perfil"}</td><td>{row.device_id ?? "—"}</td><td>{syncStatusLabel(row.status)}</td><td>{String(row.details?.operation ?? "—")}</td><td>{String(row.details?.processed_records ?? "—")} / {String(row.details?.requested_records ?? "—")}</td><td>{syncDuration(row)} s</td><td>{String(row.details?.error ?? "—")}</td></tr>)}
+      {!loading && rows.length === 0 ? <tr><td colSpan={8}>No hay sincronizaciones para estos filtros.</td></tr> : null}
+    </tbody></table></div>
+    <div className="form-actions"><button className="secondary" type="button" disabled={page === 0 || loading} onClick={() => setPage((value) => value - 1)}>Anterior</button><button className="secondary" type="button" disabled={(page + 1) * SYNC_PAGE_SIZE >= count || loading} onClick={() => setPage((value) => value + 1)}>Siguiente</button></div>
+  </div>;
+}
+
+function syncStatusLabel(status: string) { return ({ success: "Exitosa", partial: "Parcial", error: "Error", started: "Iniciada" } as Record<string, string>)[status] ?? status; }
+function syncDuration(row: SyncLog) { return row.finished_at ? Math.max(0, Math.round((new Date(row.finished_at).getTime() - new Date(row.started_at).getTime()) / 1000)) : 0; }
+function syncLogExcelRow(row: SyncLog, profiles: Map<string, string>) {
+  return { start: new Date(row.started_at), finish: row.finished_at ? new Date(row.finished_at) : "", duration: syncDuration(row), user: profiles.get(row.user_id ?? "") ?? row.user_id ?? "", device: row.device_id ?? "", status: syncStatusLabel(row.status), operation: row.details?.operation ?? "", requested: row.details?.requested_records ?? "", processed: row.details?.processed_records ?? "", version: row.details?.app_version ?? "", error: row.details?.error ?? "" };
 }
 
 const AUDIT_PAGE_SIZE = 100;

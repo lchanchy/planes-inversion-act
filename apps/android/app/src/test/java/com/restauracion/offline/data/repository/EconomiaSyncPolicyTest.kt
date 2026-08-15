@@ -23,4 +23,15 @@ class EconomiaSyncPolicyTest {
         assertTrue(shouldRefreshEconomiaFromServer(null, false))
         assertTrue(shouldRefreshEconomiaFromServer(SyncState.SYNCED, false))
     }
+
+    @Test
+    fun `sync diagnostics remove credentials and limit message size`() {
+        val jwt = "eyJabcdefghijk.abcdefghijk.abcdefghijk"
+        val sanitized = sanitizeSyncError("Bearer secret-token access_token=private $jwt " + "x".repeat(600))
+
+        assertFalse(sanitized.contains("secret-token"))
+        assertFalse(sanitized.contains("private"))
+        assertFalse(sanitized.contains(jwt))
+        assertTrue(sanitized.length <= 500)
+    }
 }

@@ -565,6 +565,16 @@ export type AuditLog = {
   created_at: string;
 };
 
+export type SyncLog = {
+  id: string;
+  user_id: string | null;
+  device_id: string | null;
+  started_at: string;
+  finished_at: string | null;
+  status: "started" | "success" | "partial" | "error" | string;
+  details: Record<string, unknown>;
+};
+
 export type EconomiaProductoLugarVenta = {
   id: string;
   encuesta_producto_id: string;

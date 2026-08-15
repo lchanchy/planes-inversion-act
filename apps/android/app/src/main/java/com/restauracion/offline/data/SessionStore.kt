@@ -1,9 +1,15 @@
 package com.restauracion.offline.data
 
 import android.content.Context
+import android.provider.Settings
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
 class SessionStore(context: Context) {
     private val preferences = context.getSharedPreferences("session", Context.MODE_PRIVATE)
+    private val json = Json { ignoreUnknownKeys = true }
+    val deviceId: String = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID) ?: "unknown"
 
     var accessToken: String?
         get() = preferences.getString("access_token", null)
@@ -46,7 +52,30 @@ class SessionStore(context: Context) {
 
     private fun captureDraftKey(planId: String, key: String): String = "capture_draft_${planId}_$key"
 
+    fun queuedSyncLogs(): List<PendingSyncLog> = runCatching {
+        json.decodeFromString<List<PendingSyncLog>>(preferences.getString(SYNC_LOG_QUEUE, "[]").orEmpty())
+    }.getOrDefault(emptyList())
+
+    fun replaceQueuedSyncLogs(items: List<PendingSyncLog>) {
+        preferences.edit().putString(SYNC_LOG_QUEUE, json.encodeToString(items.takeLast(MAX_SYNC_LOGS))).apply()
+    }
+
+    fun enqueueSyncLog(item: PendingSyncLog) = replaceQueuedSyncLogs(queuedSyncLogs() + item)
+
     fun clear() {
         preferences.edit().clear().apply()
     }
+
+    private companion object {
+        const val SYNC_LOG_QUEUE = "pending_sync_logs"
+        const val MAX_SYNC_LOGS = 20
+    }
 }
+
+@Serializable
+data class PendingSyncLog(
+    val startedAt: String,
+    val finishedAt: String,
+    val status: String,
+    val details: Map<String, String>
+)

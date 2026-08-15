@@ -1,5 +1,7 @@
 package com.restauracion.offline.data.repository
 
+import com.restauracion.offline.BuildConfig
+import com.restauracion.offline.data.PendingSyncLog
 import com.restauracion.offline.data.SessionStore
 import com.restauracion.offline.data.local.EconomiaEncuestaApoyoEntity
 import com.restauracion.offline.data.local.EconomiaEncuestaEntity
@@ -17,6 +19,7 @@ import com.restauracion.offline.data.local.RestauracionDatabase
 import com.restauracion.offline.data.local.SyncState
 import com.restauracion.offline.data.remote.SupabaseRestClient
 import java.time.LocalDate
+import java.time.Instant
 import java.util.UUID
 
 class RestauracionRepository(
@@ -165,6 +168,11 @@ class RestauracionRepository(
     suspend fun login(email: String, password: String) = remote.login(email, password)
 
     suspend fun downloadInitialData(): DownloadResult {
+        remote.resetDownloadedRowCount()
+        return monitorSync("download", 0, { remote.downloadedRowCount() }) { performDownloadInitialData() }
+    }
+
+    private suspend fun performDownloadInitialData(): DownloadResult {
         db.catalogDao().upsertProjects(remote.projects())
         db.catalogDao().upsertFamilies(remote.families())
         db.catalogDao().upsertMunicipalities(remote.municipalities())
@@ -552,6 +560,11 @@ class RestauracionRepository(
     }
 
     suspend fun syncPending() {
+        val pendingBefore = pendingUploadCount()
+        monitorSync("upload", pendingBefore, { pendingBefore - pendingUploadCount() }) { performSyncPending() }
+    }
+
+    private suspend fun performSyncPending() {
         val planDao = db.planDao()
         val errors = mutableListOf<String>()
         // Estados en el servidor: si un plan ya fue aprobado/cerrado en la web, NO se debe re-subir
@@ -697,6 +710,71 @@ class RestauracionRepository(
         }
     }
 
+    private suspend fun pendingUploadCount(): Int {
+        val planDao = db.planDao()
+        return planDao.pendingPlans().size + planDao.pendingActivities().size + planDao.pendingMaterials().size +
+            planDao.pendingMaterialDeletions().size + planDao.pendingCounterparts().size +
+            planDao.pendingDeliveries().size + planDao.pendingDeliveryItems().size +
+            db.economiaDao().pendingEncuestas().size
+    }
+
+    private suspend fun <T> monitorSync(
+        operation: String,
+        pendingBefore: Int,
+        processedCount: suspend () -> Int,
+        block: suspend () -> T
+    ): T {
+        flushQueuedSyncLogs()
+        val startedAt = Instant.now()
+        try {
+            val result = block()
+            saveSyncLog(startedAt, "success", operation, pendingBefore, processedCount().coerceAtLeast(0), null)
+            return result
+        } catch (error: Exception) {
+            val processed = runCatching { processedCount() }.getOrDefault(0).coerceAtLeast(0)
+            saveSyncLog(startedAt, if (processed > 0) "partial" else "error", operation, pendingBefore, processed, error)
+            throw error
+        }
+    }
+
+    private suspend fun saveSyncLog(
+        startedAt: Instant,
+        status: String,
+        operation: String,
+        requested: Int,
+        processed: Int,
+        error: Throwable?
+    ) {
+        val log = PendingSyncLog(
+            startedAt = startedAt.toString(),
+            finishedAt = Instant.now().toString(),
+            status = status,
+            details = buildMap {
+                put("operation", operation)
+                put("requested_records", requested.toString())
+                put("processed_records", processed.toString())
+                put("app_version", BuildConfig.VERSION_NAME)
+                error?.message?.let { put("error", sanitizeSyncError(it)) }
+            }
+        )
+        runCatching { remote.recordSyncLog(log, sessionStore.deviceId) }
+            .onFailure { sessionStore.enqueueSyncLog(log) }
+    }
+
+    private suspend fun flushQueuedSyncLogs() {
+        val queued = sessionStore.queuedSyncLogs()
+        if (queued.isEmpty()) return
+        val remaining = mutableListOf<PendingSyncLog>()
+        var blocked = false
+        queued.forEach { log ->
+            if (blocked || runCatching { remote.recordSyncLog(log, sessionStore.deviceId) }.isFailure) {
+                blocked = true
+                remaining += log
+            }
+        }
+        sessionStore.replaceQueuedSyncLogs(remaining)
+    }
+
     fun logout() = sessionStore.clear()
 }
 
@@ -727,6 +805,12 @@ data class DownloadResult(val economiaError: String? = null) {
             "Planes Operativos actualizados. Economia Familiar no se pudo actualizar: $it"
         } ?: "Catalogos actualizados, incluida Economia Familiar."
 }
+
+internal fun sanitizeSyncError(message: String): String = message
+    .replace(Regex("(?i)Bearer\\s+[A-Za-z0-9._~-]+"), "Bearer [oculto]")
+    .replace(Regex("eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+"), "[token oculto]")
+    .replace(Regex("(?i)(password|refresh_token|access_token)=?[^\\s,;]+"), "$1=[oculto]")
+    .take(500)
 
 internal fun shouldRefreshEconomiaFromServer(localState: SyncState?, hasPendingConflict: Boolean): Boolean =
     localState == null || localState == SyncState.SYNCED ||
