@@ -573,6 +573,9 @@ fun EconomiaScreen(container: AppContainer, onBack: () -> Unit) {
                                     valorJornal = valorJornal.toDoubleOrNull(),
                                     estado = "completada",
                                     observaciones = observaciones.ifBlank { null },
+                                    serverVersion = existente?.serverVersion ?: 0,
+                                    revision = existente?.revision ?: 1,
+                                    notasRevision = existente?.notasRevision,
                                     esPiloto = existente?.esPiloto
                                         ?: (family?.familyCode?.startsWith("PILOTO-", ignoreCase = true) == true)
                                 )

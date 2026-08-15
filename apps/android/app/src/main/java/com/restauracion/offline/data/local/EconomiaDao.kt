@@ -254,8 +254,46 @@ interface EconomiaDao {
     suspend fun deleteLugaresForEncuesta(encuestaId: String)
 
     // ---------- Pendientes de sincronizar (push, en orden de FK) ----------
-    @Query("select * from economia_encuestas where syncState in ('PENDING_SYNC','ERROR','CONFLICT')")
+    // Un conflicto requiere decision administrativa; no se reenvia y no duplica bitacoras.
+    @Query("select * from economia_encuestas where syncState in ('PENDING_SYNC','ERROR')")
     suspend fun pendingEncuestas(): List<EconomiaEncuestaEntity>
+
+    @Transaction
+    suspend fun saveEncuestaAggregate(
+        encuesta: EconomiaEncuestaEntity,
+        apoyos: List<EconomiaEncuestaApoyoEntity>,
+        pagos: List<EconomiaEncuestaPagoEntity>,
+        productos: List<EconomiaEncuestaProductoEntity>,
+        lugares: List<EconomiaProductoLugarVentaEntity>
+    ) {
+        upsertEncuesta(encuesta)
+        deleteLugaresForEncuesta(encuesta.id)
+        deleteProductosForEncuesta(encuesta.id)
+        deleteApoyosForEncuesta(encuesta.id)
+        deletePagosForEncuesta(encuesta.id)
+        apoyos.forEach { upsertApoyo(it) }
+        pagos.forEach { upsertPago(it) }
+        productos.forEach { upsertProducto(it) }
+        lugares.forEach { upsertLugarProducto(it) }
+    }
+
+    @Transaction
+    suspend fun replaceEncuestaFromServer(
+        encuesta: EconomiaEncuestaEntity,
+        apoyos: List<EconomiaEncuestaApoyoEntity>,
+        pagos: List<EconomiaEncuestaPagoEntity>,
+        productos: List<EconomiaEncuestaProductoEntity>,
+        lugares: List<EconomiaProductoLugarVentaEntity>
+    ) = saveEncuestaAggregate(encuesta, apoyos, pagos, productos, lugares)
+
+    @Transaction
+    suspend fun deleteEncuestaAggregate(encuestaId: String) {
+        deleteLugaresForEncuesta(encuestaId)
+        deleteProductosForEncuesta(encuestaId)
+        deleteApoyosForEncuesta(encuestaId)
+        deletePagosForEncuesta(encuestaId)
+        deleteEncuesta(encuestaId)
+    }
 
     @Query("select * from economia_encuesta_apoyos where syncState in ('PENDING_SYNC','ERROR','CONFLICT')")
     suspend fun pendingApoyos(): List<EconomiaEncuestaApoyoEntity>

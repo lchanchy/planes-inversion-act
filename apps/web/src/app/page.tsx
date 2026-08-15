@@ -13107,8 +13107,15 @@ function EconomiaAnalytics({
   async function resolverConflictoAndroid(conflicto: EconomiaSyncConflicto) {
     const payload = conflicto.client_payload as { encuesta?: unknown; apoyos?: unknown; pagos?: unknown; productos?: unknown };
     if (!payload.encuesta) { setRevisionMsg("El conflicto no contiene una encuesta Android recuperable."); return; }
-    const { data, error } = await supabase.rpc("sync_economia_encuesta", {
-      p_encuesta: payload.encuesta, p_apoyos: payload.apoyos ?? [], p_pagos: payload.pagos ?? [],
+    const encuestaCliente = payload.encuesta as Record<string, unknown>;
+    const idCanonico = conflicto.server_payload?.id;
+    // Si dos telefonos crearon la misma medicion, conservar Android reemplaza el registro
+    // canonico existente; no intenta insertar un segundo ano/monitoreo prohibido.
+    const encuestaParaResolver = typeof idCanonico === "string"
+      ? { ...encuestaCliente, id: idCanonico }
+      : encuestaCliente;
+    const { data, error } = await supabase.rpc("sync_economia_encuesta_v2", {
+      p_encuesta: encuestaParaResolver, p_apoyos: payload.apoyos ?? [], p_pagos: payload.pagos ?? [],
       p_productos: payload.productos ?? [], p_expected_version: conflicto.current_version ?? 0
     });
     if (error || (data as { conflict?: boolean } | null)?.conflict) {

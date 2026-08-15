@@ -51,6 +51,9 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 
 class SupabaseRestClient(
     baseUrl: String,
@@ -501,6 +504,15 @@ class SupabaseRestClient(
         }.body<List<EconomiaConflictoPendienteDto>>().mapTo(mutableSetOf()) { it.encuestaId }
     }
 
+    suspend fun economiaConflictosResueltos(): Map<String, String?> = withAuth {
+        requireConfigured()
+        client.get("$baseUrl/rest/v1/economia_sync_conflictos?select=encuesta_id,server_payload&estado=in.(resuelto_servidor,resuelto_cliente,resuelto_manual)") {
+            authHeaders()
+        }.body<List<EconomiaConflictoResueltoDto>>().associate { conflicto ->
+            conflicto.encuestaId to conflicto.serverPayload?.get("id")?.jsonPrimitive?.contentOrNull
+        }
+    }
+
     // --- Captura (push) --- upsert por id (Prefer merge-duplicates).
     suspend fun uploadEconomiaEncuesta(item: EconomiaEncuestaEntity) = withAuth {
         requireConfigured()
@@ -659,7 +671,7 @@ class SupabaseRestClient(
             ) },
             item.serverVersion
         )
-        client.post("$baseUrl/rest/v1/rpc/sync_economia_encuesta") {
+        client.post("$baseUrl/rest/v1/rpc/sync_economia_encuesta_v2") {
             authHeaders(); contentType(ContentType.Application.Json); setBody(json.encodeToString(request))
         }.body()
     }
@@ -1152,6 +1164,10 @@ private data class UserProfileDto(val id: String)
 @Serializable private data class EconomiaProductoDownloadDto(val id:String,@SerialName("encuesta_id")val encuestaId:String,@SerialName("project_id")val projectId:String,@SerialName("family_id")val familyId:String,@SerialName("producto_id")val productoId:String?=null,@SerialName("nombre_otro")val nombreOtro:String?=null,val unidad:String?=null,@SerialName("es_pecuario")val esPecuario:Boolean=false,val temporalidad:String?=null,@SerialName("cantidad_producida")val cantidad:Double?=null,val consumo:Double?=null,val vendido:Double?=null,@SerialName("motivo_no_venta")val motivo:String?=null,@SerialName("precio_unitario")val precio:Double?=null,@SerialName("apoyo_act")val apoyo:Boolean?=null){fun toEntity()=EconomiaEncuestaProductoEntity(id,encuestaId,projectId,familyId,productoId,nombreOtro,unidad,esPecuario,temporalidad,cantidad,consumo,vendido,motivo,precio,apoyo,SyncState.SYNCED)}
 @Serializable private data class EconomiaLugarProductoDownloadDto(val id:String,@SerialName("encuesta_producto_id")val productoId:String,@SerialName("project_id")val projectId:String,@SerialName("family_id")val familyId:String,@SerialName("lugar_venta_id")val lugarId:String,@SerialName("nombre_libre")val nombre:String?=null){fun toEntity()=EconomiaProductoLugarVentaEntity(id,productoId,projectId,familyId,lugarId,nombre,SyncState.SYNCED)}
 @Serializable private data class EconomiaConflictoPendienteDto(@SerialName("encuesta_id") val encuestaId: String)
+@Serializable private data class EconomiaConflictoResueltoDto(
+    @SerialName("encuesta_id") val encuestaId: String,
+    @SerialName("server_payload") val serverPayload: JsonObject? = null
+)
 
 // --- Captura (push) --- las columnas generadas (personas_total, ingreso_mensual) NO se envian.
 @Serializable private data class EconomiaEncuestaUploadDto(

@@ -83,14 +83,8 @@ class RestauracionRepository(
     ) {
         val dao = db.economiaDao()
         val cabecera = encuesta.copy(syncState = SyncState.PENDING_SYNC, lastError = null)
-        dao.upsertEncuesta(cabecera)
-        dao.deleteLugaresForEncuesta(cabecera.id)
-        dao.deleteProductosForEncuesta(cabecera.id)
-        dao.deleteApoyosForEncuesta(cabecera.id)
-        dao.deletePagosForEncuesta(cabecera.id)
-        apoyos.forEach { a ->
-            dao.upsertApoyo(
-                EconomiaEncuestaApoyoEntity(
+        val apoyosLocal = apoyos.map { a ->
+            EconomiaEncuestaApoyoEntity(
                     encuestaId = cabecera.id,
                     projectId = cabecera.projectId,
                     familyId = cabecera.familyId,
@@ -98,21 +92,18 @@ class RestauracionRepository(
                     valorMensual = a.valorMensual,
                     nombreLibre = a.nombreLibre
                 )
-            )
         }
-        pagos.forEach { p ->
-            dao.upsertPago(
-                EconomiaEncuestaPagoEntity(
+        val pagosLocal = pagos.map { p ->
+            EconomiaEncuestaPagoEntity(
                     encuestaId = cabecera.id,
                     projectId = cabecera.projectId,
                     familyId = cabecera.familyId,
                     tipoPagoId = p.tipoPagoId,
                     valorMensual = p.valorMensual
                 )
-            )
         }
-        productos.forEach { pr ->
-            val prod = EconomiaEncuestaProductoEntity(
+        val productosLocal = productos.map { pr ->
+            EconomiaEncuestaProductoEntity(
                 id = pr.id,
                 encuestaId = cabecera.id,
                 projectId = cabecera.projectId,
@@ -129,19 +120,19 @@ class RestauracionRepository(
                 precioUnitario = pr.precioUnitario,
                 apoyoAct = pr.apoyoAct
             )
-            dao.upsertProducto(prod)
-            pr.lugaresVentaIds.forEach { lugarId ->
-                dao.upsertLugarProducto(
-                    EconomiaProductoLugarVentaEntity(
-                        encuestaProductoId = prod.id,
+        }
+        val lugaresLocal = productos.flatMap { pr ->
+            pr.lugaresVentaIds.map { lugarId ->
+                EconomiaProductoLugarVentaEntity(
+                        encuestaProductoId = pr.id,
                         projectId = cabecera.projectId,
                         familyId = cabecera.familyId,
                         lugarVentaId = lugarId,
                         nombreLibre = null
                     )
-                )
             }
         }
+        dao.saveEncuestaAggregate(cabecera, apoyosLocal, pagosLocal, productosLocal, lugaresLocal)
     }
 
     suspend fun eliminarEncuestaEconomia(encuestaId: String) {
@@ -173,7 +164,7 @@ class RestauracionRepository(
 
     suspend fun login(email: String, password: String) = remote.login(email, password)
 
-    suspend fun downloadInitialData() {
+    suspend fun downloadInitialData(): DownloadResult {
         db.catalogDao().upsertProjects(remote.projects())
         db.catalogDao().upsertFamilies(remote.families())
         db.catalogDao().upsertMunicipalities(remote.municipalities())
@@ -229,7 +220,7 @@ class RestauracionRepository(
         // --- Economia Familiar (Fase 8): catalogos (replace) + familias marcadas. ---
         // Best-effort y AISLADO: si el modulo aun no esta aplicado en el servidor (404/400),
         // runCatching evita romper la descarga de lo critico (catalogos/planes/entregas).
-        runCatching {
+        val economiaError = runCatching {
             val eco = db.economiaDao()
             eco.replaceEquipos(remote.economiaEquipos())
             eco.replaceEncuestadores(remote.economiaEncuestadores())
@@ -245,25 +236,34 @@ class RestauracionRepository(
             // reflejar año, ronda, revisión y demás cambios hechos en la web.
             val serverEncuestas = remote.economiaEncuestas()
             val conflictosPendientes = remote.economiaConflictosPendientes()
-            serverEncuestas.forEach { server ->
-                val local = eco.encuestaById(server.id)
-                val desdeServidor = if (server.estado == "devuelta") {
-                    server.copy(syncState = SyncState.PENDING_SYNC)
-                } else {
-                    server
-                }
-                when {
-                    local == null -> eco.insertEncuestasIfNew(listOf(desdeServidor))
-                    local.syncState == SyncState.SYNCED -> eco.updateEncuesta(desdeServidor)
-                    local.syncState == SyncState.CONFLICT && server.id !in conflictosPendientes ->
-                        eco.updateEncuesta(desdeServidor)
+            remote.economiaConflictosResueltos().forEach { (clientId, canonicalId) ->
+                val local = eco.encuestaById(clientId)
+                if (local?.syncState == SyncState.CONFLICT && canonicalId != null && canonicalId != clientId) {
+                    eco.deleteEncuestaAggregate(clientId)
                 }
             }
-            eco.insertApoyosIfNew(remote.economiaApoyos())
-            eco.insertPagosIfNew(remote.economiaPagos())
-            eco.insertProductosIfNew(remote.economiaProductosEncuesta())
-            eco.insertLugaresIfNew(remote.economiaLugaresProducto())
-        }
+            val serverApoyos = remote.economiaApoyos().groupBy { it.encuestaId }
+            val serverPagos = remote.economiaPagos().groupBy { it.encuestaId }
+            val serverProductos = remote.economiaProductosEncuesta().groupBy { it.encuestaId }
+            val serverLugares = remote.economiaLugaresProducto().groupBy { it.encuestaProductoId }
+            serverEncuestas.forEach { server ->
+                val local = eco.encuestaById(server.id)
+                val puedeRefrescar = shouldRefreshEconomiaFromServer(
+                    local?.syncState, server.id in conflictosPendientes
+                )
+                if (puedeRefrescar) {
+                    val productos = serverProductos[server.id].orEmpty()
+                    eco.replaceEncuestaFromServer(
+                        server.copy(syncState = SyncState.SYNCED, lastError = null),
+                        serverApoyos[server.id].orEmpty(),
+                        serverPagos[server.id].orEmpty(),
+                        productos,
+                        productos.flatMap { serverLugares[it.id].orEmpty() }
+                    )
+                }
+            }
+        }.exceptionOrNull()
+        return DownloadResult(economiaError?.message)
     }
 
     // Fase 4: actividades (con su plan) que otra familia tiene en este dispositivo, para reasignar.
@@ -721,6 +721,17 @@ data class DeliveryLineInput(
 )
 
 // --- Economia Familiar (Fase 8): entradas de captura para guardarEncuestaEconomia ---
+data class DownloadResult(val economiaError: String? = null) {
+    val message: String
+        get() = economiaError?.let {
+            "Planes Operativos actualizados. Economia Familiar no se pudo actualizar: $it"
+        } ?: "Catalogos actualizados, incluida Economia Familiar."
+}
+
+internal fun shouldRefreshEconomiaFromServer(localState: SyncState?, hasPendingConflict: Boolean): Boolean =
+    localState == null || localState == SyncState.SYNCED ||
+        (localState == SyncState.CONFLICT && !hasPendingConflict)
+
 data class EconomiaApoyoInput(
     val tipoApoyoId: String,
     val valorMensual: Double?,

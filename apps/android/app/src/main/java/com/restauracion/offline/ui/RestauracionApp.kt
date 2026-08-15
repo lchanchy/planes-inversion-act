@@ -200,8 +200,8 @@ fun RestauracionApp(container: AppContainer) {
                             runCatching {
                                 container.repository.login(email, password)
                                 container.repository.downloadInitialData()
-                            }.onSuccess {
-                                message = "Datos iniciales descargados."
+                            }.onSuccess { result ->
+                                message = result.message
                                 selectedProjectId = null
                                 selectedFamilyId = null
                                 selectedPlanId = null
@@ -219,7 +219,7 @@ fun RestauracionApp(container: AppContainer) {
                     onDownload = {
                         scope.launch {
                             runCatching { container.repository.downloadInitialData() }
-                                .onSuccess { message = "Catalogos actualizados." }
+                                .onSuccess { message = it.message }
                                 .onFailure { message = it.message ?: "Error descargando datos." }
                         }
                     },
@@ -246,7 +246,7 @@ fun RestauracionApp(container: AppContainer) {
                     onDownload = {
                         scope.launch {
                             runCatching { container.repository.downloadInitialData() }
-                                .onSuccess { message = "Catalogos actualizados." }
+                                .onSuccess { message = it.message }
                                 .onFailure { message = it.message ?: "Error descargando datos." }
                         }
                     },
@@ -263,9 +263,9 @@ fun RestauracionApp(container: AppContainer) {
                             screenName = Screen.LOGIN.name
                         }
                     },
-                    onOpenProject = {
-                        selectedProjectId = it.id
-                        selectedFamilyId = null
+                    onOpenFamily = {
+                        selectedProjectId = it.projectId
+                        selectedFamilyId = it.id
                         selectedPlanId = null
                         screenName = Screen.FAMILY.name
                     },
@@ -291,6 +291,7 @@ fun RestauracionApp(container: AppContainer) {
                         FamilyScreen(
                             container = container,
                             project = selectedProject,
+                            initialFamilyId = selectedFamilyId,
                             onBack = {
                                 selectedProjectId = null
                                 selectedFamilyId = null
@@ -505,36 +506,73 @@ private fun HomeScreen(
     onDownload: () -> Unit,
     onSync: () -> Unit,
     onLogout: () -> Unit,
-    onOpenProject: (ProjectEntity) -> Unit,
+    onOpenFamily: (FamilyEntity) -> Unit,
     onBack: () -> Unit
 ) {
     // ponytail: auto-actualizar catalogos al entrar a la pantalla principal sin depender del boton manual
     LaunchedEffect(Unit) { onDownload() }
 
-    val projects by container.repository.projects.collectAsState(initial = emptyList())
-    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    val families by container.repository.economiaAllFamilies().collectAsState(initial = emptyList())
+    val municipalities by container.repository.municipalities().collectAsState(initial = emptyList())
+    val villages by container.repository.villages().collectAsState(initial = emptyList())
+    var department by rememberSaveable { mutableStateOf<String?>(null) }
+    var municipalityId by rememberSaveable { mutableStateOf<String?>(null) }
+    var villageId by rememberSaveable { mutableStateOf<String?>(null) }
+    val municipalityById = municipalities.associateBy { it.id }
+    val familyMunicipalityIds = families.mapNotNull { it.municipalityId }.toSet()
+    val departments = familyMunicipalityIds.mapNotNull { municipalityById[it]?.department }.distinct().sorted()
+    val filteredMunicipalities = municipalities.filter { it.id in familyMunicipalityIds && it.department == department }.sortedBy { it.name }
+    val familyVillageIds = families.filter { it.municipalityId == municipalityId }.mapNotNull { it.villageId }.toSet()
+    val filteredVillages = villages.filter { it.id in familyVillageIds }.sortedBy { it.name }
+    val filteredFamilies = families.filter {
+        it.municipalityId == municipalityId && (villageId == null || it.villageId == villageId)
+    }.sortedBy { it.familyCode }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().imePadding().padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(top = 16.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+      item {
         AppHeader(chip = "Planes Operativos", onBack = onBack)
+      }
+      item {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = onDownload) { Text("Descargar") }
             Button(onClick = onSync) { Text("Sincronizar") }
             OutlinedButton(onClick = onLogout) { Text("Salir") }
         }
+      }
+      item {
         message?.let { Text(friendlyMessage(it), color = MaterialTheme.colorScheme.primary) }
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(projects) { project ->
-                androidx.compose.foundation.layout.Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .glassmorphism()
-                        .clickable { onOpenProject(project) }
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Text(project.name, style = MaterialTheme.typography.titleMedium)
-                        Text(project.codePrefix, style = MaterialTheme.typography.bodySmall)
-                    }
+      }
+      item {
+        GlassPanel {
+            Text("Seleccionar familia", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+            Text("Filtre el territorio; el proyecto se asigna automáticamente según la familia.", style = MaterialTheme.typography.bodySmall)
+            AppSelector("Departamento", department, departments.map { it to it }) {
+                department = it; municipalityId = null; villageId = null
+            }
+            if (department != null) {
+                AppSelector("Municipio", filteredMunicipalities.firstOrNull { it.id == municipalityId }?.name, filteredMunicipalities.map { it.id to it.name }) {
+                    municipalityId = it; villageId = null
                 }
             }
+            if (municipalityId != null) {
+                AppSelector("Vereda (opcional)", filteredVillages.firstOrNull { it.id == villageId }?.name, filteredVillages.map { it.id to it.name }) {
+                    villageId = it
+                }
+                AppFamilySelector("Familia (${filteredFamilies.size})", filteredFamilies.map {
+                    it.id to "${it.familyCode} - ${it.representativeName}"
+                }) { familyId ->
+                    families.firstOrNull { it.id == familyId }?.let(onOpenFamily)
+                }
+            }
+            if (families.isEmpty()) {
+                Text("No hay familias descargadas. Pulse Descargar para actualizar.", color = MaterialTheme.colorScheme.error)
+            }
         }
+      }
     }
 }
 
@@ -542,6 +580,7 @@ private fun HomeScreen(
 private fun FamilyScreen(
     container: AppContainer,
     project: ProjectEntity?,
+    initialFamilyId: String?,
     onBack: () -> Unit,
     onCreatePlan: (FamilyEntity) -> Unit,
     onEditSentPlan: (OperationalPlanEntity) -> Unit,
@@ -556,8 +595,11 @@ private fun FamilyScreen(
     val properties by container.repository.properties().collectAsState(initial = emptyList())
     val sentPlans by container.repository.sentPlans(project.id).collectAsState(initial = emptyList())
     var query by remember { mutableStateOf("") }
-    var selectorExpanded by remember { mutableStateOf(true) }
+    var selectorExpanded by remember(initialFamilyId) { mutableStateOf(initialFamilyId == null) }
     var selectedFamily by remember { mutableStateOf<FamilyEntity?>(null) }
+    LaunchedEffect(families, initialFamilyId) {
+        if (selectedFamily == null) selectedFamily = families.firstOrNull { it.id == initialFamilyId }
+    }
     val municipalityNames = municipalities.associateBy { it.id }
     val villageNames = villages.associateBy { it.id }
     val propertiesByFamily = properties.associateBy { it.familyId }
