@@ -41,8 +41,8 @@ android {
         applicationId = "com.restauracion.offline"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
 
         val supabaseUrl = secretProperty("SUPABASE_URL").ifBlank { defaultSupabaseUrl }
         val supabaseAnonKey = secretProperty("SUPABASE_ANON_KEY")
@@ -67,6 +67,31 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+
+    val releaseStoreFile = secretProperty("RELEASE_STORE_FILE")
+    val releaseStorePassword = secretProperty("RELEASE_STORE_PASSWORD")
+    val releaseKeyAlias = secretProperty("RELEASE_KEY_ALIAS")
+    val releaseKeyPassword = secretProperty("RELEASE_KEY_PASSWORD")
+    val releaseSigningConfigured = listOf(
+        releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword
+    ).all { it.isNotBlank() }
+
+    signingConfigs {
+        if (releaseSigningConfigured) {
+            create("release") {
+                storeFile = rootProject.file(releaseStoreFile)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            if (releaseSigningConfigured) signingConfig = signingConfigs.getByName("release")
+        }
     }
 
     compileOptions {

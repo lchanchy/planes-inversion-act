@@ -35,6 +35,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.ClientRequestException
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
@@ -66,6 +67,11 @@ class SupabaseRestClient(
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false; encodeDefaults = true }
     private val client = HttpClient(OkHttp) {
         install(ContentNegotiation) { json(json) }
+        install(HttpTimeout) {
+            connectTimeoutMillis = 15_000
+            requestTimeoutMillis = 30_000
+            socketTimeoutMillis = 30_000
+        }
         expectSuccess = true
     }
     // Serializa la renovacion de sesion: evita que varias peticiones renueven a la vez
@@ -118,58 +124,42 @@ class SupabaseRestClient(
 
     suspend fun projects(): List<ProjectEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/projects?select=id,name,code_prefix,status&is_deleted=eq.false") {
-        authHeaders()
-        }.body<List<ProjectDto>>().map { it.toEntity() }
+        pagedGet<ProjectDto>("projects?select=id,name,code_prefix,status&is_deleted=eq.false").map { it.toEntity() }
     }
 
     suspend fun families(): List<FamilyEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/families?select=id,project_id,family_code,representative_name,document_number,municipality_id,village_id,status&is_deleted=eq.false") {
-        authHeaders()
-        }.body<List<FamilyDto>>().map { it.toEntity() }
+        pagedGet<FamilyDto>("families?select=id,project_id,family_code,representative_name,document_number,municipality_id,village_id,status&is_deleted=eq.false").map { it.toEntity() }
     }
 
     suspend fun municipalities(): List<MunicipalityEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/municipalities?select=id,name,department") {
-        authHeaders()
-        }.body<List<MunicipalityDto>>().map { it.toEntity() }
+        pagedGet<MunicipalityDto>("municipalities?select=id,name,department").map { it.toEntity() }
     }
 
     suspend fun villages(): List<VillageEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/villages?select=id,municipality_id,name") {
-        authHeaders()
-        }.body<List<VillageDto>>().map { it.toEntity() }
+        pagedGet<VillageDto>("villages?select=id,municipality_id,name").map { it.toEntity() }
     }
 
     suspend fun properties(): List<PropertyEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/properties?select=id,family_id,property_name,total_area_ha&is_deleted=eq.false") {
-        authHeaders()
-        }.body<List<PropertyDto>>().map { it.toEntity() }
+        pagedGet<PropertyDto>("properties?select=id,family_id,property_name,total_area_ha&is_deleted=eq.false").map { it.toEntity() }
     }
 
     suspend fun activities(): List<ActivityCatalogEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/activity_catalog?select=id,project_id,name,unit,requires_baseline,requires_target,active&is_deleted=eq.false") {
-        authHeaders()
-        }.body<List<ActivityDto>>().map { it.toEntity() }
+        pagedGet<ActivityDto>("activity_catalog?select=id,project_id,name,unit,requires_baseline,requires_target,active&is_deleted=eq.false").map { it.toEntity() }
     }
 
     suspend fun materials(): List<MaterialCatalogEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/material_catalog?select=id,project_id,name,category,unit,quoted_unit_price,vegetal_indicator_group,active&is_deleted=eq.false") {
-        authHeaders()
-        }.body<List<MaterialDto>>().map { it.toEntity() }
+        pagedGet<MaterialDto>("material_catalog?select=id,project_id,name,category,unit,quoted_unit_price,vegetal_indicator_group,active&is_deleted=eq.false").map { it.toEntity() }
     }
 
     suspend fun counterpartCatalog(): List<CounterpartCatalogEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/counterpart_catalog?select=id,project_id,name,type,suggested_unit,active&is_deleted=eq.false") {
-        authHeaders()
-        }.body<List<CounterpartDto>>().map { it.toEntity() }
+        pagedGet<CounterpartDto>("counterpart_catalog?select=id,project_id,name,type,suggested_unit,active&is_deleted=eq.false").map { it.toEntity() }
     }
 
     private suspend fun resolveProfileId(idOrEmail: String): String = withAuth {
@@ -287,9 +277,7 @@ class SupabaseRestClient(
     // Estado (aprobado, etc.) de los planes en el servidor, para reflejarlo en la app.
     suspend fun operationalPlanStatuses(): Map<String, String> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/operational_plans?select=id,status&is_deleted=eq.false") {
-            authHeaders()
-        }.body<List<PlanStatusDto>>().associate { it.id to it.status }
+        pagedGet<PlanStatusDto>("operational_plans?select=id,status&is_deleted=eq.false").associate { it.id to it.status }
     }
 
     // Fase 4: materiales de todos los planes del proyecto. Sirven para (a) tener los materiales de
@@ -297,9 +285,7 @@ class SupabaseRestClient(
     // la app las reasignaciones/fusiones hechas desde la web (actividad, cantidad, borrado).
     suspend fun planProjectMaterials(): List<PlanProjectMaterialEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/plan_project_materials?select=id,plan_activity_id,material_id,quantity,unit,quoted_unit_price,observations&is_deleted=eq.false") {
-            authHeaders()
-        }.body<List<PlanMaterialSyncDto>>().map { it.toEntity() }
+        pagedGet<PlanMaterialSyncDto>("plan_project_materials?select=id,plan_activity_id,material_id,quantity,unit,quoted_unit_price,observations&is_deleted=eq.false").map { it.toEntity() }
     }
 
     // Fase 4: marca un material como eliminado en el servidor (al fusionar una reasignacion,
@@ -317,16 +303,12 @@ class SupabaseRestClient(
     // destino de una reasignacion desde el campo. Se insertan sin pisar los planes locales.
     suspend fun operationalPlans(): List<OperationalPlanEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/operational_plans?select=id,project_id,family_id,technician_id,plan_date,status,version&is_deleted=eq.false") {
-            authHeaders()
-        }.body<List<PlanRowDto>>().map { it.toEntity() }
+        pagedGet<PlanRowDto>("operational_plans?select=id,project_id,family_id,technician_id,plan_date,status,version&is_deleted=eq.false").map { it.toEntity() }
     }
 
     suspend fun planActivities(): List<PlanActivityEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/plan_activities?select=id,plan_id,activity_id,baseline,target,unit,observations&is_deleted=eq.false") {
-            authHeaders()
-        }.body<List<PlanActivityRowDto>>().map { it.toEntity() }
+        pagedGet<PlanActivityRowDto>("plan_activities?select=id,plan_id,activity_id,baseline,target,unit,observations&is_deleted=eq.false").map { it.toEntity() }
     }
 
     // Fase 3: pide al aplicativo web que genere el acta firmada de una entrega ya subida
@@ -344,16 +326,12 @@ class SupabaseRestClient(
 
     suspend fun deliveries(): List<MaterialDeliveryEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/material_deliveries?select=id,project_id,family_id,operational_plan_id,delivery_date,status,observations,registered_by,family_signature,technician_signature&is_deleted=eq.false") {
-            authHeaders()
-        }.body<List<MaterialDeliveryDto>>().map { it.toEntity() }
+        pagedGet<MaterialDeliveryDto>("material_deliveries?select=id,project_id,family_id,operational_plan_id,delivery_date,status,observations,registered_by,family_signature,technician_signature&is_deleted=eq.false").map { it.toEntity() }
     }
 
     suspend fun deliveryItems(): List<MaterialDeliveryItemEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/material_delivery_items?select=id,material_delivery_id,project_id,family_id,operational_plan_id,plan_activity_id,activity_id,plan_project_material_id,material_id,provisional_material_id,material_name,unit,approved_quantity,delivered_quantity,observations&is_deleted=eq.false") {
-            authHeaders()
-        }.body<List<MaterialDeliveryItemDto>>().map { it.toEntity() }
+        pagedGet<MaterialDeliveryItemDto>("material_delivery_items?select=id,material_delivery_id,project_id,family_id,operational_plan_id,plan_activity_id,activity_id,plan_project_material_id,material_id,provisional_material_id,material_name,unit,approved_quantity,delivered_quantity,observations&is_deleted=eq.false").map { it.toEntity() }
     }
 
     suspend fun uploadDelivery(item: MaterialDeliveryEntity) = withAuth {
@@ -428,87 +406,76 @@ class SupabaseRestClient(
     // --- Catalogos (pull) ---
     suspend fun economiaEquipos(): List<EconomiaEquipoEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/economia_equipos?select=id,codigo,nombre,orden,activo&is_deleted=eq.false") {
-            authHeaders()
-        }.body<List<EconomiaEquipoDto>>().map { it.toEntity() }
+        pagedGet<EconomiaEquipoDto>("economia_equipos?select=id,codigo,nombre,orden,activo&is_deleted=eq.false").map { it.toEntity() }
     }
 
     suspend fun economiaEncuestadores(): List<EconomiaEncuestadorEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/economia_encuestadores?select=id,nombre,activo&is_deleted=eq.false") {
-            authHeaders()
-        }.body<List<EconomiaEncuestadorDto>>().map { it.toEntity() }
+        pagedGet<EconomiaEncuestadorDto>("economia_encuestadores?select=id,nombre,activo&is_deleted=eq.false").map { it.toEntity() }
     }
 
     suspend fun economiaRondas(): List<EconomiaRondaEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/economia_rondas?select=id,codigo,nombre,orden,activo&is_deleted=eq.false") {
-            authHeaders()
-        }.body<List<EconomiaRondaDto>>().map { it.toEntity() }
+        pagedGet<EconomiaRondaDto>("economia_rondas?select=id,codigo,nombre,orden,activo&is_deleted=eq.false").map { it.toEntity() }
     }
 
     suspend fun economiaCategorias(): List<EconomiaCategoriaEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/economia_categorias?select=id,codigo,nombre,orden,activo&is_deleted=eq.false") {
-            authHeaders()
-        }.body<List<EconomiaCategoriaDto>>().map { it.toEntity() }
+        pagedGet<EconomiaCategoriaDto>("economia_categorias?select=id,codigo,nombre,orden,activo&is_deleted=eq.false").map { it.toEntity() }
     }
 
     suspend fun economiaProductos(): List<EconomiaProductoEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/economia_productos?select=id,categoria_id,codigo,nombre,es_pecuario,unidad_base,orden,activo&is_deleted=eq.false") {
-            authHeaders()
-        }.body<List<EconomiaProductoDto>>().map { it.toEntity() }
+        pagedGet<EconomiaProductoDto>("economia_productos?select=id,categoria_id,codigo,nombre,es_pecuario,unidad_base,orden,activo&is_deleted=eq.false").map { it.toEntity() }
     }
 
     suspend fun economiaTiposApoyo(): List<EconomiaTipoApoyoEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/economia_tipos_apoyo?select=id,codigo,nombre,orden,activo&is_deleted=eq.false") {
-            authHeaders()
-        }.body<List<EconomiaTipoApoyoDto>>().map { it.toEntity() }
+        pagedGet<EconomiaTipoApoyoDto>("economia_tipos_apoyo?select=id,codigo,nombre,orden,activo&is_deleted=eq.false").map { it.toEntity() }
     }
 
     suspend fun economiaTiposPago(): List<EconomiaTipoPagoEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/economia_tipos_pago?select=id,codigo,nombre,orden,activo&is_deleted=eq.false") {
-            authHeaders()
-        }.body<List<EconomiaTipoPagoDto>>().map { it.toEntity() }
+        pagedGet<EconomiaTipoPagoDto>("economia_tipos_pago?select=id,codigo,nombre,orden,activo&is_deleted=eq.false").map { it.toEntity() }
     }
 
     suspend fun economiaLugaresVenta(): List<EconomiaLugarVentaEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/economia_lugares_venta?select=id,codigo,nombre,orden,activo&is_deleted=eq.false") {
-            authHeaders()
-        }.body<List<EconomiaLugarVentaDto>>().map { it.toEntity() }
+        pagedGet<EconomiaLugarVentaDto>("economia_lugares_venta?select=id,codigo,nombre,orden,activo&is_deleted=eq.false").map { it.toEntity() }
     }
 
     suspend fun economiaFamilias(): List<EconomiaFamiliaEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/economia_familias?select=id,project_id,family_id,activo,notas&is_deleted=eq.false") {
-            authHeaders()
-        }.body<List<EconomiaFamiliaDto>>().map { it.toEntity() }
+        pagedGet<EconomiaFamiliaDto>("economia_familias?select=id,project_id,family_id,activo,notas&is_deleted=eq.false").map { it.toEntity() }
     }
 
     // Encuestas existentes (para saber que monitoreos ya tiene cada familia). Solo cabecera.
     suspend fun economiaEncuestas(): List<EconomiaEncuestaEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/economia_encuestas?select=id,project_id,family_id,ronda_id,equipo_id,encuestador_id,fecha,anio,tipo_medicion,numero_monitoreo,cambio_num_personas,personas_ninos,personas_adolescentes,personas_jovenes,personas_adultos,personas_mayores,recibe_apoyo_gobierno,recibe_otros_pagos,valor_jornal,estado,observaciones,server_version,revision,notas_revision,es_piloto&is_deleted=eq.false") {
-            authHeaders()
-        }.body<List<EconomiaEncuestaDownloadDto>>().map { it.toEntity() }
+        pagedGet<EconomiaEncuestaDownloadDto>("economia_encuestas?select=id,project_id,family_id,ronda_id,equipo_id,encuestador_id,fecha,anio,tipo_medicion,numero_monitoreo,cambio_num_personas,personas_ninos,personas_adolescentes,personas_jovenes,personas_adultos,personas_mayores,recibe_apoyo_gobierno,recibe_otros_pagos,valor_jornal,estado,observaciones,server_version,revision,notas_revision,es_piloto&is_deleted=eq.false").map { it.toEntity() }
+    }
+
+    private suspend inline fun <reified T> pagedGet(resourceAndQuery: String): List<T> {
+        val result = mutableListOf<T>()
+        var offset = 0
+        do {
+            val page = client.get(
+                "$baseUrl/rest/v1/$resourceAndQuery&order=id.asc&limit=$PAGE_SIZE&offset=$offset"
+            ) { authHeaders() }.body<List<T>>()
+            result += page
+            offset += page.size
+        } while (page.size == PAGE_SIZE)
+        return result
     }
 
     suspend fun economiaConflictosPendientes(): Set<String> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/economia_sync_conflictos?select=encuesta_id&estado=eq.pendiente") {
-            authHeaders()
-        }.body<List<EconomiaConflictoPendienteDto>>().mapTo(mutableSetOf()) { it.encuestaId }
+        pagedGet<EconomiaConflictoPendienteDto>("economia_sync_conflictos?select=id,encuesta_id&estado=eq.pendiente").mapTo(mutableSetOf()) { it.encuestaId }
     }
 
     suspend fun economiaConflictosResueltos(): Map<String, String?> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/economia_sync_conflictos?select=encuesta_id,server_payload&estado=in.(resuelto_servidor,resuelto_cliente,resuelto_manual)") {
-            authHeaders()
-        }.body<List<EconomiaConflictoResueltoDto>>().associate { conflicto ->
+        pagedGet<EconomiaConflictoResueltoDto>("economia_sync_conflictos?select=id,encuesta_id,server_payload&estado=in.(resuelto_servidor,resuelto_cliente,resuelto_manual)").associate { conflicto ->
             conflicto.encuestaId to conflicto.serverPayload?.get("id")?.jsonPrimitive?.contentOrNull
         }
     }
@@ -630,20 +597,16 @@ class SupabaseRestClient(
         }
     }
     suspend fun economiaApoyos(): List<EconomiaEncuestaApoyoEntity> = withAuth {
-        requireConfigured(); client.get("$baseUrl/rest/v1/economia_encuesta_apoyos?select=id,encuesta_id,project_id,family_id,tipo_apoyo_id,valor_mensual,nombre_libre&is_deleted=eq.false") { authHeaders() }
-            .body<List<EconomiaApoyoDownloadDto>>().map { it.toEntity() }
+        requireConfigured(); pagedGet<EconomiaApoyoDownloadDto>("economia_encuesta_apoyos?select=id,encuesta_id,project_id,family_id,tipo_apoyo_id,valor_mensual,nombre_libre&is_deleted=eq.false").map { it.toEntity() }
     }
     suspend fun economiaPagos(): List<EconomiaEncuestaPagoEntity> = withAuth {
-        requireConfigured(); client.get("$baseUrl/rest/v1/economia_encuesta_pagos?select=id,encuesta_id,project_id,family_id,tipo_pago_id,valor_mensual&is_deleted=eq.false") { authHeaders() }
-            .body<List<EconomiaPagoDownloadDto>>().map { it.toEntity() }
+        requireConfigured(); pagedGet<EconomiaPagoDownloadDto>("economia_encuesta_pagos?select=id,encuesta_id,project_id,family_id,tipo_pago_id,valor_mensual&is_deleted=eq.false").map { it.toEntity() }
     }
     suspend fun economiaProductosEncuesta(): List<EconomiaEncuestaProductoEntity> = withAuth {
-        requireConfigured(); client.get("$baseUrl/rest/v1/economia_encuesta_productos?select=id,encuesta_id,project_id,family_id,producto_id,nombre_otro,unidad,es_pecuario,temporalidad,cantidad_producida,consumo,vendido,motivo_no_venta,precio_unitario,apoyo_act&is_deleted=eq.false") { authHeaders() }
-            .body<List<EconomiaProductoDownloadDto>>().map { it.toEntity() }
+        requireConfigured(); pagedGet<EconomiaProductoDownloadDto>("economia_encuesta_productos?select=id,encuesta_id,project_id,family_id,producto_id,nombre_otro,unidad,es_pecuario,temporalidad,cantidad_producida,consumo,vendido,motivo_no_venta,precio_unitario,apoyo_act&is_deleted=eq.false").map { it.toEntity() }
     }
     suspend fun economiaLugaresProducto(): List<EconomiaProductoLugarVentaEntity> = withAuth {
-        requireConfigured(); client.get("$baseUrl/rest/v1/economia_producto_lugares_venta?select=id,encuesta_producto_id,project_id,family_id,lugar_venta_id,nombre_libre&is_deleted=eq.false") { authHeaders() }
-            .body<List<EconomiaLugarProductoDownloadDto>>().map { it.toEntity() }
+        requireConfigured(); pagedGet<EconomiaLugarProductoDownloadDto>("economia_producto_lugares_venta?select=id,encuesta_producto_id,project_id,family_id,lugar_venta_id,nombre_libre&is_deleted=eq.false").map { it.toEntity() }
     }
 
     // La encuesta y todos sus hijos se confirman o revierten juntos en PostgreSQL.
@@ -674,6 +637,10 @@ class SupabaseRestClient(
         client.post("$baseUrl/rest/v1/rpc/sync_economia_encuesta_v2") {
             authHeaders(); contentType(ContentType.Application.Json); setBody(json.encodeToString(request))
         }.body()
+    }
+
+    private companion object {
+        const val PAGE_SIZE = 500
     }
 }
 

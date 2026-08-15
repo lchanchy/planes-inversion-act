@@ -156,7 +156,7 @@ fun RestauracionApp(container: AppContainer) {
     }
     var screenName by rememberSaveable { mutableStateOf(initialScreen.name) }
     val screen = runCatching { Screen.valueOf(screenName) }.getOrDefault(Screen.HOME)
-    var message by remember { mutableStateOf<String?>(null) }
+    var message by remember { mutableStateOf(container.crashDiagnostics.consumeLastCrash()) }
     var selectedProjectId by rememberSaveable { mutableStateOf(container.repository.lastProjectId()) }
     var selectedFamilyId by rememberSaveable { mutableStateOf(container.repository.lastFamilyId()) }
     var selectedPlanId by rememberSaveable { mutableStateOf(container.repository.lastPlanId()) }
@@ -509,9 +509,6 @@ private fun HomeScreen(
     onOpenFamily: (FamilyEntity) -> Unit,
     onBack: () -> Unit
 ) {
-    // ponytail: auto-actualizar catalogos al entrar a la pantalla principal sin depender del boton manual
-    LaunchedEffect(Unit) { onDownload() }
-
     val families by container.repository.economiaAllFamilies().collectAsState(initial = emptyList())
     val municipalities by container.repository.municipalities().collectAsState(initial = emptyList())
     val villages by container.repository.villages().collectAsState(initial = emptyList())

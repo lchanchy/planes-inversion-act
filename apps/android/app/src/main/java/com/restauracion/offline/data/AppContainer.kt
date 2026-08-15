@@ -9,7 +9,7 @@ import com.restauracion.offline.data.local.RestauracionDatabase
 import com.restauracion.offline.data.remote.SupabaseRestClient
 import com.restauracion.offline.data.repository.RestauracionRepository
 
-class AppContainer(context: Context) {
+class AppContainer(context: Context, val crashDiagnostics: CrashDiagnostics) {
     private val migration1To2 = object : Migration(1, 2) {
         override fun migrate(db: SupportSQLiteDatabase) {
             db.execSQL(

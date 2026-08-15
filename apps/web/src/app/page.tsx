@@ -22,6 +22,7 @@ import {
 } from "docx";
 import type { Session } from "@supabase/supabase-js";
 import { supabase, supabaseConfigured } from "@/lib/supabase";
+import { fetchAllPages } from "@/lib/supabase-pagination";
 import type {
   Activity,
   CounterpartCatalog,
@@ -395,6 +396,7 @@ function AdminApp({ session }: { session: Session }) {
   const [implementationProgress, setImplementationProgress] = useState<ImplementationProgress[]>([]);
   const [quarterlyProgress, setQuarterlyProgress] = useState<QuarterlyProgress[]>([]);
   const [maintenanceProgress, setMaintenanceProgress] = useState<MaintenanceProgress[]>([]);
+  const [phase5Loaded, setPhase5Loaded] = useState(false);
   const [phase5SchemaStatus, setPhase5SchemaStatus] = useState<Phase5SchemaStatus>({ ready: true, message: null });
   const [maintenanceSchemaStatus, setMaintenanceSchemaStatus] = useState<Phase5SchemaStatus>({ ready: true, message: null });
 
@@ -450,45 +452,33 @@ function AdminApp({ session }: { session: Session }) {
         projectDepartmentsResult,
         projectMunicipalitiesResult,
         projectVillagesResult,
-        procurementBatchesResult,
-        procurementBatchItemsResult,
-        materialDeliveriesResult,
-        materialDeliveryItemsResult,
-        deliveryActsResult,
-        implementationProgressResult,
         quarterlyProgressResult,
         maintenanceProgressResult
       ] = await Promise.all([
-        supabase.from("roles").select("id,name,description,permissions").order("name"),
+        fetchAllPages((from, to) => supabase.from("roles").select("id,name,description,permissions").order("name").order("id").range(from, to)),
         supabase.from("users_profiles").select("*").eq("auth_user_id", session.user.id).maybeSingle(),
-        supabase.from("project_users").select("*").order("created_at", { ascending: false }),
-        supabase.from("user_municipality_assignments").select("*").eq("is_deleted", false),
-        supabase.from("projects").select("*").order("created_at", { ascending: false }),
-        supabase.from("users_profiles").select("*").order("full_name"),
-        supabase.from("families").select("*").eq("is_deleted", false).order("created_at", { ascending: false }),
-        supabase.from("properties").select("*").eq("is_deleted", false),
-        supabase.from("activity_catalog").select("*").order("name"),
-        supabase.from("material_catalog").select("*").order("name"),
-        supabase.from("counterpart_catalog").select("*").order("name"),
-        supabase.from("operational_plans").select("*").eq("is_deleted", false).order("created_at", { ascending: false }),
-        supabase.from("plan_activities").select("*").eq("is_deleted", false),
-        supabase.from("plan_project_materials").select("*").eq("is_deleted", false),
-        supabase.from("plan_family_counterparts").select("*").eq("is_deleted", false),
-        supabase.from("provisional_materials").select("*").eq("is_deleted", false),
-        supabase.from("departments").select("*").order("name"),
-        supabase.from("municipalities").select("*").order("name"),
-        supabase.from("villages").select("*").order("name"),
-        supabase.from("project_departments").select("*").eq("is_deleted", false),
-        supabase.from("project_municipalities").select("*").eq("is_deleted", false),
-        supabase.from("project_villages").select("*").eq("is_deleted", false),
-        supabase.from("procurement_batches").select("*").eq("is_deleted", false).order("created_at", { ascending: false }),
-        supabase.from("procurement_batch_items").select("*").eq("is_deleted", false),
-        supabase.from("material_deliveries").select("*").eq("is_deleted", false).order("created_at", { ascending: false }),
-        supabase.from("material_delivery_items").select("*").eq("is_deleted", false),
-        supabase.from("delivery_acts").select("*").eq("is_deleted", false).order("generated_at", { ascending: false }),
-        supabase.from("implementation_progress").select("*").eq("is_deleted", false).order("created_at", { ascending: false }),
-        supabase.from("quarterly_progress").select("*").eq("is_deleted", false),
-        supabase.from("maintenance_progress").select("*").eq("is_deleted", false)
+        fetchAllPages((from, to) => supabase.from("project_users").select("*").order("created_at", { ascending: false }).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("user_municipality_assignments").select("*").eq("is_deleted", false).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("projects").select("*").order("created_at", { ascending: false }).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("users_profiles").select("*").order("full_name").order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("families").select("*").eq("is_deleted", false).order("created_at", { ascending: false }).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("properties").select("*").eq("is_deleted", false).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("activity_catalog").select("*").order("name").order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("material_catalog").select("*").order("name").order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("counterpart_catalog").select("*").order("name").order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("operational_plans").select("*").eq("is_deleted", false).order("created_at", { ascending: false }).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("plan_activities").select("*").eq("is_deleted", false).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("plan_project_materials").select("*").eq("is_deleted", false).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("plan_family_counterparts").select("*").eq("is_deleted", false).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("provisional_materials").select("*").eq("is_deleted", false).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("departments").select("*").order("name").order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("municipalities").select("*").order("name").order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("villages").select("*").order("name").order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("project_departments").select("*").eq("is_deleted", false).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("project_municipalities").select("*").eq("is_deleted", false).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("project_villages").select("*").eq("is_deleted", false).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("quarterly_progress").select("*").eq("is_deleted", false).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("maintenance_progress").select("*").eq("is_deleted", false).order("id").range(from, to))
       ]);
 
       const error = [
@@ -517,34 +507,6 @@ function AdminApp({ session }: { session: Session }) {
       ].find(Boolean);
 
       if (error) throw error;
-
-      const phase5Results = [
-        { table: "procurement_batches", error: procurementBatchesResult.error },
-        { table: "procurement_batch_items", error: procurementBatchItemsResult.error },
-        { table: "material_deliveries", error: materialDeliveriesResult.error },
-        { table: "material_delivery_items", error: materialDeliveryItemsResult.error },
-        { table: "delivery_acts", error: deliveryActsResult.error },
-        { table: "implementation_progress", error: implementationProgressResult.error },
-        { table: "quarterly_progress", error: quarterlyProgressResult.error }
-      ];
-      const missingTables = phase5Results
-        .filter((result) => result.error && isMissingTableError(result.error))
-        .map((result) => result.table);
-      const phase5Error = phase5Results.find((result) => result.error);
-
-      if (missingTables.length > 0) {
-        setPhase5SchemaStatus({
-          ready: false,
-          message: `${PHASE5_MISSING_MIGRATIONS_MESSAGE} Tablas faltantes: ${missingTables.join(", ")}.`
-        });
-      } else if (phase5Error?.error) {
-        setPhase5SchemaStatus({
-          ready: false,
-          message: `No fue posible consultar tablas de Fase 5: ${getErrorMessage(phase5Error.error)}`
-        });
-      } else {
-        setPhase5SchemaStatus({ ready: true, message: null });
-      }
 
       if (maintenanceProgressResult.error && isMissingTableError(maintenanceProgressResult.error)) {
         setMaintenanceSchemaStatus({
@@ -582,12 +544,6 @@ function AdminApp({ session }: { session: Session }) {
       setProjectDepartments((projectDepartmentsResult.data ?? []) as ProjectDepartment[]);
       setProjectMunicipalities((projectMunicipalitiesResult.data ?? []) as ProjectMunicipality[]);
       setProjectVillages((projectVillagesResult.data ?? []) as ProjectVillage[]);
-      setProcurementBatches((procurementBatchesResult.data ?? []) as ProcurementBatch[]);
-      setProcurementBatchItems((procurementBatchItemsResult.data ?? []) as ProcurementBatchItem[]);
-      setMaterialDeliveries((materialDeliveriesResult.data ?? []) as MaterialDelivery[]);
-      setMaterialDeliveryItems((materialDeliveryItemsResult.data ?? []) as MaterialDeliveryItem[]);
-      setDeliveryActs((deliveryActsResult.data ?? []) as DeliveryAct[]);
-      setImplementationProgress((implementationProgressResult.data ?? []) as ImplementationProgress[]);
       setQuarterlyProgress((quarterlyProgressResult.data ?? []) as QuarterlyProgress[]);
       setMaintenanceProgress(maintenanceProgressResult.error ? [] : (maintenanceProgressResult.data ?? []) as MaintenanceProgress[]);
     } catch (error) {
@@ -684,6 +640,50 @@ function AdminApp({ session }: { session: Session }) {
   ];
   const selectedPhase5Tab = phase5TabFromView(view);
 
+  const loadPhase5 = useCallback(async () => {
+    setLoading(true);
+    try {
+      const results = await Promise.all([
+        fetchAllPages((from, to) => supabase.from("procurement_batches").select("*").eq("is_deleted", false).order("created_at", { ascending: false }).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("procurement_batch_items").select("*").eq("is_deleted", false).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("material_deliveries").select("*").eq("is_deleted", false).order("created_at", { ascending: false }).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("material_delivery_items").select("*").eq("is_deleted", false).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("delivery_acts").select("*").eq("is_deleted", false).order("generated_at", { ascending: false }).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("implementation_progress").select("*").eq("is_deleted", false).order("created_at", { ascending: false }).order("id").range(from, to))
+      ]);
+      const tableNames = ["procurement_batches", "procurement_batch_items", "material_deliveries", "material_delivery_items", "delivery_acts", "implementation_progress"];
+      const missingTables = results.flatMap((result, index) => result.error && isMissingTableError(result.error) ? [tableNames[index]] : []);
+      const firstError = results.find((result) => result.error)?.error;
+      if (missingTables.length) {
+        setPhase5SchemaStatus({ ready: false, message: `${PHASE5_MISSING_MIGRATIONS_MESSAGE} Tablas faltantes: ${missingTables.join(", ")}.` });
+      } else if (firstError) {
+        setPhase5SchemaStatus({ ready: false, message: `No fue posible consultar tablas de Fase 5: ${getErrorMessage(firstError)}` });
+      } else {
+        setPhase5SchemaStatus({ ready: true, message: null });
+      }
+      setProcurementBatches((results[0].data ?? []) as ProcurementBatch[]);
+      setProcurementBatchItems((results[1].data ?? []) as ProcurementBatchItem[]);
+      setMaterialDeliveries((results[2].data ?? []) as MaterialDelivery[]);
+      setMaterialDeliveryItems((results[3].data ?? []) as MaterialDeliveryItem[]);
+      setDeliveryActs((results[4].data ?? []) as DeliveryAct[]);
+      setImplementationProgress((results[5].data ?? []) as ImplementationProgress[]);
+      setPhase5Loaded(true);
+    } catch (error) {
+      setPhase5SchemaStatus({ ready: false, message: `No fue posible consultar tablas de Fase 5: ${getErrorMessage(error)}` });
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (selectedPhase5Tab && !phase5Loaded) void loadPhase5();
+  }, [loadPhase5, phase5Loaded, selectedPhase5Tab]);
+
+  async function refreshVisibleData() {
+    await loadAll();
+    if (selectedPhase5Tab) await loadPhase5();
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -724,7 +724,7 @@ function AdminApp({ session }: { session: Session }) {
             </select>
           </label>
           <div className="form-actions">
-            <button className="secondary" onClick={() => loadAll()} type="button" disabled={loading}>
+            <button className="secondary" onClick={refreshVisibleData} type="button" disabled={loading}>
               {loading ? "Cargando..." : "Actualizar"}
             </button>
             <button className="secondary" onClick={signOut} type="button">
@@ -856,7 +856,7 @@ function AdminApp({ session }: { session: Session }) {
               canAdminOverride={roleNames.has("admin")}
               canGenerateActs={canWrite}
               canEditImplementation={canWrite || roleNames.has("technician")}
-              onChange={loadAll}
+              onChange={refreshVisibleData}
             />
           ) : null}
           {view === "phase8_economia" ? (
@@ -13029,18 +13029,18 @@ function EconomiaAnalytics({
     setSchemaError(null);
     setLoadError(null);
     const [rondasRes, productosCatRes, categoriasRes, lugaresRes, tiposApoyoRes, tiposPagoRes, encuestasRes, apoyosRes, pagosRes, productosRes, productoLugaresRes, conflictosRes] = await Promise.all([
-      supabase.from("economia_rondas").select("*").eq("is_deleted", false).order("orden"),
-      supabase.from("economia_productos").select("*").eq("is_deleted", false).order("orden"),
-      supabase.from("economia_categorias").select("*").eq("is_deleted", false).order("orden"),
-      supabase.from("economia_lugares_venta").select("*").eq("is_deleted", false).order("orden"),
-      supabase.from("economia_tipos_apoyo").select("*").eq("is_deleted", false).order("orden"),
-      supabase.from("economia_tipos_pago").select("*").eq("is_deleted", false).order("orden"),
-      supabase.from("economia_encuestas").select("*").eq("is_deleted", false),
-      supabase.from("economia_encuesta_apoyos").select("*").eq("is_deleted", false),
-      supabase.from("economia_encuesta_pagos").select("*").eq("is_deleted", false),
-      supabase.from("economia_encuesta_productos").select("*").eq("is_deleted", false),
-      supabase.from("economia_producto_lugares_venta").select("*").eq("is_deleted", false),
-      supabase.from("economia_sync_conflictos").select("*").eq("estado", "pendiente").order("created_at", { ascending: false })
+      fetchAllPages((from, to) => supabase.from("economia_rondas").select("*").eq("is_deleted", false).order("orden").order("id").range(from, to)),
+      fetchAllPages((from, to) => supabase.from("economia_productos").select("*").eq("is_deleted", false).order("orden").order("id").range(from, to)),
+      fetchAllPages((from, to) => supabase.from("economia_categorias").select("*").eq("is_deleted", false).order("orden").order("id").range(from, to)),
+      fetchAllPages((from, to) => supabase.from("economia_lugares_venta").select("*").eq("is_deleted", false).order("orden").order("id").range(from, to)),
+      fetchAllPages((from, to) => supabase.from("economia_tipos_apoyo").select("*").eq("is_deleted", false).order("orden").order("id").range(from, to)),
+      fetchAllPages((from, to) => supabase.from("economia_tipos_pago").select("*").eq("is_deleted", false).order("orden").order("id").range(from, to)),
+      fetchAllPages((from, to) => supabase.from("economia_encuestas").select("*").eq("is_deleted", false).order("id").range(from, to)),
+      fetchAllPages((from, to) => supabase.from("economia_encuesta_apoyos").select("*").eq("is_deleted", false).order("id").range(from, to)),
+      fetchAllPages((from, to) => supabase.from("economia_encuesta_pagos").select("*").eq("is_deleted", false).order("id").range(from, to)),
+      fetchAllPages((from, to) => supabase.from("economia_encuesta_productos").select("*").eq("is_deleted", false).order("id").range(from, to)),
+      fetchAllPages((from, to) => supabase.from("economia_producto_lugares_venta").select("*").eq("is_deleted", false).order("id").range(from, to)),
+      fetchAllPages((from, to) => supabase.from("economia_sync_conflictos").select("*").eq("estado", "pendiente").order("created_at", { ascending: false }).order("id").range(from, to))
     ]);
     const results = [rondasRes, productosCatRes, categoriasRes, lugaresRes, tiposApoyoRes, tiposPagoRes, encuestasRes, apoyosRes, pagosRes, productosRes, productoLugaresRes, conflictosRes];
     const missing = results.some((r) => r.error && isMissingTableError(r.error));

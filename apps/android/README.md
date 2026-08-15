@@ -55,6 +55,22 @@ gradlew.bat clean assembleDebug
 
 O abrir la carpeta en Android Studio y ejecutar `app`.
 
+## Version de produccion
+
+La aplicacion queda preparada como version `0.2.0` (`versionCode 2`). Para firmar
+un APK/AAB definitivo, defina localmente estas propiedades; nunca suba el archivo
+de firma ni sus claves al repositorio:
+
+```properties
+RELEASE_STORE_FILE=ruta/al/archivo-act.jks
+RELEASE_STORE_PASSWORD=...
+RELEASE_KEY_ALIAS=...
+RELEASE_KEY_PASSWORD=...
+```
+
+Sin esas cuatro propiedades, las compilaciones de prueba siguen funcionando y la
+compilacion release queda sin firma de distribucion.
+
 ## Flujo QA sugerido
 
 1. Iniciar sesion con usuario tecnico o admin.
