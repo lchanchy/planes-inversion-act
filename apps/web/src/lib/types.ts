@@ -553,6 +553,18 @@ export type EconomiaEncuestaProducto = {
   is_deleted: boolean;
 };
 
+export type AuditLog = {
+  id: string;
+  project_id: string | null;
+  user_id: string | null;
+  entity_type: string;
+  entity_id: string | null;
+  action: "insert" | "update" | "delete" | string;
+  before_data: Record<string, unknown> | null;
+  after_data: Record<string, unknown> | null;
+  created_at: string;
+};
+
 export type EconomiaProductoLugarVenta = {
   id: string;
   encuesta_producto_id: string;

@@ -25,6 +25,7 @@ import { supabase, supabaseConfigured } from "@/lib/supabase";
 import { fetchAllPages } from "@/lib/supabase-pagination";
 import type {
   Activity,
+  AuditLog,
   CounterpartCatalog,
   DeliveryAct,
   Department,
@@ -85,6 +86,7 @@ type ViewKey =
   | "phase5_indicators"
   | "phase5_maintenance"
   | "phase5_acts"
+  | "audit"
   | "phase8_economia";
 type Phase5Tab = "consolidated" | "etec" | "indicators" | "maintenance" | "acts";
 type Notice = { type: "info" | "error"; message: string } | null;
@@ -424,6 +426,7 @@ function AdminApp({ session }: { session: Session }) {
   }, [roleNames]);
 
   const canManageProfiles = roleNames.has("super_admin") || roleNames.has("admin") || roleNames.has("project_admin");
+  const canViewAudit = roleNames.has("super_admin") || roleNames.has("admin") || roleNames.has("project_admin") || roleNames.has("coordinator") || roleNames.has("auditor");
 
   async function loadAll(attempt = 0) {
     setLoading(true);
@@ -622,7 +625,7 @@ function AdminApp({ session }: { session: Session }) {
     };
   }, [globalProjectId, projects, families, properties, activities, materials, plans, planActivities, planMaterials, planCounterparts, provisionalMaterials, procurementBatches, procurementBatchItems, materialDeliveries, materialDeliveryItems, deliveryActs, implementationProgress, quarterlyProgress, maintenanceProgress]);
 
-  const views: { key: ViewKey; label: string }[] = [
+  const allViews: { key: ViewKey; label: string }[] = [
     { key: "dashboard", label: "Dashboard" },
     { key: "projects", label: "Proyectos" },
     { key: "profiles", label: "Usuarios" },
@@ -636,8 +639,10 @@ function AdminApp({ session }: { session: Session }) {
     { key: "phase5_indicators", label: "Herramienta de indicadores" },
     { key: "phase5_maintenance", label: "Herramienta de mantenimiento" },
     { key: "phase5_acts", label: "Actas de entrega" },
+    { key: "audit", label: "Auditoría" },
     { key: "phase8_economia", label: "Economía Familiar" }
   ];
+  const views = allViews.filter((item) => item.key !== "audit" || canViewAudit);
   const selectedPhase5Tab = phase5TabFromView(view);
 
   const loadPhase5 = useCallback(async () => {
@@ -859,6 +864,7 @@ function AdminApp({ session }: { session: Session }) {
               onChange={refreshVisibleData}
             />
           ) : null}
+          {view === "audit" ? <AuditLogsView projects={projects} profiles={profiles} /> : null}
           {view === "phase8_economia" ? (
             <EconomiaAnalytics
               projects={scoped.projects}
@@ -871,6 +877,119 @@ function AdminApp({ session }: { session: Session }) {
       </main>
     </div>
   );
+}
+
+const AUDIT_PAGE_SIZE = 100;
+
+function AuditLogsView({ projects, profiles }: { projects: Project[]; profiles: Profile[] }) {
+  const [rows, setRows] = useState<AuditLog[]>([]);
+  const [projectId, setProjectId] = useState("");
+  const [action, setAction] = useState("");
+  const [entityType, setEntityType] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [page, setPage] = useState(0);
+  const [count, setCount] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [notice, setNotice] = useState<Notice>(null);
+
+  const projectById = useMemo(() => new Map(projects.map((item) => [item.id, item.name])), [projects]);
+  const profileById = useMemo(() => new Map(profiles.map((item) => [item.id, item.full_name])), [profiles]);
+
+  const buildQuery = useCallback((from: number, to: number, includeCount = false) => {
+    let query = supabase.from("audit_logs").select("*", includeCount ? { count: "exact" } : undefined)
+      .order("created_at", { ascending: false }).order("id").range(from, to);
+    if (projectId) query = query.eq("project_id", projectId);
+    if (action) query = query.eq("action", action);
+    if (entityType.trim()) query = query.ilike("entity_type", `%${entityType.trim()}%`);
+    if (dateFrom) query = query.gte("created_at", `${dateFrom}T00:00:00`);
+    if (dateTo) query = query.lte("created_at", `${dateTo}T23:59:59.999`);
+    return query;
+  }, [action, dateFrom, dateTo, entityType, projectId]);
+
+  const loadAudit = useCallback(async () => {
+    setLoading(true);
+    setNotice(null);
+    const result = await buildQuery(page * AUDIT_PAGE_SIZE, (page + 1) * AUDIT_PAGE_SIZE - 1, true);
+    if (result.error) setNotice({ type: "error", message: getErrorMessage(result.error) });
+    else {
+      setRows((result.data ?? []) as AuditLog[]);
+      setCount(result.count ?? 0);
+    }
+    setLoading(false);
+  }, [buildQuery, page]);
+
+  useEffect(() => { void loadAudit(); }, [loadAudit]);
+  useEffect(() => { setPage(0); }, [projectId, action, entityType, dateFrom, dateTo]);
+
+  async function exportExcel() {
+    setLoading(true);
+    const result = await fetchAllPages<AuditLog>((from, to) => buildQuery(from, to));
+    if (result.error) {
+      setNotice({ type: "error", message: getErrorMessage(result.error) });
+      setLoading(false);
+      return;
+    }
+    const ExcelJS = await import("exceljs");
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Auditoria");
+    sheet.columns = [
+      { header: "fecha", key: "date", width: 24 },
+      { header: "usuario", key: "user", width: 30 },
+      { header: "proyecto", key: "project", width: 32 },
+      { header: "accion", key: "action", width: 12 },
+      { header: "tipo_registro", key: "entity", width: 30 },
+      { header: "id_registro", key: "entityId", width: 38 },
+      { header: "campos_modificados", key: "fields", width: 55 },
+      { header: "valores_anteriores", key: "before", width: 80 },
+      { header: "valores_nuevos", key: "after", width: 80 }
+    ];
+    for (const row of result.data ?? []) {
+      sheet.addRow({
+        date: new Date(row.created_at), user: profileById.get(row.user_id ?? "") ?? row.user_id ?? "Sistema",
+        project: projectById.get(row.project_id ?? "") ?? row.project_id ?? "General", action: auditActionLabel(row.action),
+        entity: row.entity_type, entityId: row.entity_id ?? "", fields: changedAuditFields(row).join(", "),
+        before: JSON.stringify(row.before_data ?? {}), after: JSON.stringify(row.after_data ?? {})
+      });
+    }
+    sheet.getRow(1).font = { bold: true };
+    sheet.views = [{ state: "frozen", ySplit: 1 }];
+    sheet.getColumn("date").numFmt = "yyyy-mm-dd hh:mm:ss";
+    const buffer = await workbook.xlsx.writeBuffer();
+    saveBlob(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), "auditoria.xlsx");
+    setLoading(false);
+  }
+
+  return <div className="stack">
+    <div className="section-title"><div><h2>Auditoría</h2><div className="muted">Historial inalterable de cambios importantes.</div></div></div>
+    <AlertNotice notice={notice} onClose={() => setNotice(null)} />
+    <div className="filters-grid">
+      <label>Proyecto<select value={projectId} onChange={(e) => setProjectId(e.target.value)}><option value="">Todos</option>{projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+      <label>Acción<select value={action} onChange={(e) => setAction(e.target.value)}><option value="">Todas</option><option value="insert">Creación</option><option value="update">Modificación</option><option value="delete">Eliminación</option></select></label>
+      <label>Tipo de registro<input value={entityType} onChange={(e) => setEntityType(e.target.value)} placeholder="families, operational_plans..." /></label>
+      <label>Desde<input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} /></label>
+      <label>Hasta<input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} /></label>
+      <div className="form-actions"><button type="button" onClick={exportExcel} disabled={loading}>Exportar Excel</button></div>
+    </div>
+    <div className="muted">{count} cambio(s). Página {page + 1} de {Math.max(1, Math.ceil(count / AUDIT_PAGE_SIZE))}.</div>
+    <div className="table-wrap"><table><thead><tr><th>Fecha</th><th>Usuario</th><th>Proyecto</th><th>Acción</th><th>Registro</th><th>Campos modificados</th></tr></thead><tbody>
+      {rows.map((row) => <tr key={row.id}><td>{new Date(row.created_at).toLocaleString("es-CO")}</td><td>{profileById.get(row.user_id ?? "") ?? "Sistema"}</td><td>{projectById.get(row.project_id ?? "") ?? "General"}</td><td>{auditActionLabel(row.action)}</td><td>{row.entity_type}<div className="muted">{row.entity_id}</div></td><td>{changedAuditFields(row).join(", ") || "—"}</td></tr>)}
+      {!loading && rows.length === 0 ? <tr><td colSpan={6}>No hay cambios para estos filtros.</td></tr> : null}
+    </tbody></table></div>
+    <div className="form-actions"><button className="secondary" type="button" disabled={page === 0 || loading} onClick={() => setPage((value) => value - 1)}>Anterior</button><button className="secondary" type="button" disabled={(page + 1) * AUDIT_PAGE_SIZE >= count || loading} onClick={() => setPage((value) => value + 1)}>Siguiente</button></div>
+  </div>;
+}
+
+function auditActionLabel(action: string) {
+  return ({ insert: "Creación", update: "Modificación", delete: "Eliminación" } as Record<string, string>)[action] ?? action;
+}
+
+function changedAuditFields(row: AuditLog) {
+  const before = row.before_data ?? {};
+  const after = row.after_data ?? {};
+  return [...new Set([...Object.keys(before), ...Object.keys(after)])]
+    .filter((key) => !["created_at", "updated_at", "created_by", "updated_by"].includes(key))
+    .filter((key) => JSON.stringify(before[key]) !== JSON.stringify(after[key]));
 }
 
 function Dashboard({
