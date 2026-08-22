@@ -1,0 +1,23 @@
+# Destino en la Pi: ~/.config/systemd/user/jarvis-gateway.service
+# (lo instala setup-hermes-gateway.sh; esta copia es solo de referencia)
+#
+# Servicio de USUARIO, no de sistema: el venv y ~/.hermes son de 'libardo'.
+# Requiere  sudo loginctl enable-linger libardo  para arrancar en el boot
+# y sobrevivir al cierre de la sesión SSH.
+
+[Unit]
+Description=Jarvis - Hermes Gateway (Telegram)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# El token vive acá, con chmod 600, fuera del repo.
+EnvironmentFile=/home/libardo/.hermes/gateway.env
+ExecStart=/home/libardo/hermes-env/bin/hermes gateway
+Restart=always
+RestartSec=10
+WorkingDirectory=/home/libardo
+
+[Install]
+WantedBy=default.target

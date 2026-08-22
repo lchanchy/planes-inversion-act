@@ -1,0 +1,23 @@
+# Destino en la Pi: ~/.hermes/gateway-config.yaml
+#
+# Hermes NO lee ~/.config/hermes/. Solo ~/.hermes/.
+# Cada plataforma arranca deshabilitada; 'enabled: true' es obligatorio.
+#
+# El token NO va aquí. Va en ~/.hermes/gateway.env (chmod 600) como
+# TELEGRAM_BOT_TOKEN, que systemd carga con EnvironmentFile.
+
+gateway:
+  platforms:
+    telegram:
+      enabled: true
+      # Chat al que el gateway manda avisos por su cuenta (arranques, alertas).
+      home_chat_id: "REEMPLAZAR_CHAT_ID"
+      # Avisa por Telegram cuando el servicio se reinicia.
+      gateway_restart_notification: true
+      # Burbuja de "escribiendo..." mientras el modelo genera.
+      typing_indicator: true
+      extra:
+        # Solo estos IDs numéricos pueden hablarle al bot. Sin esta lista,
+        # cualquiera que encuentre el bot puede usarlo.
+        allow_from:
+          - "REEMPLAZAR_CHAT_ID"

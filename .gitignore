@@ -24,3 +24,7 @@ local.properties
 # OS/editor noise
 Thumbs.db
 .DS_Store
+
+# Secretos de la Raspberry Pi (Jarvis) — nunca versionar
+jarvis-pi/**/gateway.env
+jarvis-pi/**/*.secret.yaml

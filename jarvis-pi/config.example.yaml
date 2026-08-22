@@ -1,0 +1,27 @@
+# Destino en la Pi: ~/.hermes/config.yaml
+#
+# La Pi no ejecuta el modelo: lo consume del Ollama del PC por HTTP en la LAN.
+
+model:
+  default: hermes3-fast:latest
+  # 'custom' es el proveedor correcto para un endpoint OpenAI-compatible propio.
+  # No uses 'provider: ollama' con un base_url terminado en /v1: hay un bug
+  # conocido donde cae de vuelta a 'custom' sin avisar. Declara 'custom' directo.
+  provider: custom
+  base_url: http://192.168.1.5:11434/v1
+  # Mínimo recomendado para uso agéntico. Ollama NO usa la ventana completa
+  # del modelo por defecto: en el PC hay que arrancarlo con
+  #   OLLAMA_CONTEXT_LENGTH=64000 ollama serve
+  # o fijarlo en el Modelfile, si no el servidor trunca aunque esto diga 64000.
+  context_length: 64000
+  # api_key se omite: Hermes usa 'no-key-required' para servidores locales sin llave.
+
+# Requisitos del lado del PC para que esto funcione desde la Pi:
+#  - OLLAMA_HOST=0.0.0.0:11434  (por defecto Ollama solo escucha en localhost)
+#  - Regla de entrada en el firewall de Windows para el puerto 11434
+#  - IP 192.168.1.5 fija por reserva DHCP en el router; si cambia, la Pi
+#    se queda sin backend en el siguiente arranque del PC.
+#  - El PC encendido. Si se apaga o suspende, el bot responde con error de
+#    conexión: es el punto único de falla de esta arquitectura.
+#
+# El llama-server de Muse Glimmer (puerto 8080, para VS Code) no se toca.
