@@ -194,6 +194,61 @@ select pg_temp.assert_true(
   'la siguiente medicion no es monitoreo 2'
 );
 
-select 'BLOQUE 6 VALIDADO: esquema, RLS, auditoria, sync y monitoreo anual' as resultado;
+-- 6. Flujo E2E: captura atomica, reintento, conflicto y reporte detallado.
+insert into public.economia_encuestas (
+  id,project_id,family_id,ronda_id,fecha,anio,tipo_medicion,numero_monitoreo,estado
+) values (
+  '96000000-0000-0000-0000-000000000603','96000000-0000-0000-0000-000000000101',
+  '96000000-0000-0000-0000-000000000301','96000000-0000-0000-0000-000000000502',
+  '2027-06-01',2027,'monitoreo',2,'borrador'
+);
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub','96000000-0000-0000-0000-000000000001',true);
+
+select pg_temp.assert_true(
+  not (public.sync_economia_encuesta(
+    '{"id":"96000000-0000-0000-0000-000000000603","project_id":"96000000-0000-0000-0000-000000000101","family_id":"96000000-0000-0000-0000-000000000301","ronda_id":"96000000-0000-0000-0000-000000000502","fecha":"2027-06-01","anio":2027,"tipo_medicion":"monitoreo","numero_monitoreo":2,"estado":"completada","personas_adultos":3}'::jsonb,
+    '[]','[]',
+    '[{"id":"96000000-0000-0000-0000-000000000702","nombre_otro":"Cacao QA","unidad":"kg","temporalidad":"semestral","cantidad_producida":20,"consumo":2,"vendido":18,"precio_unitario":5000,"apoyo_act":true,"lugares":[]}]'::jsonb,
+    1
+  )->>'conflict')::boolean,
+  'la captura atomica fue rechazada'
+);
+
+select pg_temp.assert_true(
+  exists (select 1 from public.economia_encuestas
+          where id='96000000-0000-0000-0000-000000000603'
+            and estado='completada' and server_version=2 and revision=2 and personas_total=3)
+  and exists (select 1 from public.economia_encuesta_productos
+              where id='96000000-0000-0000-0000-000000000702'
+                and ingreso_mensual=15000 and ingreso_anual=180000),
+  'la encuesta o su producto no se sincronizaron atomicamente'
+);
+
+create temporary table qa_conflict_result on commit drop as
+select public.sync_economia_encuesta(
+    '{"id":"96000000-0000-0000-0000-000000000603","project_id":"96000000-0000-0000-0000-000000000101","family_id":"96000000-0000-0000-0000-000000000301","ronda_id":"96000000-0000-0000-0000-000000000502","fecha":"2027-06-01","anio":2027,"tipo_medicion":"monitoreo","numero_monitoreo":2,"estado":"completada"}'::jsonb,
+    '[]','[]','[]',1
+  ) as result;
+
+select pg_temp.assert_true(
+  (select (result->>'conflict')::boolean from qa_conflict_result)
+  and exists (select 1 from public.economia_sync_conflictos
+              where encuesta_id='96000000-0000-0000-0000-000000000603'
+                and expected_version=1 and current_version=2 and estado='pendiente'),
+  'no se detecto el conflicto de version'
+);
+
+select pg_temp.assert_true(
+  exists (select 1 from public.economia_reporte_familiar
+          where id='96000000-0000-0000-0000-000000000603'
+            and productos_mensual=15000 and ingreso_anual_total=180000),
+  'el reporte familiar no refleja el ingreso sincronizado'
+);
+
+reset role;
+
+select 'BLOQUE 6 VALIDADO: esquema, RLS, auditoria, sync, monitoreo anual y flujo E2E' as resultado;
 
 rollback;
