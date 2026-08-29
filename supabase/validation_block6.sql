@@ -249,6 +249,68 @@ select pg_temp.assert_true(
 
 reset role;
 
-select 'BLOQUE 6 VALIDADO: esquema, RLS, auditoria, sync, monitoreo anual y flujo E2E' as resultado;
+-- 7. Alcance municipal real: dos municipios del mismo proyecto.
+select set_config('request.jwt.claim.sub','',true);
+insert into public.municipalities (id,department,name) values
+  ('96000000-0000-0000-0000-000000000801','QA Bloque 6','Municipio A'),
+  ('96000000-0000-0000-0000-000000000802','QA Bloque 6','Municipio B');
+update public.families set municipality_id='96000000-0000-0000-0000-000000000801'
+where id='96000000-0000-0000-0000-000000000301';
+insert into public.families (id,project_id,family_code,representative_name,municipality_id)
+values ('96000000-0000-0000-0000-000000000303','96000000-0000-0000-0000-000000000101',
+        'Q6A-0002','Familia QA municipio B','96000000-0000-0000-0000-000000000802');
+update public.project_users set role_id=(select id from public.roles where name='municipal_technician')
+where user_id='96000000-0000-0000-0000-000000000202';
+insert into public.user_municipality_assignments (project_id,user_id,municipality_id)
+values ('96000000-0000-0000-0000-000000000101','96000000-0000-0000-0000-000000000202',
+        '96000000-0000-0000-0000-000000000801');
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub','96000000-0000-0000-0000-000000000002',true);
+select pg_temp.assert_true(
+  (select count(*)=1 from public.families where id in (
+    '96000000-0000-0000-0000-000000000301','96000000-0000-0000-0000-000000000302',
+    '96000000-0000-0000-0000-000000000303'))
+  and exists(select 1 from public.families where id='96000000-0000-0000-0000-000000000301'),
+  'el tecnico municipal ve familias fuera de su municipio/proyecto');
+select pg_temp.assert_true(
+  (select count(*)=0 from public.audit_logs where project_id='96000000-0000-0000-0000-000000000101'),
+  'el tecnico municipal accede a auditoria reservada');
+do $$
+begin
+  begin
+    update public.economia_encuestas set estado='aprobada'
+    where id='96000000-0000-0000-0000-000000000603';
+  exception when insufficient_privilege then null;
+  end;
+  perform pg_temp.assert_true(
+    (select estado='completada' from public.economia_encuestas
+     where id='96000000-0000-0000-0000-000000000603'),
+    'el tecnico municipal aprobo una encuesta');
+end $$;
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub','96000000-0000-0000-0000-000000000001',true);
+select pg_temp.assert_true(
+  (select count(*)=2 from public.families where id in (
+    '96000000-0000-0000-0000-000000000301','96000000-0000-0000-0000-000000000302',
+    '96000000-0000-0000-0000-000000000303')),
+  'el administrador de proyecto no cubre sus dos municipios o ve otro proyecto');
+reset role;
+
+select set_config('request.jwt.claim.sub','',true);
+update public.users_profiles set default_role_id=(select id from public.roles where name='super_admin')
+where id='96000000-0000-0000-0000-000000000203';
+set local role authenticated;
+select set_config('request.jwt.claim.sub','96000000-0000-0000-0000-000000000003',true);
+select pg_temp.assert_true(
+  (select count(*)=3 from public.families where id in (
+    '96000000-0000-0000-0000-000000000301','96000000-0000-0000-0000-000000000302',
+    '96000000-0000-0000-0000-000000000303')),
+  'el superadministrador no ve todos los proyectos');
+reset role;
+
+select 'BLOQUE 6 VALIDADO: esquema, roles municipales, auditoria, sync y monitoreo anual' as resultado;
 
 rollback;

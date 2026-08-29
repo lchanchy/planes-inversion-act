@@ -23,6 +23,7 @@ import {
 import type { Session } from "@supabase/supabase-js";
 import { supabase, supabaseConfigured } from "@/lib/supabase";
 import { fetchAllPages } from "@/lib/supabase-pagination";
+import { annualHouseholdIncome } from "@/lib/economia-income";
 import type {
   Activity,
   AuditLog,
@@ -13485,6 +13486,8 @@ function EconomiaAnalytics({
     const familyIds = new Set(families.map((f) => f.id));
     const prodByEnc = new Map<string, number>();
     productos.forEach((p) => prodByEnc.set(p.encuesta_id, (prodByEnc.get(p.encuesta_id) ?? 0) + (p.ingreso_mensual ?? 0)));
+    const prodAnnualByEnc = new Map<string, number>();
+    productos.forEach((p) => prodAnnualByEnc.set(p.encuesta_id, (prodAnnualByEnc.get(p.encuesta_id) ?? 0) + (p.ingreso_anual ?? 0)));
     const apoyoByEnc = new Map<string, number>();
     apoyos.forEach((a) => apoyoByEnc.set(a.encuesta_id, (apoyoByEnc.get(a.encuesta_id) ?? 0) + (a.valor_mensual ?? 0)));
     const pagoByEnc = new Map<string, number>();
@@ -13499,6 +13502,7 @@ function EconomiaAnalytics({
         const m = fam?.municipality_id ? municById.get(fam.municipality_id) : undefined;
         const v = fam?.village_id ? villById.get(fam.village_id) : undefined;
         const ingProductos = prodByEnc.get(e.id) ?? 0;
+        const ingProductosAnual = prodAnnualByEnc.get(e.id) ?? 0;
         const ingGobierno = apoyoByEnc.get(e.id) ?? 0;
         const ingOtros = pagoByEnc.get(e.id) ?? 0;
         return {
@@ -13521,7 +13525,7 @@ function EconomiaAnalytics({
           ingGobierno,
           ingOtros,
           ingTotal: ingProductos + ingGobierno + ingOtros,
-          ingAnual: (ingProductos + ingGobierno + ingOtros) * 12,
+          ingAnual: annualHouseholdIncome(ingProductosAnual, ingGobierno, ingOtros),
           ingPerCapita: (e.personas_total ?? 0) > 0 ? (ingProductos + ingGobierno + ingOtros) / (e.personas_total ?? 1) : 0,
           jornal: e.valor_jornal ?? 0
         };
