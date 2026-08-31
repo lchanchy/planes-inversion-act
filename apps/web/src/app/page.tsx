@@ -24,12 +24,14 @@ import type { Session } from "@supabase/supabase-js";
 import { supabase, supabaseConfigured } from "@/lib/supabase";
 import { fetchAllPages } from "@/lib/supabase-pagination";
 import { annualHouseholdIncome } from "@/lib/economia-income";
+import { deliveryQuantityError } from "@/lib/delivery-act-checklist";
 import { TRACKING_BASE_COLUMNS, canEditTracking, trackingFrozenOffsets, type TrackingBaseColumnKey } from "@/lib/tracking-columns";
 import type {
   Activity,
   AuditLog,
   CounterpartCatalog,
   DeliveryAct,
+  DeliveryActVersion,
   Department,
   Family,
   ImplementationProgress,
@@ -421,6 +423,7 @@ function AdminApp({ session }: { session: Session }) {
   }, [profile, projectUsers, roles]);
 
   const canWrite = roleNames.has("super_admin") || roleNames.has("admin") || roleNames.has("project_admin") || roleNames.has("coordinator");
+  const canManageDeliveryActs = canWrite || roleNames.has("technician") || roleNames.has("municipal_technician");
   useEffect(() => {
     if (roleNames.has("super_admin")) document.body.classList.add("is-super-admin");
     else document.body.classList.remove("is-super-admin");
@@ -659,9 +662,10 @@ function AdminApp({ session }: { session: Session }) {
         fetchAllPages((from, to) => supabase.from("material_deliveries").select("*").eq("is_deleted", false).order("created_at", { ascending: false }).order("id").range(from, to)),
         fetchAllPages((from, to) => supabase.from("material_delivery_items").select("*").eq("is_deleted", false).order("id").range(from, to)),
         fetchAllPages((from, to) => supabase.from("delivery_acts").select("*").eq("is_deleted", false).order("generated_at", { ascending: false }).order("id").range(from, to)),
-        fetchAllPages((from, to) => supabase.from("implementation_progress").select("*").eq("is_deleted", false).order("created_at", { ascending: false }).order("id").range(from, to))
+        fetchAllPages((from, to) => supabase.from("implementation_progress").select("*").eq("is_deleted", false).order("created_at", { ascending: false }).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("delivery_act_versions").select("id").order("id").range(from, to))
       ]);
-      const tableNames = ["procurement_batches", "procurement_batch_items", "material_deliveries", "material_delivery_items", "delivery_acts", "implementation_progress"];
+      const tableNames = ["procurement_batches", "procurement_batch_items", "material_deliveries", "material_delivery_items", "delivery_acts", "implementation_progress", "delivery_act_versions"];
       const missingTables = results.flatMap((result, index) => result.error && isMissingTableError(result.error) ? [tableNames[index]] : []);
       const firstError = results.find((result) => result.error)?.error;
       if (missingTables.length) {
@@ -864,7 +868,7 @@ function AdminApp({ session }: { session: Session }) {
               currentProfile={profile}
               canManageProcurement={canWrite}
               canAdminOverride={roleNames.has("admin")}
-              canGenerateActs={canWrite}
+              canGenerateActs={canManageDeliveryActs}
               canEditImplementation={canEditTracking(roleNames)}
               onChange={refreshVisibleData}
             />
@@ -6677,6 +6681,10 @@ function ProcurementDeliveriesActs({
   const [actFinalText, setActFinalText] = useState(DefaultDeliveryActFinalText);
   const [actTechnicianName, setActTechnicianName] = useState(currentProfile?.full_name ?? "");
   const [actTechnicianDocument, setActTechnicianDocument] = useState(currentProfile?.document_number ?? "");
+  const [actPlanId, setActPlanId] = useState("");
+  const [actChecklist, setActChecklist] = useState<Record<string, { selected: boolean; quantity: string }>>({});
+  const [editingActId, setEditingActId] = useState<string | null>(null);
+  const [actVersions, setActVersions] = useState<DeliveryActVersion[]>([]);
   const [selectedIndicatorKey, setSelectedIndicatorKey] = useState("");
   const [implementedQuantity, setImplementedQuantity] = useState("");
   const [indicatorStatus, setIndicatorStatus] = useState<ImplementationProgressStatus>("pending");
@@ -6861,6 +6869,38 @@ function ProcurementDeliveriesActs({
     deliveryDate: actDeliveryDate,
     actNumberPrefix
   }), [filteredNeeds, materialDeliveries, materialDeliveryItems, projects, families, municipalities, villages, plans, filters, actDeliveryDate, actNumberPrefix]);
+  const familyActPlans = useMemo(() => plans.filter((plan) =>
+    plan.family_id === filters.family_id && plan.status === "approved" && !plan.is_deleted
+  ).sort((left, right) => right.version - left.version), [plans, filters.family_id]);
+  const editingAct = editingActId ? deliveryActs.find((act) => act.id === editingActId) ?? null : null;
+  const editingDeliveryItems = editingAct
+    ? materialDeliveryItems.filter((item) => item.material_delivery_id === editingAct.material_delivery_id && !item.is_deleted)
+    : [];
+  const editingQuantityByNeed = new Map(editingDeliveryItems.map((item) => [item.plan_project_material_id, item.delivered_quantity]));
+  const actChecklistNeeds = approvedNeeds.filter((need) =>
+    need.family_id === filters.family_id
+    && need.operational_plan_id === actPlanId
+    && (need.pendingQuantity > 0 || editingQuantityByNeed.has(need.plan_project_material_id))
+  );
+
+  useEffect(() => {
+    const activeEdit = editingActId ? deliveryActs.find((act) => act.id === editingActId) : null;
+    if (activeEdit?.family_id === filters.family_id) return;
+    setActPlanId(familyActPlans[0]?.id ?? "");
+    setActChecklist({});
+    setEditingActId(null);
+  }, [filters.family_id, familyActPlans, editingActId, deliveryActs]);
+
+  useEffect(() => {
+    let active = true;
+    async function loadActVersions() {
+      const { data, error } = await supabase.from("delivery_act_versions").select("*").order("created_at", { ascending: false });
+      if (!active) return;
+      if (!error) setActVersions((data ?? []) as DeliveryActVersion[]);
+    }
+    void loadActVersions();
+    return () => { active = false; };
+  }, [deliveryActs]);
 
   useEffect(() => {
     if (!selectedIndicator) {
@@ -7657,6 +7697,126 @@ function ProcurementDeliveriesActs({
     }
   }
 
+  function updateActChecklist(needId: string, patch: Partial<{ selected: boolean; quantity: string }>) {
+    setActChecklist((current) => ({
+      ...current,
+      [needId]: { ...(current[needId] ?? { selected: false, quantity: "" }), ...patch }
+    }));
+  }
+
+  async function confirmActChecklist() {
+    setNotice(null);
+    if (!filters.family_id || !actPlanId) {
+      setNotice({ type: "error", message: "Seleccione una familia y su plan operativo." });
+      return;
+    }
+    const selected: { plan_project_material_id: string; quantity: number }[] = [];
+    for (const need of actChecklistNeeds) {
+      const draft = actChecklist[need.id];
+      if (!draft?.selected) continue;
+      const quantity = Number(draft.quantity);
+      const available = need.pendingQuantity + (editingQuantityByNeed.get(need.plan_project_material_id) ?? 0);
+      if (deliveryQuantityError(quantity, available)) {
+        setNotice({ type: "error", message: `Revise la cantidad de ${need.materialName}. Debe estar entre 0,01 y ${formatNumber(available)} ${need.unit}.` });
+        return;
+      }
+      selected.push({ plan_project_material_id: need.plan_project_material_id, quantity });
+    }
+    if (selected.length === 0) {
+      setNotice({ type: "error", message: "Marque al menos un material para entregar." });
+      return;
+    }
+    const action = editingActId ? "corregir" : "confirmar";
+    if (!confirmManualChange(`Va a ${action} el acta con ${selected.length} material(es). Las cantidades se registraran inmediatamente. ¿Desea continuar?`)) return;
+    setSaving(true);
+    try {
+      const args = editingActId
+        ? { p_delivery_act_id: editingActId, p_delivery_date: actDeliveryDate, p_items: selected, p_observations: deliveryObservation.trim() || null }
+        : { p_family_id: filters.family_id, p_operational_plan_id: actPlanId, p_delivery_date: actDeliveryDate, p_items: selected, p_observations: deliveryObservation.trim() || null };
+      const { error } = await supabase.rpc(editingActId ? "correct_delivery_act" : "confirm_delivery_act", args);
+      if (error) throw error;
+      setActChecklist({});
+      setEditingActId(null);
+      setDeliveryObservation("");
+      setNotice({ type: "info", message: editingActId ? "Acta corregida y nueva version registrada." : "Entrega confirmada y acta creada." });
+      await onChange();
+    } catch (error) {
+      setNotice({ type: "error", message: getErrorMessage(error) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function startActCorrection(act: DeliveryAct) {
+    const delivery = materialDeliveries.find((item) => item.id === act.material_delivery_id);
+    const items = materialDeliveryItems.filter((item) => item.material_delivery_id === act.material_delivery_id && !item.is_deleted);
+    setFilters((current) => ({ ...current, project_id: act.project_id, family_id: act.family_id }));
+    setActPlanId(act.operational_plan_id);
+    setActDeliveryDate(delivery?.delivery_date ?? new Date().toISOString().slice(0, 10));
+    setDeliveryObservation(act.observations ?? "");
+    setEditingActId(act.id);
+    const drafts: Record<string, { selected: boolean; quantity: string }> = {};
+    for (const need of approvedNeeds.filter((need) => need.operational_plan_id === act.operational_plan_id)) {
+      const item = items.find((row) => row.plan_project_material_id === need.plan_project_material_id);
+      drafts[need.id] = { selected: Boolean(item), quantity: item ? String(item.delivered_quantity) : "" };
+    }
+    setActChecklist(drafts);
+  }
+
+  async function voidAct(act: DeliveryAct) {
+    if (!confirmManualChange(`Va a anular ${act.act_number}. Sus cantidades volveran al saldo pendiente y el numero no se reutilizara. ¿Desea continuar?`)) return;
+    setSaving(true);
+    try {
+      const { error } = await supabase.rpc("void_delivery_act", { p_delivery_act_id: act.id });
+      if (error) throw error;
+      setNotice({ type: "info", message: `${act.act_number} anulada. Las cantidades volvieron a estar pendientes.` });
+      await onChange();
+    } catch (error) {
+      setNotice({ type: "error", message: getErrorMessage(error) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function exportStoredActVersion(version: DeliveryActVersion, format: "pdf" | "word" | "excel") {
+    const act = deliveryActs.find((item) => item.id === version.delivery_act_id);
+    const delivery = act && materialDeliveries.find((item) => item.id === act.material_delivery_id);
+    const family = families.find((item) => item.id === version.family_id);
+    const project = projects.find((item) => item.id === version.project_id);
+    if (!act || !delivery || !family || !project) return;
+    setSaving(true);
+    try {
+      const historicAct = { ...act, version: version.version, status: version.status, observations: version.observations };
+      const historicDelivery = { ...delivery, delivery_date: version.delivery_date };
+      const context = buildDeliveryActContext({
+        act: historicAct, delivery: historicDelivery, projects, families, municipalities, villages, plans, activities,
+        materialDeliveryItems: version.items, technician: currentProfile, projectLogos: await loadProjectLogos()
+      });
+      context.introText = actIntroText;
+      context.finalText = actFinalText;
+      context.technicianName = actTechnicianName;
+      context.technicianDocument = actTechnicianDocument;
+      const filename = `${sanitizeFileName(act.act_number)}-v${version.version}`;
+      if (format === "pdf") saveBlob(new Blob([await buildDeliveryActPdf(context)], { type: "application/pdf" }), `${filename}.pdf`);
+      else if (format === "word") saveBlob(await buildDeliveryActDocx(context), `${filename}.docx`);
+      else {
+        const record: DeliveryActExportRecord = {
+          key: version.id, project, family,
+          municipality: municipalities.find((item) => item.id === family.municipality_id),
+          village: villages.find((item) => item.id === family.village_id),
+          plan: plans.find((item) => item.id === act.operational_plan_id), items: version.items,
+          sourceLabel: `Historial v${version.version}`, deliveryDate: version.delivery_date,
+          actNumber: `${act.act_number} v${version.version}`
+        };
+        saveBlob(await buildDeliveryActsExcel([record], actTechnicianName), `${filename}.xlsx`);
+      }
+    } catch (error) {
+      setNotice({ type: "error", message: getErrorMessage(error) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function ensureDeliveryAct(delivery: MaterialDelivery) {
     if (phase5Blocked) throw new Error(phase5SchemaStatus.message ?? PHASE5_MISSING_MIGRATIONS_MESSAGE);
     const items = materialDeliveryItems.filter((item) => item.material_delivery_id === delivery.id);
@@ -8208,8 +8368,8 @@ function ProcurementDeliveriesActs({
               <input type="date" value={actDeliveryDate} onChange={(event) => setActDeliveryDate(event.target.value)} />
             </label>
             <label className="span-3">
-              Texto base de entrega
-              <input value={actNumberPrefix} onChange={(event) => setActNumberPrefix(event.target.value)} />
+              Numeración
+              <input value="Automática por familia (Acta 1, 2, 3...)" disabled />
             </label>
             <label className="span-3">
               Nombre tecnico
@@ -8228,78 +8388,57 @@ function ProcurementDeliveriesActs({
               <textarea value={actFinalText} onChange={(event) => setActFinalText(event.target.value)} rows={2} />
             </label>
           </div>
-          <DataTable
-            headers={["Familia", "Plan operativo", "Municipio", "Vereda", "Entrega No.", "Fecha", "Fuente", "Materiales"]}
-            emptyMessage="No hay familias con materiales para los filtros seleccionados."
-            rows={actExportRecords.map((record) => [
-              `${record.family.family_code} - ${record.family.representative_name}`,
-              deliveryPlanLabel(record.plan),
-              record.municipality?.name ?? "",
-              record.village?.name ?? "",
-              record.actNumber,
-              record.deliveryDate,
-              record.sourceLabel,
-              String(record.items.length)
-            ])}
-          />
-          <div className="form-actions">
-            <button disabled={saving || !canGenerateActs || actExportRecords.length === 0} type="button" onClick={() => void exportFilteredDeliveryActs("pdf")}>{saving ? "Generando..." : "Exportar PDF"}</button>
-            <button className="secondary" disabled={saving || !canGenerateActs || actExportRecords.length === 0} type="button" onClick={() => void exportFilteredDeliveryActs("word")}>{saving ? "Generando..." : "Exportar Word"}</button>
-            <button className="secondary" disabled={saving || actExportRecords.length === 0} type="button" onClick={() => void exportFilteredDeliveryActs("excel")}>{saving ? "Generando..." : "Exportar Excel"}</button>
-          </div>
-          <details className="collapsible-panel">
-            <summary>Registrar entrega manual</summary>
-            <div className="grid compact-panel">
+          {!filters.family_id ? (
+            <div className="alert info">Seleccione una familia en los filtros superiores para preparar su acta de entrega.</div>
+          ) : (
+            <div className="panel grid compact-panel">
               <label className="span-6">
-                Material aprobado pendiente
-                <select value={selectedNeedId} onChange={(event) => setSelectedNeedId(event.target.value)}>
+                Plan operativo aprobado
+                <select value={actPlanId} onChange={(event) => { setActPlanId(event.target.value); setActChecklist({}); setEditingActId(null); }}>
                   <option value="">Seleccione</option>
-                  {filteredNeeds.filter((need) => need.pendingQuantity > 0 || canAdminOverride).map((need) => (
-                    <option key={need.id} value={need.id}>
-                      {need.familyCode} - {need.materialName} - pendiente {formatNumber(need.pendingQuantity)} {need.unit}
-                    </option>
-                  ))}
+                  {familyActPlans.map((plan) => <option key={plan.id} value={plan.id}>{deliveryPlanLabel(plan)}</option>)}
                 </select>
               </label>
-              <label className="span-2">
-                Fecha entrega
-                <input type="date" value={deliveryDate} onChange={(event) => setDeliveryDate(event.target.value)} />
-              </label>
-              <label className="span-2">
-                Cantidad
-                <input
-                  min="0"
-                  step="0.01"
-                  type="number"
-                  value={deliveryQuantity}
-                  onChange={(event) => setDeliveryQuantity(event.target.value)}
-                />
-              </label>
-              <label className="checkbox span-2">
-                <input type="checkbox" checked={adminOverride} onChange={(event) => setAdminOverride(event.target.checked)} />
-                Autorizar sobreentrega
-              </label>
-              <label className="span-12">
+              <label className="span-6">
                 Observaciones
-                <textarea value={deliveryObservation} onChange={(event) => setDeliveryObservation(event.target.value)} rows={2} />
+                <input value={deliveryObservation} onChange={(event) => setDeliveryObservation(event.target.value)} />
               </label>
-              {selectedNeed ? (
-                <div className="span-12 alert info">
-                  Aprobado: {formatNumber(selectedNeed.approvedQuantity)} {selectedNeed.unit}. Entregado: {formatNumber(selectedNeed.deliveredQuantity)}. Saldo: {formatNumber(selectedNeed.pendingQuantity)}.
-                </div>
-              ) : null}
+              {editingAct ? <div className="span-12 alert info">Corrigiendo {editingAct.act_number}, versión actual {editingAct.version}. Al confirmar se creará la versión {editingAct.version + 1}.</div> : null}
+              <div className="span-12 delivery-checklist">
+                {actChecklistNeeds.length === 0 ? <div className="muted">No hay materiales pendientes para este plan.</div> : actChecklistNeeds.map((need) => {
+                  const draft = actChecklist[need.id] ?? { selected: false, quantity: "" };
+                  const available = need.pendingQuantity + (editingQuantityByNeed.get(need.plan_project_material_id) ?? 0);
+                  return (
+                    <div className="delivery-checklist-row" key={need.id}>
+                      <label className="checkbox">
+                        <input type="checkbox" checked={draft.selected} onChange={(event) => updateActChecklist(need.id, {
+                          selected: event.target.checked,
+                          quantity: event.target.checked && !draft.quantity ? String(available) : draft.quantity
+                        })} />
+                        <span><strong>{need.materialName}</strong><br /><span className="muted">Pendiente disponible: {formatNumber(available)} {need.unit}</span></span>
+                      </label>
+                      <label>
+                        Cantidad a entregar
+                        <input type="number" min="0.01" max={available} step="0.01" disabled={!draft.selected}
+                          value={draft.quantity} onChange={(event) => updateActChecklist(need.id, { quantity: event.target.value })} />
+                      </label>
+                    </div>
+                  );
+                })}
+              </div>
               <div className="span-12 form-actions">
-                <button disabled={saving || !canManageProcurement || !selectedNeed} type="button" onClick={() => void registerDelivery()}>
-                  Registrar entrega
+                <button disabled={saving || !canGenerateActs || actChecklistNeeds.length === 0} type="button" onClick={() => void confirmActChecklist()}>
+                  {saving ? "Guardando..." : editingActId ? "Confirmar corrección" : "Confirmar y generar acta"}
                 </button>
+                {editingActId ? <button className="secondary" type="button" onClick={() => { setEditingActId(null); setActChecklist({}); }}>Cancelar corrección</button> : null}
               </div>
             </div>
-          </details>
+          )}
           <details className="collapsible-panel">
             <summary>Actas registradas</summary>
             <DataTable
               embedded
-              headers={["Fecha", "Familia", "Estado entrega", "Acta", "Exportar"]}
+              headers={["Fecha", "Familia", "Acta", "Versión", "Estado", "Documentos", "Acciones"]}
               emptyMessage="No hay entregas registradas para los filtros seleccionados."
               rows={materialDeliveries
                 .filter((delivery) => {
@@ -8310,18 +8449,40 @@ function ProcurementDeliveriesActs({
                 .map((delivery) => {
                   const family = families.find((item) => item.id === delivery.family_id);
                   const act = deliveryActs.find((item) => item.material_delivery_id === delivery.id && !item.is_deleted);
+                  const latestVersion = actVersions.find((item) => item.delivery_act_id === act?.id && item.version === act?.version);
                   return [
                     delivery.delivery_date,
                     family ? `${family.family_code} - ${family.representative_name}` : "",
-                    delivery.status,
                     act?.act_number ?? "Pendiente",
-                    <div className="table-actions" key={delivery.id}>
-                      <button className="secondary" type="button" disabled={!canGenerateActs || saving} onClick={() => void exportDeliveryAct(delivery, "pdf")}>{saving ? "Generando..." : "PDF"}</button>
-                      <button className="secondary" type="button" disabled={!canGenerateActs || saving} onClick={() => void exportDeliveryAct(delivery, "word")}>{saving ? "Generando..." : "Word"}</button>
+                    act ? `v${act.version}` : "—",
+                    act?.status === "void" ? "Anulada" : delivery.status,
+                    <div className="table-actions" key={`files-${delivery.id}`}>
+                      <button className="secondary" type="button" disabled={!latestVersion || saving} onClick={() => latestVersion && void exportStoredActVersion(latestVersion, "pdf")}>PDF</button>
+                      <button className="secondary" type="button" disabled={!latestVersion || saving} onClick={() => latestVersion && void exportStoredActVersion(latestVersion, "word")}>Word</button>
+                      <button className="secondary" type="button" disabled={!latestVersion || saving} onClick={() => latestVersion && void exportStoredActVersion(latestVersion, "excel")}>Excel</button>
+                    </div>,
+                    <div className="table-actions" key={`actions-${delivery.id}`}>
+                      <button className="secondary" type="button" disabled={!act || act.status === "void" || saving || !canGenerateActs} onClick={() => act && startActCorrection(act)}>Corregir</button>
+                      <button className="danger" type="button" disabled={!act || act.status === "void" || saving || !canGenerateActs} onClick={() => act && void voidAct(act)}>Anular</button>
                     </div>
                   ];
                 })}
             />
+            {actVersions.filter((version) => !filters.family_id || version.family_id === filters.family_id).length > 0 ? (
+              <div className="delivery-version-history">
+                <h3>Historial de versiones</h3>
+                <DataTable embedded headers={["Acta", "Versión", "Fecha", "Estado", "Documentos"]} emptyMessage="No hay versiones."
+                  rows={actVersions.filter((version) => !filters.family_id || version.family_id === filters.family_id).map((version) => {
+                    const act = deliveryActs.find((item) => item.id === version.delivery_act_id);
+                    return [act?.act_number ?? "Acta", `v${version.version}`, version.delivery_date, version.status === "void" ? "Anulada" : "Vigente",
+                      <div className="table-actions" key={version.id}>
+                        <button className="secondary" type="button" disabled={saving} onClick={() => void exportStoredActVersion(version, "pdf")}>PDF</button>
+                        <button className="secondary" type="button" disabled={saving} onClick={() => void exportStoredActVersion(version, "word")}>Word</button>
+                        <button className="secondary" type="button" disabled={saving} onClick={() => void exportStoredActVersion(version, "excel")}>Excel</button>
+                      </div>];
+                  })} />
+              </div>
+            ) : null}
           </details>
         </div>
       ) : null}
@@ -11296,12 +11457,16 @@ function buildDeliveryActContextFromRecord(data: {
       operational_plan_id: data.record.plan?.id ?? "",
       material_delivery_id: "",
       act_number: data.record.actNumber,
+      act_sequence: 1,
+      version: 1,
       status: "generated",
       generated_at: new Date().toISOString(),
       generated_by: data.technician?.id ?? null,
       pdf_path: null,
       word_path: null,
       observations: data.record.sourceLabel,
+      voided_at: null,
+      voided_by: null,
       is_deleted: false
     },
     delivery: {

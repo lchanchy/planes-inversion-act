@@ -347,13 +347,30 @@ export type DeliveryAct = {
   operational_plan_id: string;
   material_delivery_id: string;
   act_number: string;
+  act_sequence: number;
+  version: number;
   status: "generated" | "signed" | "void";
   generated_at: string;
   generated_by: string | null;
   pdf_path: string | null;
   word_path: string | null;
   observations: string | null;
+  voided_at: string | null;
+  voided_by: string | null;
   is_deleted: boolean;
+};
+
+export type DeliveryActVersion = {
+  id: string;
+  delivery_act_id: string;
+  project_id: string;
+  family_id: string;
+  version: number;
+  status: "generated" | "signed" | "void";
+  delivery_date: string;
+  observations: string | null;
+  items: MaterialDeliveryItem[];
+  created_at: string;
 };
 
 export type ImplementationProgressStatus = "pending" | "in_progress" | "completed" | "overdue" | "cancelled";
