@@ -24,6 +24,7 @@ import type { Session } from "@supabase/supabase-js";
 import { supabase, supabaseConfigured } from "@/lib/supabase";
 import { fetchAllPages } from "@/lib/supabase-pagination";
 import { annualHouseholdIncome } from "@/lib/economia-income";
+import { TRACKING_BASE_COLUMNS, canEditTracking, trackingFrozenOffsets, type TrackingBaseColumnKey } from "@/lib/tracking-columns";
 import type {
   Activity,
   AuditLog,
@@ -864,7 +865,7 @@ function AdminApp({ session }: { session: Session }) {
               canManageProcurement={canWrite}
               canAdminOverride={roleNames.has("admin")}
               canGenerateActs={canWrite}
-              canEditImplementation={canWrite || roleNames.has("technician")}
+              canEditImplementation={canEditTracking(roleNames)}
               onChange={refreshVisibleData}
             />
           ) : null}
@@ -6687,6 +6688,7 @@ function ProcurementDeliveriesActs({
   useUnsavedChangesWarning(Object.keys(trackingDrafts).length > 0);
   const [trackingPage, setTrackingPage] = useState(1);
   const [trackingPageSize, setTrackingPageSize] = useState(50);
+  const [frozenTrackingColumns, setFrozenTrackingColumns] = useState<TrackingBaseColumnKey[]>(["familyName"]);
   const [maintenanceYear, setMaintenanceYear] = useState(new Date().getFullYear());
   const [visibleMaintenanceQuarters, setVisibleMaintenanceQuarters] = useState<number[]>([1, 2, 3, 4]);
   const [maintenancePage, setMaintenancePage] = useState(1);
@@ -7418,21 +7420,29 @@ function ProcurementDeliveriesActs({
   }
 
   async function saveTrackingTarget(planActivityId: string, rawValue: string) {
+    return saveTrackingPlanValue(planActivityId, "target", rawValue, "Meta");
+  }
+
+  async function saveTrackingBaseline(planActivityId: string, rawValue: string) {
+    return saveTrackingPlanValue(planActivityId, "baseline", rawValue, "Línea base");
+  }
+
+  async function saveTrackingPlanValue(planActivityId: string, field: "baseline" | "target", rawValue: string, label: string) {
     setNotice(null);
     if (!canEditImplementation) {
-      setNotice({ type: "error", message: "No tiene permisos para editar la meta." });
+      setNotice({ type: "error", message: `No tiene permisos para editar ${label.toLowerCase()}.` });
       return;
     }
     const value = rawValue.trim() === "" ? null : Number(rawValue);
     if (value !== null && (!Number.isFinite(value) || value < 0)) {
-      setNotice({ type: "error", message: "La meta debe ser un valor numerico mayor o igual a cero." });
-      throw new Error("Valor de meta no valido.");
+      setNotice({ type: "error", message: `${label} debe ser un valor numérico mayor o igual a cero.` });
+      throw new Error(`Valor de ${label.toLowerCase()} no válido.`);
     }
     setSaving(true);
     try {
-      const result = await supabase.from("plan_activities").update({ target: value !== null ? String(value) : null }).eq("id", planActivityId);
+      const result = await supabase.from("plan_activities").update({ [field]: value !== null ? String(value) : null }).eq("id", planActivityId);
       if (result.error) throw result.error;
-      setNotice({ type: "info", message: "Meta actualizada." });
+      setNotice({ type: "info", message: `${label} actualizada.` });
       await onChange();
     } catch (error) {
       setNotice({ type: "error", message: getErrorMessage(error) });
@@ -8115,6 +8125,7 @@ function ProcurementDeliveriesActs({
                 Exportar vista Excel
               </button>
             </div>
+            <FrozenTrackingColumns value={frozenTrackingColumns} onChange={setFrozenTrackingColumns} />
             <p className="span-12 muted">
               Seleccione un año y los trimestres que desea visualizar. La matriz muestra actividades de planes operativos aprobados. Los avances se guardan por familia, actividad, año y trimestre.
             </p>
@@ -8125,7 +8136,9 @@ function ProcurementDeliveriesActs({
             canEdit={canEditImplementation}
             onChange={updateTrackingDraft}
             onHectaresChange={saveTrackingHectares}
+            onBaselineChange={saveTrackingBaseline}
             onTargetChange={saveTrackingTarget}
+            frozenColumns={frozenTrackingColumns}
           />
           <div className="alert info">
             La matriz toma metas desde planes operativos aprobados. Los avances, entregados, sembrados y cumplimiento se guardan por familia, actividad, trimestre y año.
@@ -8170,13 +8183,16 @@ function ProcurementDeliveriesActs({
                 Exportar mantenimiento Excel
               </button>
             </div>
+            <FrozenTrackingColumns value={frozenTrackingColumns} onChange={setFrozenTrackingColumns} />
           </div>
           <MaintenanceMatrixTable
             matrix={maintenanceVisibleMatrix}
             canEdit={canEditImplementation && !saving}
             onSave={saveMaintenanceCell}
             onSaveOrganic={saveMaintenanceOrganicCell}
+            onBaselineChange={saveTrackingBaseline}
             onTargetChange={saveTrackingTarget}
+            frozenColumns={frozenTrackingColumns}
           />
           <div className="alert info">
             La matriz toma actividades desde planes operativos aprobados. Las fechas y avances de abonos se guardan por familia, actividad y año.
@@ -8313,41 +8329,83 @@ function ProcurementDeliveriesActs({
   );
 }
 
+function trackingBaseCellProps(key: TrackingBaseColumnKey, frozenOffsets: Record<TrackingBaseColumnKey, number | null>) {
+  const column = TRACKING_BASE_COLUMNS.find((item) => item.key === key)!;
+  const left = frozenOffsets[key];
+  return {
+    className: left === null ? "tracking-base-col" : "tracking-base-col sticky-col",
+    style: { left: left ?? undefined, width: column.width, minWidth: column.width, maxWidth: column.width }
+  };
+}
+
+async function confirmPlanActivityValueChange(
+  event: React.FocusEvent<HTMLInputElement>,
+  planActivityId: string,
+  activityName: string,
+  label: string,
+  onSave: (planActivityId: string, value: string) => Promise<void>
+) {
+  const previous = event.currentTarget.defaultValue;
+  const next = event.currentTarget.value;
+  if (next === previous) return;
+  if (!confirmManualChange(`Va a cambiar ${label.toLowerCase()} para "${activityName}" de "${previous || "N/A"}" a "${next || "0"}". ¿Desea aplicar este cambio?`)) {
+    event.currentTarget.value = previous;
+    return;
+  }
+  try {
+    await onSave(planActivityId, next);
+    event.currentTarget.defaultValue = next;
+  } catch {
+    event.currentTarget.value = previous;
+  }
+}
+
+function FrozenTrackingColumns({ value, onChange }: {
+  value: TrackingBaseColumnKey[];
+  onChange: (value: TrackingBaseColumnKey[]) => void;
+}) {
+  return (
+    <fieldset className="span-12 frozen-columns-picker">
+      <legend>Columnas inmovilizadas</legend>
+      {TRACKING_BASE_COLUMNS.map((column) => (
+        <label className="checkbox-row" key={column.key}>
+          <input
+            checked={value.includes(column.key)}
+            onChange={(event) => onChange(event.target.checked
+              ? [...value, column.key]
+              : value.filter((key) => key !== column.key))}
+            type="checkbox"
+          />
+          <span>{column.label}</span>
+        </label>
+      ))}
+    </fieldset>
+  );
+}
+
 function TrackingMatrixTable({
   matrix,
   drafts,
   canEdit,
   onChange,
   onHectaresChange,
-  onTargetChange
+  onBaselineChange,
+  onTargetChange,
+  frozenColumns
 }: {
   matrix: TrackingMatrix;
   drafts: Record<string, string>;
   canEdit: boolean;
   onChange: (key: string, value: string) => void;
   onHectaresChange: (row: TrackingFamilyRow, value: string) => Promise<void>;
+  onBaselineChange: (planActivityId: string, value: string) => Promise<void>;
   onTargetChange?: (planActivityId: string, value: string) => Promise<void>;
+  frozenColumns: TrackingBaseColumnKey[];
 }) {
-  const baseHeaders = ["Codigo Predio", "Familia", "Cedula", "Edad Años", "Municipio", "Vereda", "Hectareas del predio"];
+  const frozenOffsets = trackingFrozenOffsets(frozenColumns);
   const agreementColSpan = 2;
   if (matrix.rows.length === 0) {
     return <div className="panel muted">No hay planes aprobados con actividades para los filtros seleccionados.</div>;
-  }
-
-  async function confirmTargetChange(event: React.FocusEvent<HTMLInputElement>, planActivityId: string, activityName: string) {
-    const previous = event.currentTarget.defaultValue;
-    const next = event.currentTarget.value;
-    if (next === previous) return;
-    if (!confirmManualChange(`Va a cambiar la meta para "${activityName}" de "${previous || "N/A"}" a "${next || "0"}". ¿Desea aplicar este cambio?`)) {
-      event.currentTarget.value = previous;
-      return;
-    }
-    try {
-      if (onTargetChange) await onTargetChange(planActivityId, next);
-      event.currentTarget.defaultValue = next;
-    } catch {
-      event.currentTarget.value = previous;
-    }
   }
 
   function confirmTrackingCellChange(
@@ -8419,8 +8477,8 @@ function TrackingMatrixTable({
       <table className="tracking-table">
         <thead>
           <tr>
-            {baseHeaders.map((header, index) => (
-              <th className={`sticky-col sticky-col-${index + 1}`} key={header} rowSpan={2}>{header}</th>
+            {TRACKING_BASE_COLUMNS.map((column) => (
+              <th {...trackingBaseCellProps(column.key, frozenOffsets)} key={column.key} rowSpan={2}>{column.label}</th>
             ))}
             {matrix.vegetalGroups.map((group, groupIndex) => (
               <th
@@ -8450,13 +8508,13 @@ function TrackingMatrixTable({
         <tbody>
           {matrix.rows.map((row) => (
             <tr key={row.key}>
-              <td className="sticky-col sticky-col-1">{row.familyCode}</td>
-              <td className="sticky-col sticky-col-2">{row.familyName}</td>
-              <td className="sticky-col sticky-col-3">{row.documentNumber}</td>
-              <td className="sticky-col sticky-col-4">{row.ageYears}</td>
-              <td className="sticky-col sticky-col-5">{row.municipalityName}</td>
-              <td className="sticky-col sticky-col-6">{row.villageName}</td>
-              <td className="sticky-col sticky-col-7">
+              <td {...trackingBaseCellProps("familyCode", frozenOffsets)}>{row.familyCode}</td>
+              <td {...trackingBaseCellProps("familyName", frozenOffsets)}>{row.familyName}</td>
+              <td {...trackingBaseCellProps("documentNumber", frozenOffsets)}>{row.documentNumber}</td>
+              <td {...trackingBaseCellProps("ageYears", frozenOffsets)}>{row.ageYears}</td>
+              <td {...trackingBaseCellProps("municipalityName", frozenOffsets)}>{row.municipalityName}</td>
+              <td {...trackingBaseCellProps("villageName", frozenOffsets)}>{row.villageName}</td>
+              <td {...trackingBaseCellProps("hectares", frozenOffsets)}>
                 <input
                   className="tracking-input"
                   defaultValue={row.hectaresValue}
@@ -8523,22 +8581,29 @@ function TrackingMatrixTable({
                   ));
                 }
                 const cells = [
+                  <td className={trackingGroupCellClass("tracking-col-baseline", visualGroupIndex, true)} key={`${row.key}-${group.key}-baseline`}>
+                    <input
+                      className="tracking-input"
+                      disabled={!canEdit}
+                      defaultValue={cell.baselineQuantity ?? ""}
+                      min="0"
+                      onBlur={(event) => void confirmPlanActivityValueChange(event, cell.plan_activity_id, group.activityName, "Línea base", onBaselineChange)}
+                      placeholder="N/A"
+                      step="0.01"
+                      title="Línea base editable"
+                      type="number"
+                    />
+                  </td>,
                   <td className={trackingGroupCellClass("tracking-col-meta", visualGroupIndex, true)} key={`${row.key}-${group.key}-meta`}>
                     <input
                       className="tracking-input"
-                      style={{ width: "60px", textAlign: "center", border: "none", backgroundColor: "transparent", fontWeight: "bold" }}
+                      disabled={!canEdit}
                       defaultValue={cell.targetQuantity ?? ""}
-                      onBlur={(event) => {
-                        if (typeof document !== "undefined" && !document.body.classList.contains("is-super-admin")) {
-                          event.currentTarget.value = event.currentTarget.defaultValue;
-                          return;
-                        }
-                        void confirmTargetChange(event, cell.plan_activity_id, group.activityName);
-                      }}
+                      onBlur={(event) => onTargetChange && void confirmPlanActivityValueChange(event, cell.plan_activity_id, group.activityName, "Meta", onTargetChange)}
                       step="0.01"
                       type="number"
                       placeholder="N/A"
-                      title="Meta (Super Admin editable)"
+                      title="Meta editable"
                     />
                   </td>
                 ];
@@ -8619,7 +8684,9 @@ function MaintenanceMatrixTable({
   canEdit,
   onSave,
   onSaveOrganic,
-  onTargetChange
+  onBaselineChange,
+  onTargetChange,
+  frozenColumns
 }: {
   matrix: MaintenanceMatrix;
   canEdit: boolean;
@@ -8638,27 +8705,13 @@ function MaintenanceMatrixTable({
     quarter: number;
     value: string;
   }) => Promise<void>;
+  onBaselineChange: (planActivityId: string, value: string) => Promise<void>;
   onTargetChange?: (planActivityId: string, value: string) => Promise<void>;
+  frozenColumns: TrackingBaseColumnKey[];
 }) {
-  const baseHeaders = ["Codigo Predio", "Familia", "Cedula", "Edad Años", "Municipio", "Vereda", "Hectareas del predio"];
+  const frozenOffsets = trackingFrozenOffsets(frozenColumns);
   if (matrix.rows.length === 0) {
     return <div className="panel muted">No hay planes aprobados con actividades de mantenimiento para los filtros seleccionados.</div>;
-  }
-
-  async function confirmTargetChange(event: React.FocusEvent<HTMLInputElement>, planActivityId: string, activityName: string) {
-    const previous = event.currentTarget.defaultValue;
-    const next = event.currentTarget.value;
-    if (next === previous) return;
-    if (!confirmManualChange(`Va a cambiar la meta para "${activityName}" de "${previous || "N/A"}" a "${next || "0"}". ¿Desea aplicar este cambio?`)) {
-      event.currentTarget.value = previous;
-      return;
-    }
-    try {
-      if (onTargetChange) await onTargetChange(planActivityId, next);
-      event.currentTarget.defaultValue = next;
-    } catch {
-      event.currentTarget.value = previous;
-    }
   }
 
   function groupTone(index: number) {
@@ -8712,8 +8765,8 @@ function MaintenanceMatrixTable({
       <table className="tracking-table maintenance-table">
         <thead>
           <tr>
-            {baseHeaders.map((header, index) => (
-              <th className={`sticky-col sticky-col-${index + 1}`} key={header} rowSpan={2}>{header}</th>
+            {TRACKING_BASE_COLUMNS.map((column) => (
+              <th {...trackingBaseCellProps(column.key, frozenOffsets)} key={column.key} rowSpan={2}>{column.label}</th>
             ))}
             {matrix.groups.map((group, groupIndex) => (
               <th className={`tracking-group-header ${groupTone(groupIndex)} tracking-group-start`} colSpan={maintenanceGroupVisibleColSpan(group, matrix.visibleQuarters)} key={group.key}>
@@ -8736,13 +8789,13 @@ function MaintenanceMatrixTable({
         <tbody>
           {matrix.rows.map((row) => (
             <tr key={row.key}>
-              <td className="sticky-col sticky-col-1">{row.familyCode}</td>
-              <td className="sticky-col sticky-col-2">{row.familyName}</td>
-              <td className="sticky-col sticky-col-3">{row.documentNumber}</td>
-              <td className="sticky-col sticky-col-4">{row.ageYears}</td>
-              <td className="sticky-col sticky-col-5">{row.municipalityName}</td>
-              <td className="sticky-col sticky-col-6">{row.villageName}</td>
-              <td className="sticky-col sticky-col-7">{row.hectares}</td>
+              <td {...trackingBaseCellProps("familyCode", frozenOffsets)}>{row.familyCode}</td>
+              <td {...trackingBaseCellProps("familyName", frozenOffsets)}>{row.familyName}</td>
+              <td {...trackingBaseCellProps("documentNumber", frozenOffsets)}>{row.documentNumber}</td>
+              <td {...trackingBaseCellProps("ageYears", frozenOffsets)}>{row.ageYears}</td>
+              <td {...trackingBaseCellProps("municipalityName", frozenOffsets)}>{row.municipalityName}</td>
+              <td {...trackingBaseCellProps("villageName", frozenOffsets)}>{row.villageName}</td>
+              <td {...trackingBaseCellProps("hectares", frozenOffsets)}>{row.hectares}</td>
               {matrix.groups.flatMap((group, groupIndex) => {
                 const cell = row.activities[group.key];
                 const subheaders = maintenanceGroupVisibleSubheaders(group, matrix.visibleQuarters, matrix.year);
@@ -8752,22 +8805,29 @@ function MaintenanceMatrixTable({
                   ];
                 }
                 const cells = [
+                  <td className={groupCellClass("tracking-col-baseline", groupIndex, true)} key={`${row.key}-${group.key}-baseline`}>
+                    <input
+                      className="tracking-input"
+                      disabled={!canEdit}
+                      defaultValue={cell.baselineQuantity ?? ""}
+                      min="0"
+                      onBlur={(event) => void confirmPlanActivityValueChange(event, cell.plan_activity_id, group.activityName, "Línea base", onBaselineChange)}
+                      placeholder="N/A"
+                      step="0.01"
+                      title="Línea base editable"
+                      type="number"
+                    />
+                  </td>,
                   <td className={groupCellClass("tracking-col-meta", groupIndex, true)} key={`${row.key}-${group.key}-meta`}>
                     <input
                       className="tracking-input"
-                      style={{ width: "60px", textAlign: "center", border: "none", backgroundColor: "transparent", fontWeight: "bold" }}
+                      disabled={!canEdit}
                       defaultValue={cell.targetQuantity ?? ""}
-                      onBlur={(event) => {
-                        if (typeof document !== "undefined" && !document.body.classList.contains("is-super-admin")) {
-                          event.currentTarget.value = event.currentTarget.defaultValue;
-                          return;
-                        }
-                        void confirmTargetChange(event, cell.plan_activity_id, group.activityName);
-                      }}
+                      onBlur={(event) => onTargetChange && void confirmPlanActivityValueChange(event, cell.plan_activity_id, group.activityName, "Meta", onTargetChange)}
                       step="0.01"
                       type="number"
                       placeholder="N/A"
-                      title="Meta (Super Admin editable)"
+                      title="Meta editable"
                     />
                   </td>
                 ];
@@ -9148,6 +9208,7 @@ function comparePlanRecency(left: OperationalPlan, right: OperationalPlan) {
 
 function trackingGroupSubheaders(group: TrackingActivityGroup) {
   return [
+    "Línea base",
     "Meta",
     ...group.progressTypes.flatMap((type) => [1, 2, 3, 4].map((quarter) => `${trackingProgressTypeLabel(type)} Q${quarter}`)),
     "Avance acumulado"
@@ -9156,6 +9217,7 @@ function trackingGroupSubheaders(group: TrackingActivityGroup) {
 
 function trackingGroupVisibleSubheaders(group: TrackingActivityGroup, quarters: number[], year: number) {
   return [
+    "Línea base",
     "Meta",
     ...group.progressTypes.flatMap((type) => quarters.map((quarter) => `${trackingProgressTypeLabel(type)} Q${quarter}_${year}`)),
     "Avance acumulado"
@@ -9178,6 +9240,7 @@ function trackingGroupHeaderLabel(group: TrackingActivityGroup) {
 }
 
 function trackingHeaderClass(header: string) {
+  if (header === "Línea base") return "tracking-col-baseline";
   if (header === "Meta") return "tracking-col-meta";
   if (header === "Avance acumulado" || header.startsWith("Acumulado")) return "tracking-col-accumulated";
   if (header.includes("%")) return "tracking-col-percent";
@@ -9193,7 +9256,7 @@ function trackingGroupColSpan(group: TrackingActivityGroup) {
 }
 
 function trackingGroupVisibleColSpan(group: TrackingActivityGroup, quarters: number[]) {
-  return 1 + group.progressTypes.length * quarters.length + 1;
+  return 2 + group.progressTypes.length * quarters.length + 1;
 }
 
 function trackingVegetalVisibleColSpan(quarters: number[]) {
@@ -9517,6 +9580,7 @@ function maintenanceGroupHeaderLabel(group: MaintenanceActivityGroup) {
 
 function maintenanceGroupVisibleSubheaders(group: MaintenanceActivityGroup, quarters: number[], year: number) {
   return [
+    "Línea base",
     "Meta",
     ...group.tasks.map((task) => task.label),
     "Estado ciclo"
@@ -9524,7 +9588,7 @@ function maintenanceGroupVisibleSubheaders(group: MaintenanceActivityGroup, quar
 }
 
 function maintenanceGroupVisibleColSpan(group: MaintenanceActivityGroup, quarters: number[]) {
-  return 1 + group.tasks.length + 1;
+  return 2 + group.tasks.length + 1;
 }
 
 function maintenanceOrganicSubheaders(quarters: number[], year: number) {
@@ -9539,6 +9603,7 @@ function maintenanceOrganicColSpan(quarters: number[]) {
 }
 
 function maintenanceHeaderClass(header: string) {
+  if (header === "Línea base") return "tracking-col-baseline";
   if (header === "Meta") return "tracking-col-meta";
   if (header === "Estado ciclo") return "maintenance-col-cycle";
   if (header.startsWith("Acumulado")) return "tracking-col-accumulated";
@@ -10696,6 +10761,7 @@ async function exportTrackingMatrixExcel(matrix: TrackingMatrix) {
         values.push(...trackingGroupVisibleSubheaders(group, matrix.visibleQuarters, matrix.year).map(() => ""));
         continue;
       }
+      values.push(cell.baselineQuantity === null ? "" : Number(cell.baselineQuantity));
       values.push(cell.targetQuantity);
       for (const type of group.progressTypes) {
         for (const quarter of matrix.visibleQuarters) {
@@ -10847,6 +10913,7 @@ async function exportMaintenanceMatrixExcel(matrix: MaintenanceMatrix) {
         values.push(...maintenanceGroupVisibleSubheaders(group, matrix.visibleQuarters, matrix.year).map(() => "No aplica"));
         continue;
       }
+      values.push(cell.baselineQuantity === null ? "" : Number(cell.baselineQuantity));
       values.push(cell.targetQuantity);
       for (const task of group.tasks) {
         values.push(cell.progress[maintenanceProgressKey(task.type, task.number, null)]?.maintenance_date ?? "");
