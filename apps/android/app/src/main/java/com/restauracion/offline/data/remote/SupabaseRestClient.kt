@@ -1,8 +1,24 @@
 package com.restauracion.offline.data.remote
 
+import com.restauracion.offline.BuildConfig
 import com.restauracion.offline.data.SessionStore
+import com.restauracion.offline.data.PendingSyncLog
 import com.restauracion.offline.data.local.ActivityCatalogEntity
 import com.restauracion.offline.data.local.CounterpartCatalogEntity
+import com.restauracion.offline.data.local.EconomiaCategoriaEntity
+import com.restauracion.offline.data.local.EconomiaEncuestaApoyoEntity
+import com.restauracion.offline.data.local.EconomiaEncuestaEntity
+import com.restauracion.offline.data.local.EconomiaEncuestaPagoEntity
+import com.restauracion.offline.data.local.EconomiaEncuestaProductoEntity
+import com.restauracion.offline.data.local.EconomiaEncuestadorEntity
+import com.restauracion.offline.data.local.EconomiaEquipoEntity
+import com.restauracion.offline.data.local.EconomiaFamiliaEntity
+import com.restauracion.offline.data.local.EconomiaLugarVentaEntity
+import com.restauracion.offline.data.local.EconomiaProductoEntity
+import com.restauracion.offline.data.local.EconomiaProductoLugarVentaEntity
+import com.restauracion.offline.data.local.EconomiaRondaEntity
+import com.restauracion.offline.data.local.EconomiaTipoApoyoEntity
+import com.restauracion.offline.data.local.EconomiaTipoPagoEntity
 import com.restauracion.offline.data.local.FamilyEntity
 import com.restauracion.offline.data.local.MaterialCatalogEntity
 import com.restauracion.offline.data.local.MaterialDeliveryEntity
@@ -20,6 +36,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.ClientRequestException
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
@@ -36,6 +53,9 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 
 class SupabaseRestClient(
     baseUrl: String,
@@ -48,11 +68,20 @@ class SupabaseRestClient(
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false; encodeDefaults = true }
     private val client = HttpClient(OkHttp) {
         install(ContentNegotiation) { json(json) }
+        install(HttpTimeout) {
+            connectTimeoutMillis = 15_000
+            requestTimeoutMillis = 30_000
+            socketTimeoutMillis = 30_000
+        }
         expectSuccess = true
     }
     // Serializa la renovacion de sesion: evita que varias peticiones renueven a la vez
     // con el mismo refresh token (Supabase los rota, y el segundo uso da 'refresh_token_already_used').
     private val refreshMutex = Mutex()
+    private var downloadedRowCount = 0
+
+    fun resetDownloadedRowCount() { downloadedRowCount = 0 }
+    fun downloadedRowCount(): Int = downloadedRowCount
 
     suspend fun login(email: String, password: String) {
         requireConfigured()
@@ -100,58 +129,42 @@ class SupabaseRestClient(
 
     suspend fun projects(): List<ProjectEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/projects?select=id,name,code_prefix,status&is_deleted=eq.false") {
-        authHeaders()
-        }.body<List<ProjectDto>>().map { it.toEntity() }
+        pagedGet<ProjectDto>("projects?select=id,name,code_prefix,status&is_deleted=eq.false").map { it.toEntity() }
     }
 
     suspend fun families(): List<FamilyEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/families?select=id,project_id,family_code,representative_name,document_number,municipality_id,village_id,status&is_deleted=eq.false") {
-        authHeaders()
-        }.body<List<FamilyDto>>().map { it.toEntity() }
+        pagedGet<FamilyDto>("families?select=id,project_id,family_code,representative_name,document_number,municipality_id,village_id,status&is_deleted=eq.false").map { it.toEntity() }
     }
 
     suspend fun municipalities(): List<MunicipalityEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/municipalities?select=id,name") {
-        authHeaders()
-        }.body<List<MunicipalityDto>>().map { it.toEntity() }
+        pagedGet<MunicipalityDto>("municipalities?select=id,name,department").map { it.toEntity() }
     }
 
     suspend fun villages(): List<VillageEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/villages?select=id,municipality_id,name") {
-        authHeaders()
-        }.body<List<VillageDto>>().map { it.toEntity() }
+        pagedGet<VillageDto>("villages?select=id,municipality_id,name").map { it.toEntity() }
     }
 
     suspend fun properties(): List<PropertyEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/properties?select=id,family_id,property_name,total_area_ha&is_deleted=eq.false") {
-        authHeaders()
-        }.body<List<PropertyDto>>().map { it.toEntity() }
+        pagedGet<PropertyDto>("properties?select=id,family_id,property_name,total_area_ha&is_deleted=eq.false").map { it.toEntity() }
     }
 
     suspend fun activities(): List<ActivityCatalogEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/activity_catalog?select=id,project_id,name,unit,requires_baseline,requires_target,active&is_deleted=eq.false") {
-        authHeaders()
-        }.body<List<ActivityDto>>().map { it.toEntity() }
+        pagedGet<ActivityDto>("activity_catalog?select=id,project_id,name,unit,requires_baseline,requires_target,active&is_deleted=eq.false").map { it.toEntity() }
     }
 
     suspend fun materials(): List<MaterialCatalogEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/material_catalog?select=id,project_id,name,category,unit,quoted_unit_price,vegetal_indicator_group,active&is_deleted=eq.false") {
-        authHeaders()
-        }.body<List<MaterialDto>>().map { it.toEntity() }
+        pagedGet<MaterialDto>("material_catalog?select=id,project_id,name,category,unit,quoted_unit_price,vegetal_indicator_group,active&is_deleted=eq.false").map { it.toEntity() }
     }
 
     suspend fun counterpartCatalog(): List<CounterpartCatalogEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/counterpart_catalog?select=id,project_id,name,type,suggested_unit,active&is_deleted=eq.false") {
-        authHeaders()
-        }.body<List<CounterpartDto>>().map { it.toEntity() }
+        pagedGet<CounterpartDto>("counterpart_catalog?select=id,project_id,name,type,suggested_unit,active&is_deleted=eq.false").map { it.toEntity() }
     }
 
     private suspend fun resolveProfileId(idOrEmail: String): String = withAuth {
@@ -269,9 +282,7 @@ class SupabaseRestClient(
     // Estado (aprobado, etc.) de los planes en el servidor, para reflejarlo en la app.
     suspend fun operationalPlanStatuses(): Map<String, String> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/operational_plans?select=id,status&is_deleted=eq.false") {
-            authHeaders()
-        }.body<List<PlanStatusDto>>().associate { it.id to it.status }
+        pagedGet<PlanStatusDto>("operational_plans?select=id,status&is_deleted=eq.false").associate { it.id to it.status }
     }
 
     // Fase 4: materiales de todos los planes del proyecto. Sirven para (a) tener los materiales de
@@ -279,9 +290,7 @@ class SupabaseRestClient(
     // la app las reasignaciones/fusiones hechas desde la web (actividad, cantidad, borrado).
     suspend fun planProjectMaterials(): List<PlanProjectMaterialEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/plan_project_materials?select=id,plan_activity_id,material_id,quantity,unit,quoted_unit_price,observations&is_deleted=eq.false") {
-            authHeaders()
-        }.body<List<PlanMaterialSyncDto>>().map { it.toEntity() }
+        pagedGet<PlanMaterialSyncDto>("plan_project_materials?select=id,plan_activity_id,material_id,quantity,unit,quoted_unit_price,observations&is_deleted=eq.false").map { it.toEntity() }
     }
 
     // Fase 4: marca un material como eliminado en el servidor (al fusionar una reasignacion,
@@ -299,23 +308,20 @@ class SupabaseRestClient(
     // destino de una reasignacion desde el campo. Se insertan sin pisar los planes locales.
     suspend fun operationalPlans(): List<OperationalPlanEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/operational_plans?select=id,project_id,family_id,technician_id,plan_date,status,version&is_deleted=eq.false") {
-            authHeaders()
-        }.body<List<PlanRowDto>>().map { it.toEntity() }
+        pagedGet<PlanRowDto>("operational_plans?select=id,project_id,family_id,technician_id,plan_date,status,version&is_deleted=eq.false").map { it.toEntity() }
     }
 
     suspend fun planActivities(): List<PlanActivityEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/plan_activities?select=id,plan_id,activity_id,baseline,target,unit,observations&is_deleted=eq.false") {
-            authHeaders()
-        }.body<List<PlanActivityRowDto>>().map { it.toEntity() }
+        pagedGet<PlanActivityRowDto>("plan_activities?select=id,plan_id,activity_id,baseline,target,unit,observations&is_deleted=eq.false").map { it.toEntity() }
     }
 
     // Fase 3: pide al aplicativo web que genere el acta firmada de una entrega ya subida
     // (con sus items). Es best-effort: si no hay URL configurada, no hace nada.
-    suspend fun requestActGeneration(deliveryId: String) {
-        if (webAppUrl.isBlank()) return
+    suspend fun requestActGeneration(deliveryId: String) = withAuth {
+        if (webAppUrl.isBlank()) return@withAuth
         client.post("$webAppUrl/api/generate-act") {
+            authHeaders()
             contentType(ContentType.Application.Json)
             setBody(json.encodeToString(GenerateActRequest(deliveryId)))
         }
@@ -325,16 +331,12 @@ class SupabaseRestClient(
 
     suspend fun deliveries(): List<MaterialDeliveryEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/material_deliveries?select=id,project_id,family_id,operational_plan_id,delivery_date,status,observations,registered_by,family_signature,technician_signature&is_deleted=eq.false") {
-            authHeaders()
-        }.body<List<MaterialDeliveryDto>>().map { it.toEntity() }
+        pagedGet<MaterialDeliveryDto>("material_deliveries?select=id,project_id,family_id,operational_plan_id,delivery_date,status,observations,registered_by,family_signature,technician_signature&is_deleted=eq.false").map { it.toEntity() }
     }
 
     suspend fun deliveryItems(): List<MaterialDeliveryItemEntity> = withAuth {
         requireConfigured()
-        client.get("$baseUrl/rest/v1/material_delivery_items?select=id,material_delivery_id,project_id,family_id,operational_plan_id,plan_activity_id,activity_id,plan_project_material_id,material_id,provisional_material_id,material_name,unit,approved_quantity,delivered_quantity,observations&is_deleted=eq.false") {
-            authHeaders()
-        }.body<List<MaterialDeliveryItemDto>>().map { it.toEntity() }
+        pagedGet<MaterialDeliveryItemDto>("material_delivery_items?select=id,material_delivery_id,project_id,family_id,operational_plan_id,plan_activity_id,activity_id,plan_project_material_id,material_id,provisional_material_id,material_name,unit,approved_quantity,delivered_quantity,observations&is_deleted=eq.false").map { it.toEntity() }
     }
 
     suspend fun uploadDelivery(item: MaterialDeliveryEntity) = withAuth {
@@ -393,12 +395,268 @@ class SupabaseRestClient(
     }
 
     private fun requireConfigured() {
-        require(baseUrl.startsWith("https://") && !baseUrl.contains("localhost")) {
+        val localDebugUrl = BuildConfig.DEBUG && (baseUrl.startsWith("http://127.0.0.1:") || baseUrl.startsWith("http://10.0.2.2:"))
+        require(baseUrl.startsWith("https://") || localDebugUrl) {
             "SUPABASE_URL no esta configurada correctamente. Use https://xvmgmsexzibdqptmvzdn.supabase.co"
         }
         require(anonKey.isNotBlank() && anonKey.startsWith("eyJ")) {
             "SUPABASE_ANON_KEY no esta configurada. Use la Legacy anon key de Supabase, no la sb_publishable_."
         }
+    }
+
+    // ==========================================================================
+    // Economia Familiar (Fase 8)
+    // ==========================================================================
+
+    // --- Catalogos (pull) ---
+    suspend fun economiaEquipos(): List<EconomiaEquipoEntity> = withAuth {
+        requireConfigured()
+        pagedGet<EconomiaEquipoDto>("economia_equipos?select=id,codigo,nombre,orden,activo&is_deleted=eq.false").map { it.toEntity() }
+    }
+
+    suspend fun economiaEncuestadores(): List<EconomiaEncuestadorEntity> = withAuth {
+        requireConfigured()
+        pagedGet<EconomiaEncuestadorDto>("economia_encuestadores?select=id,nombre,activo&is_deleted=eq.false").map { it.toEntity() }
+    }
+
+    suspend fun economiaRondas(): List<EconomiaRondaEntity> = withAuth {
+        requireConfigured()
+        pagedGet<EconomiaRondaDto>("economia_rondas?select=id,codigo,nombre,orden,activo&is_deleted=eq.false").map { it.toEntity() }
+    }
+
+    suspend fun economiaCategorias(): List<EconomiaCategoriaEntity> = withAuth {
+        requireConfigured()
+        pagedGet<EconomiaCategoriaDto>("economia_categorias?select=id,codigo,nombre,orden,activo&is_deleted=eq.false").map { it.toEntity() }
+    }
+
+    suspend fun economiaProductos(): List<EconomiaProductoEntity> = withAuth {
+        requireConfigured()
+        pagedGet<EconomiaProductoDto>("economia_productos?select=id,categoria_id,codigo,nombre,es_pecuario,unidad_base,orden,activo&is_deleted=eq.false").map { it.toEntity() }
+    }
+
+    suspend fun economiaTiposApoyo(): List<EconomiaTipoApoyoEntity> = withAuth {
+        requireConfigured()
+        pagedGet<EconomiaTipoApoyoDto>("economia_tipos_apoyo?select=id,codigo,nombre,orden,activo&is_deleted=eq.false").map { it.toEntity() }
+    }
+
+    suspend fun economiaTiposPago(): List<EconomiaTipoPagoEntity> = withAuth {
+        requireConfigured()
+        pagedGet<EconomiaTipoPagoDto>("economia_tipos_pago?select=id,codigo,nombre,orden,activo&is_deleted=eq.false").map { it.toEntity() }
+    }
+
+    suspend fun economiaLugaresVenta(): List<EconomiaLugarVentaEntity> = withAuth {
+        requireConfigured()
+        pagedGet<EconomiaLugarVentaDto>("economia_lugares_venta?select=id,codigo,nombre,orden,activo&is_deleted=eq.false").map { it.toEntity() }
+    }
+
+    suspend fun economiaFamilias(): List<EconomiaFamiliaEntity> = withAuth {
+        requireConfigured()
+        pagedGet<EconomiaFamiliaDto>("economia_familias?select=id,project_id,family_id,activo,notas&is_deleted=eq.false").map { it.toEntity() }
+    }
+
+    // Encuestas existentes (para saber que monitoreos ya tiene cada familia). Solo cabecera.
+    suspend fun economiaEncuestas(): List<EconomiaEncuestaEntity> = withAuth {
+        requireConfigured()
+        pagedGet<EconomiaEncuestaDownloadDto>("economia_encuestas?select=id,project_id,family_id,ronda_id,equipo_id,encuestador_id,fecha,anio,tipo_medicion,numero_monitoreo,cambio_num_personas,personas_ninos,personas_adolescentes,personas_jovenes,personas_adultos,personas_mayores,recibe_apoyo_gobierno,recibe_otros_pagos,valor_jornal,estado,observaciones,server_version,revision,notas_revision,es_piloto&is_deleted=eq.false").map { it.toEntity() }
+    }
+
+    suspend fun recordSyncLog(log: PendingSyncLog, deviceId: String) = withAuth {
+        requireConfigured()
+        val userId = resolveProfileId(sessionStore.userId ?: error("No hay usuario para registrar la sincronizacion."))
+        client.post("$baseUrl/rest/v1/sync_logs") {
+            authHeaders()
+            contentType(ContentType.Application.Json)
+            setBody(SyncLogUploadDto(userId, deviceId, log.startedAt, log.finishedAt, log.status, log.details))
+        }
+    }
+
+    private suspend inline fun <reified T> pagedGet(resourceAndQuery: String): List<T> {
+        val result = mutableListOf<T>()
+        var offset = 0
+        do {
+            val page = client.get(
+                "$baseUrl/rest/v1/$resourceAndQuery&order=id.asc&limit=$PAGE_SIZE&offset=$offset"
+            ) { authHeaders() }.body<List<T>>()
+            downloadedRowCount += page.size
+            result += page
+            offset += page.size
+        } while (page.size == PAGE_SIZE)
+        return result
+    }
+
+    suspend fun economiaConflictosPendientes(): Set<String> = withAuth {
+        requireConfigured()
+        pagedGet<EconomiaConflictoPendienteDto>("economia_sync_conflictos?select=id,encuesta_id&estado=eq.pendiente").mapTo(mutableSetOf()) { it.encuestaId }
+    }
+
+    suspend fun economiaConflictosResueltos(): Map<String, String?> = withAuth {
+        requireConfigured()
+        pagedGet<EconomiaConflictoResueltoDto>("economia_sync_conflictos?select=id,encuesta_id,server_payload&estado=in.(resuelto_servidor,resuelto_cliente,resuelto_manual)").associate { conflicto ->
+            conflicto.encuestaId to conflicto.serverPayload?.get("id")?.jsonPrimitive?.contentOrNull
+        }
+    }
+
+    // --- Captura (push) --- upsert por id (Prefer merge-duplicates).
+    suspend fun uploadEconomiaEncuesta(item: EconomiaEncuestaEntity) = withAuth {
+        requireConfigured()
+        client.post("$baseUrl/rest/v1/economia_encuestas") {
+            authHeaders()
+            header("Prefer", "resolution=merge-duplicates")
+            contentType(ContentType.Application.Json)
+            val payload = EconomiaEncuestaUploadDto(
+                id = item.id,
+                projectId = item.projectId,
+                familyId = item.familyId,
+                rondaId = item.rondaId,
+                equipoId = item.equipoId,
+                encuestadorId = item.encuestadorId,
+                fecha = item.fecha,
+                anio = item.anio,
+                tipoMedicion = item.tipoMedicion,
+                numeroMonitoreo = item.numeroMonitoreo,
+                cambioNumPersonas = item.cambioNumPersonas,
+                personasNinos = item.personasNinos,
+                personasAdolescentes = item.personasAdolescentes,
+                personasJovenes = item.personasJovenes,
+                personasAdultos = item.personasAdultos,
+                personasMayores = item.personasMayores,
+                recibeApoyoGobierno = item.recibeApoyoGobierno,
+                recibeOtrosPagos = item.recibeOtrosPagos,
+                valorJornal = item.valorJornal,
+                estado = item.estado,
+                observaciones = item.observaciones,
+                createdBy = sessionStore.userId
+            )
+            setBody(json.encodeToString(payload))
+        }
+    }
+
+    suspend fun uploadEconomiaApoyo(item: EconomiaEncuestaApoyoEntity) = withAuth {
+        requireConfigured()
+        client.post("$baseUrl/rest/v1/economia_encuesta_apoyos") {
+            authHeaders()
+            header("Prefer", "resolution=merge-duplicates")
+            contentType(ContentType.Application.Json)
+            val payload = EconomiaApoyoUploadDto(
+                id = item.id,
+                encuestaId = item.encuestaId,
+                projectId = item.projectId,
+                familyId = item.familyId,
+                tipoApoyoId = item.tipoApoyoId,
+                valorMensual = item.valorMensual,
+                nombreLibre = item.nombreLibre
+            )
+            setBody(json.encodeToString(payload))
+        }
+    }
+
+    suspend fun uploadEconomiaPago(item: EconomiaEncuestaPagoEntity) = withAuth {
+        requireConfigured()
+        client.post("$baseUrl/rest/v1/economia_encuesta_pagos") {
+            authHeaders()
+            header("Prefer", "resolution=merge-duplicates")
+            contentType(ContentType.Application.Json)
+            val payload = EconomiaPagoUploadDto(
+                id = item.id,
+                encuestaId = item.encuestaId,
+                projectId = item.projectId,
+                familyId = item.familyId,
+                tipoPagoId = item.tipoPagoId,
+                valorMensual = item.valorMensual
+            )
+            setBody(json.encodeToString(payload))
+        }
+    }
+
+    suspend fun uploadEconomiaProducto(item: EconomiaEncuestaProductoEntity) = withAuth {
+        requireConfigured()
+        client.post("$baseUrl/rest/v1/economia_encuesta_productos") {
+            authHeaders()
+            header("Prefer", "resolution=merge-duplicates")
+            contentType(ContentType.Application.Json)
+            val payload = EconomiaProductoUploadDto(
+                id = item.id,
+                encuestaId = item.encuestaId,
+                projectId = item.projectId,
+                familyId = item.familyId,
+                productoId = item.productoId,
+                nombreOtro = item.nombreOtro,
+                unidad = item.unidad,
+                esPecuario = item.esPecuario,
+                temporalidad = item.temporalidad,
+                cantidadProducida = item.cantidadProducida,
+                consumo = item.consumo,
+                vendido = item.vendido,
+                motivoNoVenta = item.motivoNoVenta,
+                precioUnitario = item.precioUnitario,
+                apoyoAct = item.apoyoAct
+            )
+            setBody(json.encodeToString(payload))
+        }
+    }
+
+    suspend fun uploadEconomiaLugarProducto(item: EconomiaProductoLugarVentaEntity) = withAuth {
+        requireConfigured()
+        client.post("$baseUrl/rest/v1/economia_producto_lugares_venta") {
+            authHeaders()
+            header("Prefer", "resolution=merge-duplicates")
+            contentType(ContentType.Application.Json)
+            val payload = EconomiaLugarProductoUploadDto(
+                id = item.id,
+                encuestaProductoId = item.encuestaProductoId,
+                projectId = item.projectId,
+                familyId = item.familyId,
+                lugarVentaId = item.lugarVentaId,
+                nombreLibre = item.nombreLibre
+            )
+            setBody(json.encodeToString(payload))
+        }
+    }
+    suspend fun economiaApoyos(): List<EconomiaEncuestaApoyoEntity> = withAuth {
+        requireConfigured(); pagedGet<EconomiaApoyoDownloadDto>("economia_encuesta_apoyos?select=id,encuesta_id,project_id,family_id,tipo_apoyo_id,valor_mensual,nombre_libre&is_deleted=eq.false").map { it.toEntity() }
+    }
+    suspend fun economiaPagos(): List<EconomiaEncuestaPagoEntity> = withAuth {
+        requireConfigured(); pagedGet<EconomiaPagoDownloadDto>("economia_encuesta_pagos?select=id,encuesta_id,project_id,family_id,tipo_pago_id,valor_mensual&is_deleted=eq.false").map { it.toEntity() }
+    }
+    suspend fun economiaProductosEncuesta(): List<EconomiaEncuestaProductoEntity> = withAuth {
+        requireConfigured(); pagedGet<EconomiaProductoDownloadDto>("economia_encuesta_productos?select=id,encuesta_id,project_id,family_id,producto_id,nombre_otro,unidad,es_pecuario,temporalidad,cantidad_producida,consumo,vendido,motivo_no_venta,precio_unitario,apoyo_act&is_deleted=eq.false").map { it.toEntity() }
+    }
+    suspend fun economiaLugaresProducto(): List<EconomiaProductoLugarVentaEntity> = withAuth {
+        requireConfigured(); pagedGet<EconomiaLugarProductoDownloadDto>("economia_producto_lugares_venta?select=id,encuesta_producto_id,project_id,family_id,lugar_venta_id,nombre_libre&is_deleted=eq.false").map { it.toEntity() }
+    }
+
+    // La encuesta y todos sus hijos se confirman o revierten juntos en PostgreSQL.
+    suspend fun syncEconomiaEncuesta(
+        item: EconomiaEncuestaEntity,
+        apoyos: List<EconomiaEncuestaApoyoEntity>,
+        pagos: List<EconomiaEncuestaPagoEntity>,
+        productos: List<Pair<EconomiaEncuestaProductoEntity, List<EconomiaProductoLugarVentaEntity>>>
+    ): EconomiaSyncResult = withAuth {
+        requireConfigured()
+        val header = EconomiaEncuestaUploadDto(
+            item.id,item.projectId,item.familyId,item.rondaId,item.equipoId,item.encuestadorId,item.fecha,
+            item.anio,item.tipoMedicion,item.numeroMonitoreo,item.cambioNumPersonas,item.personasNinos,
+            item.personasAdolescentes,item.personasJovenes,item.personasAdultos,item.personasMayores,
+            item.recibeApoyoGobierno,item.recibeOtrosPagos,item.valorJornal,item.estado,item.observaciones,sessionStore.userId
+        )
+        val request = EconomiaSyncRequest(
+            header,
+            apoyos.map { EconomiaApoyoUploadDto(it.id,it.encuestaId,it.projectId,it.familyId,it.tipoApoyoId,it.valorMensual,it.nombreLibre) },
+            pagos.map { EconomiaPagoUploadDto(it.id,it.encuestaId,it.projectId,it.familyId,it.tipoPagoId,it.valorMensual) },
+            productos.map { (p, lugares) -> EconomiaProductoAggregateDto(
+                p.id,p.productoId,p.nombreOtro,p.unidad,p.esPecuario,p.temporalidad,p.cantidadProducida,
+                p.consumo,p.vendido,p.motivoNoVenta,p.precioUnitario,p.apoyoAct,
+                lugares.map { EconomiaLugarProductoUploadDto(it.id,it.encuestaProductoId,it.projectId,it.familyId,it.lugarVentaId,it.nombreLibre) }
+            ) },
+            item.serverVersion
+        )
+        client.post("$baseUrl/rest/v1/rpc/sync_economia_encuesta_v2") {
+            authHeaders(); contentType(ContentType.Application.Json); setBody(json.encodeToString(request))
+        }.body()
+    }
+
+    private companion object {
+        const val PAGE_SIZE = 500
     }
 }
 
@@ -687,8 +945,8 @@ private data class MaterialDeliveryItemUploadDto(
     )
 }
 
-@Serializable private data class MunicipalityDto(val id: String, val name: String? = null) {
-    fun toEntity() = MunicipalityEntity(id, name ?: "Sin nombre")
+@Serializable private data class MunicipalityDto(val id: String, val name: String? = null, val department: String? = null) {
+    fun toEntity() = MunicipalityEntity(id, name ?: "Sin nombre", department)
 }
 
 @Serializable private data class VillageDto(
@@ -770,3 +1028,239 @@ private data class MaterialDeliveryItemUploadDto(
 
 @Serializable
 private data class UserProfileDto(val id: String)
+
+// ==========================================================================
+// Economia Familiar (Fase 8) - DTOs
+// ==========================================================================
+
+// --- Catalogos (pull) ---
+@Serializable private data class EconomiaEquipoDto(
+    val id: String, val codigo: String? = null, val nombre: String? = null,
+    val orden: Int? = null, val activo: Boolean? = null
+) { fun toEntity() = EconomiaEquipoEntity(id, codigo ?: "", nombre ?: "", orden ?: 0, activo ?: true) }
+
+@Serializable private data class EconomiaEncuestadorDto(
+    val id: String, val nombre: String? = null, val activo: Boolean? = null
+) { fun toEntity() = EconomiaEncuestadorEntity(id, nombre ?: "", activo ?: true) }
+
+@Serializable private data class EconomiaRondaDto(
+    val id: String, val codigo: String? = null, val nombre: String? = null,
+    val orden: Int? = null, val activo: Boolean? = null
+) { fun toEntity() = EconomiaRondaEntity(id, codigo ?: "", nombre ?: "", orden ?: 0, activo ?: true) }
+
+@Serializable private data class EconomiaCategoriaDto(
+    val id: String, val codigo: String? = null, val nombre: String? = null,
+    val orden: Int? = null, val activo: Boolean? = null
+) { fun toEntity() = EconomiaCategoriaEntity(id, codigo ?: "", nombre ?: "", orden ?: 0, activo ?: true) }
+
+@Serializable private data class EconomiaProductoDto(
+    val id: String,
+    @SerialName("categoria_id") val categoriaId: String? = null,
+    val codigo: String? = null, val nombre: String? = null,
+    @SerialName("es_pecuario") val esPecuario: Boolean? = null,
+    @SerialName("unidad_base") val unidadBase: String? = null,
+    val orden: Int? = null, val activo: Boolean? = null
+) { fun toEntity() = EconomiaProductoEntity(id, categoriaId ?: "", codigo ?: "", nombre ?: "", esPecuario ?: false, unidadBase ?: "kg", orden ?: 0, activo ?: true) }
+
+@Serializable private data class EconomiaTipoApoyoDto(
+    val id: String, val codigo: String? = null, val nombre: String? = null,
+    val orden: Int? = null, val activo: Boolean? = null
+) { fun toEntity() = EconomiaTipoApoyoEntity(id, codigo ?: "", nombre ?: "", orden ?: 0, activo ?: true) }
+
+@Serializable private data class EconomiaTipoPagoDto(
+    val id: String, val codigo: String? = null, val nombre: String? = null,
+    val orden: Int? = null, val activo: Boolean? = null
+) { fun toEntity() = EconomiaTipoPagoEntity(id, codigo ?: "", nombre ?: "", orden ?: 0, activo ?: true) }
+
+@Serializable private data class EconomiaLugarVentaDto(
+    val id: String, val codigo: String? = null, val nombre: String? = null,
+    val orden: Int? = null, val activo: Boolean? = null
+) { fun toEntity() = EconomiaLugarVentaEntity(id, codigo ?: "", nombre ?: "", orden ?: 0, activo ?: true) }
+
+@Serializable private data class EconomiaFamiliaDto(
+    val id: String,
+    @SerialName("project_id") val projectId: String? = null,
+    @SerialName("family_id") val familyId: String? = null,
+    val activo: Boolean? = null, val notas: String? = null
+) { fun toEntity() = EconomiaFamiliaEntity(id, projectId ?: "", familyId ?: "", activo ?: true, notas) }
+
+@Serializable private data class EconomiaEncuestaDownloadDto(
+    val id: String,
+    @SerialName("project_id") val projectId: String? = null,
+    @SerialName("family_id") val familyId: String? = null,
+    @SerialName("ronda_id") val rondaId: String? = null,
+    @SerialName("equipo_id") val equipoId: String? = null,
+    @SerialName("encuestador_id") val encuestadorId: String? = null,
+    val fecha: String? = null,
+    val anio: Int? = null,
+    @SerialName("tipo_medicion") val tipoMedicion: String? = null,
+    @SerialName("numero_monitoreo") val numeroMonitoreo: Int? = null,
+    @SerialName("cambio_num_personas") val cambioNumPersonas: Boolean? = null,
+    @SerialName("personas_ninos") val personasNinos: Int? = null,
+    @SerialName("personas_adolescentes") val personasAdolescentes: Int? = null,
+    @SerialName("personas_jovenes") val personasJovenes: Int? = null,
+    @SerialName("personas_adultos") val personasAdultos: Int? = null,
+    @SerialName("personas_mayores") val personasMayores: Int? = null,
+    @SerialName("recibe_apoyo_gobierno") val recibeApoyoGobierno: Boolean? = null,
+    @SerialName("recibe_otros_pagos") val recibeOtrosPagos: Boolean? = null,
+    @SerialName("valor_jornal") val valorJornal: Double? = null,
+    val estado: String? = null,
+    val observaciones: String? = null,
+    @SerialName("server_version") val serverVersion: Long? = null,
+    val revision: Int? = null,
+    @SerialName("notas_revision") val notasRevision: String? = null,
+    @SerialName("es_piloto") val esPiloto: Boolean? = null
+) {
+    fun toEntity() = EconomiaEncuestaEntity(
+        id = id,
+        projectId = projectId ?: "",
+        familyId = familyId ?: "",
+        rondaId = rondaId ?: "",
+        equipoId = equipoId,
+        encuestadorId = encuestadorId,
+        fecha = fecha ?: "",
+        anio = anio ?: (fecha?.take(4)?.toIntOrNull() ?: java.time.LocalDate.now().year),
+        tipoMedicion = tipoMedicion ?: "linea_base",
+        numeroMonitoreo = numeroMonitoreo,
+        cambioNumPersonas = cambioNumPersonas,
+        personasNinos = personasNinos,
+        personasAdolescentes = personasAdolescentes,
+        personasJovenes = personasJovenes,
+        personasAdultos = personasAdultos,
+        personasMayores = personasMayores,
+        recibeApoyoGobierno = recibeApoyoGobierno,
+        recibeOtrosPagos = recibeOtrosPagos,
+        valorJornal = valorJornal,
+        estado = estado ?: "completada",
+        observaciones = observaciones,
+        serverVersion = serverVersion ?: 1,
+        revision = revision ?: 1,
+        notasRevision = notasRevision,
+        esPiloto = esPiloto ?: false,
+        syncState = SyncState.SYNCED,
+        lastError = null
+    )
+}
+
+@Serializable private data class EconomiaApoyoDownloadDto(val id:String,@SerialName("encuesta_id")val encuestaId:String,@SerialName("project_id")val projectId:String,@SerialName("family_id")val familyId:String,@SerialName("tipo_apoyo_id")val tipoApoyoId:String,@SerialName("valor_mensual")val valorMensual:Double?=null,@SerialName("nombre_libre")val nombreLibre:String?=null){fun toEntity()=EconomiaEncuestaApoyoEntity(id,encuestaId,projectId,familyId,tipoApoyoId,valorMensual,nombreLibre,SyncState.SYNCED)}
+@Serializable private data class EconomiaPagoDownloadDto(val id:String,@SerialName("encuesta_id")val encuestaId:String,@SerialName("project_id")val projectId:String,@SerialName("family_id")val familyId:String,@SerialName("tipo_pago_id")val tipoPagoId:String,@SerialName("valor_mensual")val valorMensual:Double?=null){fun toEntity()=EconomiaEncuestaPagoEntity(id,encuestaId,projectId,familyId,tipoPagoId,valorMensual,SyncState.SYNCED)}
+@Serializable private data class EconomiaProductoDownloadDto(val id:String,@SerialName("encuesta_id")val encuestaId:String,@SerialName("project_id")val projectId:String,@SerialName("family_id")val familyId:String,@SerialName("producto_id")val productoId:String?=null,@SerialName("nombre_otro")val nombreOtro:String?=null,val unidad:String?=null,@SerialName("es_pecuario")val esPecuario:Boolean=false,val temporalidad:String?=null,@SerialName("cantidad_producida")val cantidad:Double?=null,val consumo:Double?=null,val vendido:Double?=null,@SerialName("motivo_no_venta")val motivo:String?=null,@SerialName("precio_unitario")val precio:Double?=null,@SerialName("apoyo_act")val apoyo:Boolean?=null){fun toEntity()=EconomiaEncuestaProductoEntity(id,encuestaId,projectId,familyId,productoId,nombreOtro,unidad,esPecuario,temporalidad,cantidad,consumo,vendido,motivo,precio,apoyo,SyncState.SYNCED)}
+@Serializable private data class EconomiaLugarProductoDownloadDto(val id:String,@SerialName("encuesta_producto_id")val productoId:String,@SerialName("project_id")val projectId:String,@SerialName("family_id")val familyId:String,@SerialName("lugar_venta_id")val lugarId:String,@SerialName("nombre_libre")val nombre:String?=null){fun toEntity()=EconomiaProductoLugarVentaEntity(id,productoId,projectId,familyId,lugarId,nombre,SyncState.SYNCED)}
+@Serializable private data class EconomiaConflictoPendienteDto(@SerialName("encuesta_id") val encuestaId: String)
+@Serializable private data class EconomiaConflictoResueltoDto(
+    @SerialName("encuesta_id") val encuestaId: String,
+    @SerialName("server_payload") val serverPayload: JsonObject? = null
+)
+
+// --- Captura (push) --- las columnas generadas (personas_total, ingreso_mensual) NO se envian.
+@Serializable private data class EconomiaEncuestaUploadDto(
+    val id: String,
+    @SerialName("project_id") val projectId: String,
+    @SerialName("family_id") val familyId: String,
+    @SerialName("ronda_id") val rondaId: String,
+    @SerialName("equipo_id") val equipoId: String?,
+    @SerialName("encuestador_id") val encuestadorId: String?,
+    val fecha: String,
+    val anio: Int,
+    @SerialName("tipo_medicion") val tipoMedicion: String,
+    @SerialName("numero_monitoreo") val numeroMonitoreo: Int?,
+    @SerialName("cambio_num_personas") val cambioNumPersonas: Boolean?,
+    @SerialName("personas_ninos") val personasNinos: Int?,
+    @SerialName("personas_adolescentes") val personasAdolescentes: Int?,
+    @SerialName("personas_jovenes") val personasJovenes: Int?,
+    @SerialName("personas_adultos") val personasAdultos: Int?,
+    @SerialName("personas_mayores") val personasMayores: Int?,
+    @SerialName("recibe_apoyo_gobierno") val recibeApoyoGobierno: Boolean?,
+    @SerialName("recibe_otros_pagos") val recibeOtrosPagos: Boolean?,
+    @SerialName("valor_jornal") val valorJornal: Double?,
+    val estado: String,
+    val observaciones: String?,
+    @SerialName("created_by") val createdBy: String?
+)
+
+@Serializable private data class EconomiaApoyoUploadDto(
+    val id: String,
+    @SerialName("encuesta_id") val encuestaId: String,
+    @SerialName("project_id") val projectId: String,
+    @SerialName("family_id") val familyId: String,
+    @SerialName("tipo_apoyo_id") val tipoApoyoId: String,
+    @SerialName("valor_mensual") val valorMensual: Double?,
+    @SerialName("nombre_libre") val nombreLibre: String?
+)
+
+@Serializable private data class EconomiaPagoUploadDto(
+    val id: String,
+    @SerialName("encuesta_id") val encuestaId: String,
+    @SerialName("project_id") val projectId: String,
+    @SerialName("family_id") val familyId: String,
+    @SerialName("tipo_pago_id") val tipoPagoId: String,
+    @SerialName("valor_mensual") val valorMensual: Double?
+)
+
+@Serializable private data class EconomiaProductoUploadDto(
+    val id: String,
+    @SerialName("encuesta_id") val encuestaId: String,
+    @SerialName("project_id") val projectId: String,
+    @SerialName("family_id") val familyId: String,
+    @SerialName("producto_id") val productoId: String?,
+    @SerialName("nombre_otro") val nombreOtro: String?,
+    val unidad: String?,
+    @SerialName("es_pecuario") val esPecuario: Boolean,
+    val temporalidad: String?,
+    @SerialName("cantidad_producida") val cantidadProducida: Double?,
+    val consumo: Double?,
+    val vendido: Double?,
+    @SerialName("motivo_no_venta") val motivoNoVenta: String?,
+    @SerialName("precio_unitario") val precioUnitario: Double?,
+    @SerialName("apoyo_act") val apoyoAct: Boolean?
+)
+
+@Serializable private data class EconomiaLugarProductoUploadDto(
+    val id: String,
+    @SerialName("encuesta_producto_id") val encuestaProductoId: String,
+    @SerialName("project_id") val projectId: String,
+    @SerialName("family_id") val familyId: String,
+    @SerialName("lugar_venta_id") val lugarVentaId: String,
+    @SerialName("nombre_libre") val nombreLibre: String?
+)
+
+@Serializable private data class EconomiaProductoAggregateDto(
+    val id: String,
+    @SerialName("producto_id") val productoId: String?,
+    @SerialName("nombre_otro") val nombreOtro: String?,
+    val unidad: String?,
+    @SerialName("es_pecuario") val esPecuario: Boolean,
+    val temporalidad: String?,
+    @SerialName("cantidad_producida") val cantidadProducida: Double?,
+    val consumo: Double?, val vendido: Double?,
+    @SerialName("motivo_no_venta") val motivoNoVenta: String?,
+    @SerialName("precio_unitario") val precioUnitario: Double?,
+    @SerialName("apoyo_act") val apoyoAct: Boolean?,
+    val lugares: List<EconomiaLugarProductoUploadDto>
+)
+
+@Serializable private data class EconomiaSyncRequest(
+    @SerialName("p_encuesta") val encuesta: EconomiaEncuestaUploadDto,
+    @SerialName("p_apoyos") val apoyos: List<EconomiaApoyoUploadDto>,
+    @SerialName("p_pagos") val pagos: List<EconomiaPagoUploadDto>,
+    @SerialName("p_productos") val productos: List<EconomiaProductoAggregateDto>,
+    @SerialName("p_expected_version") val expectedVersion: Long
+)
+
+@Serializable data class EconomiaSyncResult(
+    val id: String,
+    val conflict: Boolean = false,
+    @SerialName("server_version") val serverVersion: Long,
+    val revision: Int,
+    val estado: String
+)
+
+@Serializable
+private data class SyncLogUploadDto(
+    @SerialName("user_id") val userId: String,
+    @SerialName("device_id") val deviceId: String,
+    @SerialName("started_at") val startedAt: String,
+    @SerialName("finished_at") val finishedAt: String,
+    val status: String,
+    val details: Map<String, String>
+)

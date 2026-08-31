@@ -41,14 +41,15 @@ android {
         applicationId = "com.restauracion.offline"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
 
         val supabaseUrl = secretProperty("SUPABASE_URL").ifBlank { defaultSupabaseUrl }
         val supabaseAnonKey = secretProperty("SUPABASE_ANON_KEY")
+        val allowLocalHttp = secretProperty("ALLOW_LOCAL_HTTP").equals("true", ignoreCase = true)
 
-        require(supabaseUrl.startsWith("https://")) {
-            "SUPABASE_URL debe iniciar con https://. Valor actual: $supabaseUrl"
+        require(supabaseUrl.startsWith("https://") || (allowLocalHttp && supabaseUrl.startsWith("http://"))) {
+            "SUPABASE_URL debe usar https://. Para pruebas locales debug use ALLOW_LOCAL_HTTP=true. Valor actual: $supabaseUrl"
         }
         require(supabaseAnonKey.startsWith("eyJ")) {
             "SUPABASE_ANON_KEY no fue leida desde local.properties o no es la Legacy anon key. Revise apps/android/local.properties."
@@ -66,6 +67,31 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+
+    val releaseStoreFile = secretProperty("RELEASE_STORE_FILE")
+    val releaseStorePassword = secretProperty("RELEASE_STORE_PASSWORD")
+    val releaseKeyAlias = secretProperty("RELEASE_KEY_ALIAS")
+    val releaseKeyPassword = secretProperty("RELEASE_KEY_PASSWORD")
+    val releaseSigningConfigured = listOf(
+        releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword
+    ).all { it.isNotBlank() }
+
+    signingConfigs {
+        if (releaseSigningConfigured) {
+            create("release") {
+                storeFile = rootProject.file(releaseStoreFile)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            if (releaseSigningConfigured) signingConfig = signingConfigs.getByName("release")
+        }
     }
 
     compileOptions {
@@ -101,6 +127,8 @@ dependencies {
     implementation("io.ktor:ktor-serialization-kotlinx-json:$ktorVersion")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+
+    testImplementation(kotlin("test"))
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

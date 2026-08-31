@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback, createContext, useContext } from "react";
+import { useEffect, useMemo, useState, useCallback, createContext, useContext, Fragment } from "react";
 import {
   AlignmentType,
   BorderStyle,
@@ -22,10 +22,16 @@ import {
 } from "docx";
 import type { Session } from "@supabase/supabase-js";
 import { supabase, supabaseConfigured } from "@/lib/supabase";
+import { fetchAllPages } from "@/lib/supabase-pagination";
+import { annualHouseholdIncome } from "@/lib/economia-income";
+import { deliveryQuantityError } from "@/lib/delivery-act-checklist";
+import { TRACKING_BASE_COLUMNS, canEditTracking, trackingFrozenOffsets, type TrackingBaseColumnKey } from "@/lib/tracking-columns";
 import type {
   Activity,
+  AuditLog,
   CounterpartCatalog,
   DeliveryAct,
+  DeliveryActVersion,
   Department,
   Family,
   ImplementationProgress,
@@ -54,9 +60,22 @@ import type {
   QuarterlyProgress,
   QuarterlyProgressType,
   Role,
+  SyncLog,
   UserMunicipalityAssignment,
   VegetalSeed,
-  Village
+  Village,
+  EconomiaCategoria,
+  EconomiaProductoCatalogo,
+  EconomiaTipoApoyo,
+  EconomiaTipoPago,
+  EconomiaLugarVenta,
+  EconomiaRonda,
+  EconomiaEncuesta,
+  EconomiaEncuestaApoyo,
+  EconomiaEncuestaPago,
+  EconomiaEncuestaProducto,
+  EconomiaProductoLugarVenta,
+  EconomiaSyncConflicto
 } from "@/lib/types";
 
 type ViewKey =
@@ -72,7 +91,10 @@ type ViewKey =
   | "phase5_etec"
   | "phase5_indicators"
   | "phase5_maintenance"
-  | "phase5_acts";
+  | "phase5_acts"
+  | "audit"
+  | "diagnostics"
+  | "phase8_economia";
 type Phase5Tab = "consolidated" | "etec" | "indicators" | "maintenance" | "acts";
 type Notice = { type: "info" | "error"; message: string } | null;
 type ProjectLogoPosition = "left" | "center" | "right" | "bottom-left" | "bottom-center" | "bottom-right";
@@ -383,6 +405,7 @@ function AdminApp({ session }: { session: Session }) {
   const [implementationProgress, setImplementationProgress] = useState<ImplementationProgress[]>([]);
   const [quarterlyProgress, setQuarterlyProgress] = useState<QuarterlyProgress[]>([]);
   const [maintenanceProgress, setMaintenanceProgress] = useState<MaintenanceProgress[]>([]);
+  const [phase5Loaded, setPhase5Loaded] = useState(false);
   const [phase5SchemaStatus, setPhase5SchemaStatus] = useState<Phase5SchemaStatus>({ ready: true, message: null });
   const [maintenanceSchemaStatus, setMaintenanceSchemaStatus] = useState<Phase5SchemaStatus>({ ready: true, message: null });
 
@@ -401,6 +424,7 @@ function AdminApp({ session }: { session: Session }) {
   }, [profile, projectUsers, roles]);
 
   const canWrite = roleNames.has("super_admin") || roleNames.has("admin") || roleNames.has("project_admin") || roleNames.has("coordinator");
+  const canManageDeliveryActs = canWrite || roleNames.has("technician") || roleNames.has("municipal_technician");
   useEffect(() => {
     if (roleNames.has("super_admin")) document.body.classList.add("is-super-admin");
     else document.body.classList.remove("is-super-admin");
@@ -410,8 +434,9 @@ function AdminApp({ session }: { session: Session }) {
   }, [roleNames]);
 
   const canManageProfiles = roleNames.has("super_admin") || roleNames.has("admin") || roleNames.has("project_admin");
+  const canViewAudit = roleNames.has("super_admin") || roleNames.has("admin") || roleNames.has("project_admin") || roleNames.has("coordinator") || roleNames.has("auditor");
 
-  async function loadAll() {
+  async function loadAll(attempt = 0) {
     setLoading(true);
     setNotice(null);
     try {
@@ -438,45 +463,33 @@ function AdminApp({ session }: { session: Session }) {
         projectDepartmentsResult,
         projectMunicipalitiesResult,
         projectVillagesResult,
-        procurementBatchesResult,
-        procurementBatchItemsResult,
-        materialDeliveriesResult,
-        materialDeliveryItemsResult,
-        deliveryActsResult,
-        implementationProgressResult,
         quarterlyProgressResult,
         maintenanceProgressResult
       ] = await Promise.all([
-        supabase.from("roles").select("id,name,description,permissions").order("name"),
+        fetchAllPages((from, to) => supabase.from("roles").select("id,name,description,permissions").order("name").order("id").range(from, to)),
         supabase.from("users_profiles").select("*").eq("auth_user_id", session.user.id).maybeSingle(),
-        supabase.from("project_users").select("*").order("created_at", { ascending: false }),
-        supabase.from("user_municipality_assignments").select("*").eq("is_deleted", false),
-        supabase.from("projects").select("*").order("created_at", { ascending: false }),
-        supabase.from("users_profiles").select("*").order("full_name"),
-        supabase.from("families").select("*").eq("is_deleted", false).order("created_at", { ascending: false }),
-        supabase.from("properties").select("*").eq("is_deleted", false),
-        supabase.from("activity_catalog").select("*").order("name"),
-        supabase.from("material_catalog").select("*").order("name"),
-        supabase.from("counterpart_catalog").select("*").order("name"),
-        supabase.from("operational_plans").select("*").eq("is_deleted", false).order("created_at", { ascending: false }),
-        supabase.from("plan_activities").select("*").eq("is_deleted", false),
-        supabase.from("plan_project_materials").select("*").eq("is_deleted", false),
-        supabase.from("plan_family_counterparts").select("*").eq("is_deleted", false),
-        supabase.from("provisional_materials").select("*").eq("is_deleted", false),
-        supabase.from("departments").select("*").order("name"),
-        supabase.from("municipalities").select("*").order("name"),
-        supabase.from("villages").select("*").order("name"),
-        supabase.from("project_departments").select("*").eq("is_deleted", false),
-        supabase.from("project_municipalities").select("*").eq("is_deleted", false),
-        supabase.from("project_villages").select("*").eq("is_deleted", false),
-        supabase.from("procurement_batches").select("*").eq("is_deleted", false).order("created_at", { ascending: false }),
-        supabase.from("procurement_batch_items").select("*").eq("is_deleted", false),
-        supabase.from("material_deliveries").select("*").eq("is_deleted", false).order("created_at", { ascending: false }),
-        supabase.from("material_delivery_items").select("*").eq("is_deleted", false),
-        supabase.from("delivery_acts").select("*").eq("is_deleted", false).order("generated_at", { ascending: false }),
-        supabase.from("implementation_progress").select("*").eq("is_deleted", false).order("created_at", { ascending: false }),
-        supabase.from("quarterly_progress").select("*").eq("is_deleted", false),
-        supabase.from("maintenance_progress").select("*").eq("is_deleted", false)
+        fetchAllPages((from, to) => supabase.from("project_users").select("*").order("created_at", { ascending: false }).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("user_municipality_assignments").select("*").eq("is_deleted", false).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("projects").select("*").order("created_at", { ascending: false }).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("users_profiles").select("*").order("full_name").order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("families").select("*").eq("is_deleted", false).order("created_at", { ascending: false }).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("properties").select("*").eq("is_deleted", false).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("activity_catalog").select("*").order("name").order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("material_catalog").select("*").order("name").order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("counterpart_catalog").select("*").order("name").order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("operational_plans").select("*").eq("is_deleted", false).order("created_at", { ascending: false }).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("plan_activities").select("*").eq("is_deleted", false).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("plan_project_materials").select("*").eq("is_deleted", false).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("plan_family_counterparts").select("*").eq("is_deleted", false).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("provisional_materials").select("*").eq("is_deleted", false).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("departments").select("*").order("name").order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("municipalities").select("*").order("name").order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("villages").select("*").order("name").order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("project_departments").select("*").eq("is_deleted", false).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("project_municipalities").select("*").eq("is_deleted", false).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("project_villages").select("*").eq("is_deleted", false).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("quarterly_progress").select("*").eq("is_deleted", false).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("maintenance_progress").select("*").eq("is_deleted", false).order("id").range(from, to))
       ]);
 
       const error = [
@@ -505,34 +518,6 @@ function AdminApp({ session }: { session: Session }) {
       ].find(Boolean);
 
       if (error) throw error;
-
-      const phase5Results = [
-        { table: "procurement_batches", error: procurementBatchesResult.error },
-        { table: "procurement_batch_items", error: procurementBatchItemsResult.error },
-        { table: "material_deliveries", error: materialDeliveriesResult.error },
-        { table: "material_delivery_items", error: materialDeliveryItemsResult.error },
-        { table: "delivery_acts", error: deliveryActsResult.error },
-        { table: "implementation_progress", error: implementationProgressResult.error },
-        { table: "quarterly_progress", error: quarterlyProgressResult.error }
-      ];
-      const missingTables = phase5Results
-        .filter((result) => result.error && isMissingTableError(result.error))
-        .map((result) => result.table);
-      const phase5Error = phase5Results.find((result) => result.error);
-
-      if (missingTables.length > 0) {
-        setPhase5SchemaStatus({
-          ready: false,
-          message: `${PHASE5_MISSING_MIGRATIONS_MESSAGE} Tablas faltantes: ${missingTables.join(", ")}.`
-        });
-      } else if (phase5Error?.error) {
-        setPhase5SchemaStatus({
-          ready: false,
-          message: `No fue posible consultar tablas de Fase 5: ${getErrorMessage(phase5Error.error)}`
-        });
-      } else {
-        setPhase5SchemaStatus({ ready: true, message: null });
-      }
 
       if (maintenanceProgressResult.error && isMissingTableError(maintenanceProgressResult.error)) {
         setMaintenanceSchemaStatus({
@@ -570,16 +555,16 @@ function AdminApp({ session }: { session: Session }) {
       setProjectDepartments((projectDepartmentsResult.data ?? []) as ProjectDepartment[]);
       setProjectMunicipalities((projectMunicipalitiesResult.data ?? []) as ProjectMunicipality[]);
       setProjectVillages((projectVillagesResult.data ?? []) as ProjectVillage[]);
-      setProcurementBatches((procurementBatchesResult.data ?? []) as ProcurementBatch[]);
-      setProcurementBatchItems((procurementBatchItemsResult.data ?? []) as ProcurementBatchItem[]);
-      setMaterialDeliveries((materialDeliveriesResult.data ?? []) as MaterialDelivery[]);
-      setMaterialDeliveryItems((materialDeliveryItemsResult.data ?? []) as MaterialDeliveryItem[]);
-      setDeliveryActs((deliveryActsResult.data ?? []) as DeliveryAct[]);
-      setImplementationProgress((implementationProgressResult.data ?? []) as ImplementationProgress[]);
       setQuarterlyProgress((quarterlyProgressResult.data ?? []) as QuarterlyProgress[]);
       setMaintenanceProgress(maintenanceProgressResult.error ? [] : (maintenanceProgressResult.data ?? []) as MaintenanceProgress[]);
     } catch (error) {
-      setNotice({ type: "error", message: getErrorMessage(error) });
+      const message = getErrorMessage(error);
+      if (attempt === 0 && message.toLowerCase().includes("jwt issued at future")) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1200));
+        await supabase.auth.refreshSession();
+        return await loadAll(attempt + 1);
+      }
+      setNotice({ type: "error", message });
     } finally {
       setLoading(false);
     }
@@ -648,7 +633,7 @@ function AdminApp({ session }: { session: Session }) {
     };
   }, [globalProjectId, projects, families, properties, activities, materials, plans, planActivities, planMaterials, planCounterparts, provisionalMaterials, procurementBatches, procurementBatchItems, materialDeliveries, materialDeliveryItems, deliveryActs, implementationProgress, quarterlyProgress, maintenanceProgress]);
 
-  const views: { key: ViewKey; label: string }[] = [
+  const allViews: { key: ViewKey; label: string }[] = [
     { key: "dashboard", label: "Dashboard" },
     { key: "projects", label: "Proyectos" },
     { key: "profiles", label: "Usuarios" },
@@ -661,9 +646,58 @@ function AdminApp({ session }: { session: Session }) {
     { key: "phase5_etec", label: "ETEC" },
     { key: "phase5_indicators", label: "Herramienta de indicadores" },
     { key: "phase5_maintenance", label: "Herramienta de mantenimiento" },
-    { key: "phase5_acts", label: "Actas de entrega" }
+    { key: "phase5_acts", label: "Actas de entrega" },
+    { key: "audit", label: "Auditoría" },
+    { key: "diagnostics", label: "Diagnóstico de sincronización" },
+    { key: "phase8_economia", label: "Economía Familiar" }
   ];
+  const views = allViews.filter((item) => !["audit", "diagnostics"].includes(item.key) || canViewAudit);
   const selectedPhase5Tab = phase5TabFromView(view);
+
+  const loadPhase5 = useCallback(async () => {
+    setLoading(true);
+    try {
+      const results = await Promise.all([
+        fetchAllPages((from, to) => supabase.from("procurement_batches").select("*").eq("is_deleted", false).order("created_at", { ascending: false }).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("procurement_batch_items").select("*").eq("is_deleted", false).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("material_deliveries").select("*").eq("is_deleted", false).order("created_at", { ascending: false }).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("material_delivery_items").select("*").eq("is_deleted", false).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("delivery_acts").select("*").eq("is_deleted", false).order("generated_at", { ascending: false }).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("implementation_progress").select("*").eq("is_deleted", false).order("created_at", { ascending: false }).order("id").range(from, to)),
+        fetchAllPages((from, to) => supabase.from("delivery_act_versions").select("id").order("id").range(from, to))
+      ]);
+      const tableNames = ["procurement_batches", "procurement_batch_items", "material_deliveries", "material_delivery_items", "delivery_acts", "implementation_progress", "delivery_act_versions"];
+      const missingTables = results.flatMap((result, index) => result.error && isMissingTableError(result.error) ? [tableNames[index]] : []);
+      const firstError = results.find((result) => result.error)?.error;
+      if (missingTables.length) {
+        setPhase5SchemaStatus({ ready: false, message: `${PHASE5_MISSING_MIGRATIONS_MESSAGE} Tablas faltantes: ${missingTables.join(", ")}.` });
+      } else if (firstError) {
+        setPhase5SchemaStatus({ ready: false, message: `No fue posible consultar tablas de Fase 5: ${getErrorMessage(firstError)}` });
+      } else {
+        setPhase5SchemaStatus({ ready: true, message: null });
+      }
+      setProcurementBatches((results[0].data ?? []) as ProcurementBatch[]);
+      setProcurementBatchItems((results[1].data ?? []) as ProcurementBatchItem[]);
+      setMaterialDeliveries((results[2].data ?? []) as MaterialDelivery[]);
+      setMaterialDeliveryItems((results[3].data ?? []) as MaterialDeliveryItem[]);
+      setDeliveryActs((results[4].data ?? []) as DeliveryAct[]);
+      setImplementationProgress((results[5].data ?? []) as ImplementationProgress[]);
+      setPhase5Loaded(true);
+    } catch (error) {
+      setPhase5SchemaStatus({ ready: false, message: `No fue posible consultar tablas de Fase 5: ${getErrorMessage(error)}` });
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (selectedPhase5Tab && !phase5Loaded) void loadPhase5();
+  }, [loadPhase5, phase5Loaded, selectedPhase5Tab]);
+
+  async function refreshVisibleData() {
+    await loadAll();
+    if (selectedPhase5Tab) await loadPhase5();
+  }
 
   return (
     <div className="app-shell">
@@ -705,7 +739,7 @@ function AdminApp({ session }: { session: Session }) {
             </select>
           </label>
           <div className="form-actions">
-            <button className="secondary" onClick={loadAll} type="button" disabled={loading}>
+            <button className="secondary" onClick={refreshVisibleData} type="button" disabled={loading}>
               {loading ? "Cargando..." : "Actualizar"}
             </button>
             <button className="secondary" onClick={signOut} type="button">
@@ -836,15 +870,229 @@ function AdminApp({ session }: { session: Session }) {
               currentProfile={profile}
               canManageProcurement={canWrite}
               canAdminOverride={roleNames.has("admin")}
-              canGenerateActs={canWrite}
-              canEditImplementation={canWrite || roleNames.has("technician")}
-              onChange={loadAll}
+              canGenerateActs={canManageDeliveryActs}
+              canEditImplementation={canEditTracking(roleNames)}
+              onChange={refreshVisibleData}
+            />
+          ) : null}
+          {view === "audit" ? <AuditLogsView projects={projects} profiles={profiles} /> : null}
+          {view === "diagnostics" ? <SyncDiagnosticsView projects={projects} profiles={profiles} projectUsers={projectUsers} /> : null}
+          {view === "phase8_economia" ? (
+            <EconomiaAnalytics
+              projects={scoped.projects}
+              families={scoped.families}
+              municipalities={municipalities}
+              villages={villages}
             />
           ) : null}
         </section>
       </main>
     </div>
   );
+}
+
+const SYNC_PAGE_SIZE = 100;
+
+function SyncDiagnosticsView({ projects, profiles, projectUsers }: { projects: Project[]; profiles: Profile[]; projectUsers: ProjectUser[] }) {
+  const [rows, setRows] = useState<SyncLog[]>([]);
+  const [projectId, setProjectId] = useState("");
+  const [userId, setUserId] = useState("");
+  const [status, setStatus] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [page, setPage] = useState(0);
+  const [count, setCount] = useState(0);
+  const [pendingConflicts, setPendingConflicts] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [notice, setNotice] = useState<Notice>(null);
+  const profileById = useMemo(() => new Map(profiles.map((item) => [item.id, item.full_name])), [profiles]);
+  const projectUserIds = useMemo(() => projectId ? projectUsers.filter((item) => item.project_id === projectId && item.status === "active").map((item) => item.user_id) : [], [projectId, projectUsers]);
+
+  const buildQuery = useCallback((from: number, to: number, includeCount = false) => {
+    let query = supabase.from("sync_logs").select("*", includeCount ? { count: "exact" } : undefined)
+      .order("started_at", { ascending: false }).order("id").range(from, to);
+    if (projectId) query = query.in("user_id", projectUserIds.length ? projectUserIds : ["00000000-0000-0000-0000-000000000000"]);
+    if (userId) query = query.eq("user_id", userId);
+    if (status) query = query.eq("status", status);
+    if (dateFrom) query = query.gte("started_at", `${dateFrom}T00:00:00`);
+    return query;
+  }, [dateFrom, projectId, projectUserIds, status, userId]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setNotice(null);
+    const [logs, conflicts] = await Promise.all([
+      buildQuery(page * SYNC_PAGE_SIZE, (page + 1) * SYNC_PAGE_SIZE - 1, true),
+      supabase.from("economia_sync_conflictos").select("id", { count: "exact", head: true }).eq("estado", "pendiente")
+    ]);
+    if (logs.error) setNotice({ type: "error", message: getErrorMessage(logs.error) });
+    else { setRows((logs.data ?? []) as SyncLog[]); setCount(logs.count ?? 0); }
+    if (!conflicts.error) setPendingConflicts(conflicts.count ?? 0);
+    setLoading(false);
+  }, [buildQuery, page]);
+
+  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { setPage(0); }, [projectId, userId, status, dateFrom]);
+
+  async function exportExcel() {
+    setLoading(true);
+    const result = await fetchAllPages<SyncLog>((from, to) => buildQuery(from, to));
+    if (result.error) { setNotice({ type: "error", message: getErrorMessage(result.error) }); setLoading(false); return; }
+    const ExcelJS = await import("exceljs");
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Sincronizaciones");
+    sheet.columns = [
+      { header: "inicio", key: "start", width: 24 }, { header: "fin", key: "finish", width: 24 },
+      { header: "duracion_segundos", key: "duration", width: 20 }, { header: "usuario", key: "user", width: 30 },
+      { header: "dispositivo", key: "device", width: 24 }, { header: "estado", key: "status", width: 14 },
+      { header: "operacion", key: "operation", width: 16 }, { header: "solicitados", key: "requested", width: 14 },
+      { header: "procesados", key: "processed", width: 14 }, { header: "version_app", key: "version", width: 14 },
+      { header: "error", key: "error", width: 80 }
+    ];
+    (result.data ?? []).forEach((row) => sheet.addRow(syncLogExcelRow(row, profileById)));
+    sheet.getRow(1).font = { bold: true }; sheet.views = [{ state: "frozen", ySplit: 1 }];
+    const buffer = await workbook.xlsx.writeBuffer();
+    saveBlob(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), "diagnostico-sincronizacion.xlsx");
+    setLoading(false);
+  }
+
+  const recentErrors = rows.filter((row) => row.status === "error" || row.status === "partial").length;
+  return <div className="stack">
+    <div className="section-title"><div><h2>Diagnóstico de sincronización</h2><div className="muted">Seguimiento técnico de descargas y envíos de Android.</div></div></div>
+    <AlertNotice notice={notice} onClose={() => setNotice(null)} />
+    {(recentErrors > 0 || pendingConflicts > 0) ? <div className="alert error">Atención: {recentErrors} sincronización(es) con novedad en esta página y {pendingConflicts} conflicto(s) de Economía Familiar pendiente(s).</div> : <div className="alert info">Sin novedades en la página consultada. Conflictos pendientes: {pendingConflicts}.</div>}
+    <div className="filters-grid">
+      <label>Proyecto<select value={projectId} onChange={(e) => setProjectId(e.target.value)}><option value="">Todos</option>{projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+      <label>Usuario<select value={userId} onChange={(e) => setUserId(e.target.value)}><option value="">Todos</option>{profiles.map((p) => <option key={p.id} value={p.id}>{p.full_name}</option>)}</select></label>
+      <label>Estado<select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Todos</option><option value="success">Exitosa</option><option value="partial">Parcial</option><option value="error">Error</option></select></label>
+      <label>Desde<input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} /></label>
+      <div className="form-actions"><button type="button" onClick={exportExcel} disabled={loading}>Exportar Excel</button></div>
+    </div>
+    <div className="muted">{count} sincronización(es). Página {page + 1} de {Math.max(1, Math.ceil(count / SYNC_PAGE_SIZE))}.</div>
+    <div className="table-wrap"><table><thead><tr><th>Inicio</th><th>Usuario</th><th>Dispositivo</th><th>Estado</th><th>Operación</th><th>Procesados</th><th>Duración</th><th>Error</th></tr></thead><tbody>
+      {rows.map((row) => <tr key={row.id} style={row.status === "error" || row.status === "partial" ? { color: "var(--danger, #b42318)" } : undefined}><td>{new Date(row.started_at).toLocaleString("es-CO")}</td><td>{profileById.get(row.user_id ?? "") ?? "Sin perfil"}</td><td>{row.device_id ?? "—"}</td><td>{syncStatusLabel(row.status)}</td><td>{String(row.details?.operation ?? "—")}</td><td>{String(row.details?.processed_records ?? "—")} / {String(row.details?.requested_records ?? "—")}</td><td>{syncDuration(row)} s</td><td>{String(row.details?.error ?? "—")}</td></tr>)}
+      {!loading && rows.length === 0 ? <tr><td colSpan={8}>No hay sincronizaciones para estos filtros.</td></tr> : null}
+    </tbody></table></div>
+    <div className="form-actions"><button className="secondary" type="button" disabled={page === 0 || loading} onClick={() => setPage((value) => value - 1)}>Anterior</button><button className="secondary" type="button" disabled={(page + 1) * SYNC_PAGE_SIZE >= count || loading} onClick={() => setPage((value) => value + 1)}>Siguiente</button></div>
+  </div>;
+}
+
+function syncStatusLabel(status: string) { return ({ success: "Exitosa", partial: "Parcial", error: "Error", started: "Iniciada" } as Record<string, string>)[status] ?? status; }
+function syncDuration(row: SyncLog) { return row.finished_at ? Math.max(0, Math.round((new Date(row.finished_at).getTime() - new Date(row.started_at).getTime()) / 1000)) : 0; }
+function syncLogExcelRow(row: SyncLog, profiles: Map<string, string>) {
+  return { start: new Date(row.started_at), finish: row.finished_at ? new Date(row.finished_at) : "", duration: syncDuration(row), user: profiles.get(row.user_id ?? "") ?? row.user_id ?? "", device: row.device_id ?? "", status: syncStatusLabel(row.status), operation: row.details?.operation ?? "", requested: row.details?.requested_records ?? "", processed: row.details?.processed_records ?? "", version: row.details?.app_version ?? "", error: row.details?.error ?? "" };
+}
+
+const AUDIT_PAGE_SIZE = 100;
+
+function AuditLogsView({ projects, profiles }: { projects: Project[]; profiles: Profile[] }) {
+  const [rows, setRows] = useState<AuditLog[]>([]);
+  const [projectId, setProjectId] = useState("");
+  const [action, setAction] = useState("");
+  const [entityType, setEntityType] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [page, setPage] = useState(0);
+  const [count, setCount] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [notice, setNotice] = useState<Notice>(null);
+
+  const projectById = useMemo(() => new Map(projects.map((item) => [item.id, item.name])), [projects]);
+  const profileById = useMemo(() => new Map(profiles.map((item) => [item.id, item.full_name])), [profiles]);
+
+  const buildQuery = useCallback((from: number, to: number, includeCount = false) => {
+    let query = supabase.from("audit_logs").select("*", includeCount ? { count: "exact" } : undefined)
+      .order("created_at", { ascending: false }).order("id").range(from, to);
+    if (projectId) query = query.eq("project_id", projectId);
+    if (action) query = query.eq("action", action);
+    if (entityType.trim()) query = query.ilike("entity_type", `%${entityType.trim()}%`);
+    if (dateFrom) query = query.gte("created_at", `${dateFrom}T00:00:00`);
+    if (dateTo) query = query.lte("created_at", `${dateTo}T23:59:59.999`);
+    return query;
+  }, [action, dateFrom, dateTo, entityType, projectId]);
+
+  const loadAudit = useCallback(async () => {
+    setLoading(true);
+    setNotice(null);
+    const result = await buildQuery(page * AUDIT_PAGE_SIZE, (page + 1) * AUDIT_PAGE_SIZE - 1, true);
+    if (result.error) setNotice({ type: "error", message: getErrorMessage(result.error) });
+    else {
+      setRows((result.data ?? []) as AuditLog[]);
+      setCount(result.count ?? 0);
+    }
+    setLoading(false);
+  }, [buildQuery, page]);
+
+  useEffect(() => { void loadAudit(); }, [loadAudit]);
+  useEffect(() => { setPage(0); }, [projectId, action, entityType, dateFrom, dateTo]);
+
+  async function exportExcel() {
+    setLoading(true);
+    const result = await fetchAllPages<AuditLog>((from, to) => buildQuery(from, to));
+    if (result.error) {
+      setNotice({ type: "error", message: getErrorMessage(result.error) });
+      setLoading(false);
+      return;
+    }
+    const ExcelJS = await import("exceljs");
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Auditoria");
+    sheet.columns = [
+      { header: "fecha", key: "date", width: 24 },
+      { header: "usuario", key: "user", width: 30 },
+      { header: "proyecto", key: "project", width: 32 },
+      { header: "accion", key: "action", width: 12 },
+      { header: "tipo_registro", key: "entity", width: 30 },
+      { header: "id_registro", key: "entityId", width: 38 },
+      { header: "campos_modificados", key: "fields", width: 55 },
+      { header: "valores_anteriores", key: "before", width: 80 },
+      { header: "valores_nuevos", key: "after", width: 80 }
+    ];
+    for (const row of result.data ?? []) {
+      sheet.addRow({
+        date: new Date(row.created_at), user: profileById.get(row.user_id ?? "") ?? row.user_id ?? "Sistema",
+        project: projectById.get(row.project_id ?? "") ?? row.project_id ?? "General", action: auditActionLabel(row.action),
+        entity: row.entity_type, entityId: row.entity_id ?? "", fields: changedAuditFields(row).join(", "),
+        before: JSON.stringify(row.before_data ?? {}), after: JSON.stringify(row.after_data ?? {})
+      });
+    }
+    sheet.getRow(1).font = { bold: true };
+    sheet.views = [{ state: "frozen", ySplit: 1 }];
+    sheet.getColumn("date").numFmt = "yyyy-mm-dd hh:mm:ss";
+    const buffer = await workbook.xlsx.writeBuffer();
+    saveBlob(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), "auditoria.xlsx");
+    setLoading(false);
+  }
+
+  return <div className="stack">
+    <div className="section-title"><div><h2>Auditoría</h2><div className="muted">Historial inalterable de cambios importantes.</div></div></div>
+    <AlertNotice notice={notice} onClose={() => setNotice(null)} />
+    <div className="filters-grid">
+      <label>Proyecto<select value={projectId} onChange={(e) => setProjectId(e.target.value)}><option value="">Todos</option>{projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+      <label>Acción<select value={action} onChange={(e) => setAction(e.target.value)}><option value="">Todas</option><option value="insert">Creación</option><option value="update">Modificación</option><option value="delete">Eliminación</option></select></label>
+      <label>Tipo de registro<input value={entityType} onChange={(e) => setEntityType(e.target.value)} placeholder="families, operational_plans..." /></label>
+      <label>Desde<input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} /></label>
+      <label>Hasta<input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} /></label>
+      <div className="form-actions"><button type="button" onClick={exportExcel} disabled={loading}>Exportar Excel</button></div>
+    </div>
+    <div className="muted">{count} cambio(s). Página {page + 1} de {Math.max(1, Math.ceil(count / AUDIT_PAGE_SIZE))}.</div>
+    <div className="table-wrap"><table><thead><tr><th>Fecha</th><th>Usuario</th><th>Proyecto</th><th>Acción</th><th>Registro</th><th>Campos modificados</th></tr></thead><tbody>
+      {rows.map((row) => <tr key={row.id}><td>{new Date(row.created_at).toLocaleString("es-CO")}</td><td>{profileById.get(row.user_id ?? "") ?? "Sistema"}</td><td>{projectById.get(row.project_id ?? "") ?? "General"}</td><td>{auditActionLabel(row.action)}</td><td>{row.entity_type}<div className="muted">{row.entity_id}</div></td><td>{changedAuditFields(row).join(", ") || "—"}</td></tr>)}
+      {!loading && rows.length === 0 ? <tr><td colSpan={6}>No hay cambios para estos filtros.</td></tr> : null}
+    </tbody></table></div>
+    <div className="form-actions"><button className="secondary" type="button" disabled={page === 0 || loading} onClick={() => setPage((value) => value - 1)}>Anterior</button><button className="secondary" type="button" disabled={(page + 1) * AUDIT_PAGE_SIZE >= count || loading} onClick={() => setPage((value) => value + 1)}>Siguiente</button></div>
+  </div>;
+}
+
+function auditActionLabel(action: string) {
+  return ({ insert: "Creación", update: "Modificación", delete: "Eliminación" } as Record<string, string>)[action] ?? action;
+}
+
+function changedAuditFields(row: AuditLog) {
+  const before = row.before_data ?? {};
+  const after = row.after_data ?? {};
+  return [...new Set([...Object.keys(before), ...Object.keys(after)])]
+    .filter((key) => !["created_at", "updated_at", "created_by", "updated_by"].includes(key))
+    .filter((key) => JSON.stringify(before[key]) !== JSON.stringify(after[key]));
 }
 
 function Dashboard({
@@ -6515,6 +6763,10 @@ function ProcurementDeliveriesActs({
   const [actFinalText, setActFinalText] = useState(DefaultDeliveryActFinalText);
   const [actTechnicianName, setActTechnicianName] = useState(currentProfile?.full_name ?? "");
   const [actTechnicianDocument, setActTechnicianDocument] = useState(currentProfile?.document_number ?? "");
+  const [actPlanId, setActPlanId] = useState("");
+  const [actChecklist, setActChecklist] = useState<Record<string, { selected: boolean; quantity: string }>>({});
+  const [editingActId, setEditingActId] = useState<string | null>(null);
+  const [actVersions, setActVersions] = useState<DeliveryActVersion[]>([]);
   const [selectedIndicatorKey, setSelectedIndicatorKey] = useState("");
   const [implementedQuantity, setImplementedQuantity] = useState("");
   const [indicatorStatus, setIndicatorStatus] = useState<ImplementationProgressStatus>("pending");
@@ -6526,6 +6778,7 @@ function ProcurementDeliveriesActs({
   useUnsavedChangesWarning(Object.keys(trackingDrafts).length > 0);
   const [trackingPage, setTrackingPage] = useState(1);
   const [trackingPageSize, setTrackingPageSize] = useState(50);
+  const [frozenTrackingColumns, setFrozenTrackingColumns] = useState<TrackingBaseColumnKey[]>(["familyName"]);
   const [maintenanceYear, setMaintenanceYear] = useState(new Date().getFullYear());
   const [visibleMaintenanceQuarters, setVisibleMaintenanceQuarters] = useState<number[]>([1, 2, 3, 4]);
   const [maintenancePage, setMaintenancePage] = useState(1);
@@ -6699,6 +6952,38 @@ function ProcurementDeliveriesActs({
     deliveryDate: actDeliveryDate,
     actNumberPrefix
   }), [filteredNeeds, materialDeliveries, materialDeliveryItems, projects, families, municipalities, villages, plans, filters, actDeliveryDate, actNumberPrefix]);
+  const familyActPlans = useMemo(() => plans.filter((plan) =>
+    plan.family_id === filters.family_id && plan.status === "approved" && !plan.is_deleted
+  ).sort((left, right) => right.version - left.version), [plans, filters.family_id]);
+  const editingAct = editingActId ? deliveryActs.find((act) => act.id === editingActId) ?? null : null;
+  const editingDeliveryItems = editingAct
+    ? materialDeliveryItems.filter((item) => item.material_delivery_id === editingAct.material_delivery_id && !item.is_deleted)
+    : [];
+  const editingQuantityByNeed = new Map(editingDeliveryItems.map((item) => [item.plan_project_material_id, item.delivered_quantity]));
+  const actChecklistNeeds = approvedNeeds.filter((need) =>
+    need.family_id === filters.family_id
+    && need.operational_plan_id === actPlanId
+    && (need.pendingQuantity > 0 || editingQuantityByNeed.has(need.plan_project_material_id))
+  );
+
+  useEffect(() => {
+    const activeEdit = editingActId ? deliveryActs.find((act) => act.id === editingActId) : null;
+    if (activeEdit?.family_id === filters.family_id) return;
+    setActPlanId(familyActPlans[0]?.id ?? "");
+    setActChecklist({});
+    setEditingActId(null);
+  }, [filters.family_id, familyActPlans, editingActId, deliveryActs]);
+
+  useEffect(() => {
+    let active = true;
+    async function loadActVersions() {
+      const { data, error } = await supabase.from("delivery_act_versions").select("*").order("created_at", { ascending: false });
+      if (!active) return;
+      if (!error) setActVersions((data ?? []) as DeliveryActVersion[]);
+    }
+    void loadActVersions();
+    return () => { active = false; };
+  }, [deliveryActs]);
 
   useEffect(() => {
     if (!selectedIndicator) {
@@ -7258,21 +7543,29 @@ function ProcurementDeliveriesActs({
   }
 
   async function saveTrackingTarget(planActivityId: string, rawValue: string) {
+    return saveTrackingPlanValue(planActivityId, "target", rawValue, "Meta");
+  }
+
+  async function saveTrackingBaseline(planActivityId: string, rawValue: string) {
+    return saveTrackingPlanValue(planActivityId, "baseline", rawValue, "Línea base");
+  }
+
+  async function saveTrackingPlanValue(planActivityId: string, field: "baseline" | "target", rawValue: string, label: string) {
     setNotice(null);
     if (!canEditImplementation) {
-      setNotice({ type: "error", message: "No tiene permisos para editar la meta." });
+      setNotice({ type: "error", message: `No tiene permisos para editar ${label.toLowerCase()}.` });
       return;
     }
     const value = rawValue.trim() === "" ? null : Number(rawValue);
     if (value !== null && (!Number.isFinite(value) || value < 0)) {
-      setNotice({ type: "error", message: "La meta debe ser un valor numerico mayor o igual a cero." });
-      throw new Error("Valor de meta no valido.");
+      setNotice({ type: "error", message: `${label} debe ser un valor numérico mayor o igual a cero.` });
+      throw new Error(`Valor de ${label.toLowerCase()} no válido.`);
     }
     setSaving(true);
     try {
-      const result = await supabase.from("plan_activities").update({ target: value !== null ? String(value) : null }).eq("id", planActivityId);
+      const result = await supabase.from("plan_activities").update({ [field]: value !== null ? String(value) : null }).eq("id", planActivityId);
       if (result.error) throw result.error;
-      setNotice({ type: "info", message: "Meta actualizada." });
+      setNotice({ type: "info", message: `${label} actualizada.` });
       await onChange();
     } catch (error) {
       setNotice({ type: "error", message: getErrorMessage(error) });
@@ -7498,6 +7791,126 @@ function ProcurementDeliveriesActs({
     } catch (error) {
       setNotice({ type: "error", message: getErrorMessage(error) });
       throw error;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function updateActChecklist(needId: string, patch: Partial<{ selected: boolean; quantity: string }>) {
+    setActChecklist((current) => ({
+      ...current,
+      [needId]: { ...(current[needId] ?? { selected: false, quantity: "" }), ...patch }
+    }));
+  }
+
+  async function confirmActChecklist() {
+    setNotice(null);
+    if (!filters.family_id || !actPlanId) {
+      setNotice({ type: "error", message: "Seleccione una familia y su plan operativo." });
+      return;
+    }
+    const selected: { plan_project_material_id: string; quantity: number }[] = [];
+    for (const need of actChecklistNeeds) {
+      const draft = actChecklist[need.id];
+      if (!draft?.selected) continue;
+      const quantity = Number(draft.quantity);
+      const available = need.pendingQuantity + (editingQuantityByNeed.get(need.plan_project_material_id) ?? 0);
+      if (deliveryQuantityError(quantity, available)) {
+        setNotice({ type: "error", message: `Revise la cantidad de ${need.materialName}. Debe estar entre 0,01 y ${formatNumber(available)} ${need.unit}.` });
+        return;
+      }
+      selected.push({ plan_project_material_id: need.plan_project_material_id, quantity });
+    }
+    if (selected.length === 0) {
+      setNotice({ type: "error", message: "Marque al menos un material para entregar." });
+      return;
+    }
+    const action = editingActId ? "corregir" : "confirmar";
+    if (!confirmManualChange(`Va a ${action} el acta con ${selected.length} material(es). Las cantidades se registraran inmediatamente. ¿Desea continuar?`)) return;
+    setSaving(true);
+    try {
+      const args = editingActId
+        ? { p_delivery_act_id: editingActId, p_delivery_date: actDeliveryDate, p_items: selected, p_observations: deliveryObservation.trim() || null }
+        : { p_family_id: filters.family_id, p_operational_plan_id: actPlanId, p_delivery_date: actDeliveryDate, p_items: selected, p_observations: deliveryObservation.trim() || null };
+      const { error } = await supabase.rpc(editingActId ? "correct_delivery_act" : "confirm_delivery_act", args);
+      if (error) throw error;
+      setActChecklist({});
+      setEditingActId(null);
+      setDeliveryObservation("");
+      setNotice({ type: "info", message: editingActId ? "Acta corregida y nueva version registrada." : "Entrega confirmada y acta creada." });
+      await onChange();
+    } catch (error) {
+      setNotice({ type: "error", message: getErrorMessage(error) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function startActCorrection(act: DeliveryAct) {
+    const delivery = materialDeliveries.find((item) => item.id === act.material_delivery_id);
+    const items = materialDeliveryItems.filter((item) => item.material_delivery_id === act.material_delivery_id && !item.is_deleted);
+    setFilters((current) => ({ ...current, project_id: act.project_id, family_id: act.family_id }));
+    setActPlanId(act.operational_plan_id);
+    setActDeliveryDate(delivery?.delivery_date ?? new Date().toISOString().slice(0, 10));
+    setDeliveryObservation(act.observations ?? "");
+    setEditingActId(act.id);
+    const drafts: Record<string, { selected: boolean; quantity: string }> = {};
+    for (const need of approvedNeeds.filter((need) => need.operational_plan_id === act.operational_plan_id)) {
+      const item = items.find((row) => row.plan_project_material_id === need.plan_project_material_id);
+      drafts[need.id] = { selected: Boolean(item), quantity: item ? String(item.delivered_quantity) : "" };
+    }
+    setActChecklist(drafts);
+  }
+
+  async function voidAct(act: DeliveryAct) {
+    if (!confirmManualChange(`Va a anular ${act.act_number}. Sus cantidades volveran al saldo pendiente y el numero no se reutilizara. ¿Desea continuar?`)) return;
+    setSaving(true);
+    try {
+      const { error } = await supabase.rpc("void_delivery_act", { p_delivery_act_id: act.id });
+      if (error) throw error;
+      setNotice({ type: "info", message: `${act.act_number} anulada. Las cantidades volvieron a estar pendientes.` });
+      await onChange();
+    } catch (error) {
+      setNotice({ type: "error", message: getErrorMessage(error) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function exportStoredActVersion(version: DeliveryActVersion, format: "pdf" | "word" | "excel") {
+    const act = deliveryActs.find((item) => item.id === version.delivery_act_id);
+    const delivery = act && materialDeliveries.find((item) => item.id === act.material_delivery_id);
+    const family = families.find((item) => item.id === version.family_id);
+    const project = projects.find((item) => item.id === version.project_id);
+    if (!act || !delivery || !family || !project) return;
+    setSaving(true);
+    try {
+      const historicAct = { ...act, version: version.version, status: version.status, observations: version.observations };
+      const historicDelivery = { ...delivery, delivery_date: version.delivery_date };
+      const context = buildDeliveryActContext({
+        act: historicAct, delivery: historicDelivery, projects, families, municipalities, villages, plans, activities,
+        materialDeliveryItems: version.items, technician: currentProfile, projectLogos: await loadProjectLogos()
+      });
+      context.introText = actIntroText;
+      context.finalText = actFinalText;
+      context.technicianName = actTechnicianName;
+      context.technicianDocument = actTechnicianDocument;
+      const filename = `${sanitizeFileName(act.act_number)}-v${version.version}`;
+      if (format === "pdf") saveBlob(new Blob([await buildDeliveryActPdf(context)], { type: "application/pdf" }), `${filename}.pdf`);
+      else if (format === "word") saveBlob(await buildDeliveryActDocx(context), `${filename}.docx`);
+      else {
+        const record: DeliveryActExportRecord = {
+          key: version.id, project, family,
+          municipality: municipalities.find((item) => item.id === family.municipality_id),
+          village: villages.find((item) => item.id === family.village_id),
+          plan: plans.find((item) => item.id === act.operational_plan_id), items: version.items,
+          sourceLabel: `Historial v${version.version}`, deliveryDate: version.delivery_date,
+          actNumber: `${act.act_number} v${version.version}`
+        };
+        saveBlob(await buildDeliveryActsExcel([record], actTechnicianName), `${filename}.xlsx`);
+      }
+    } catch (error) {
+      setNotice({ type: "error", message: getErrorMessage(error) });
     } finally {
       setSaving(false);
     }
@@ -7971,6 +8384,7 @@ function ProcurementDeliveriesActs({
                 Exportar vista Excel
               </button>
             </div>
+            <FrozenTrackingColumns value={frozenTrackingColumns} onChange={setFrozenTrackingColumns} />
             <p className="span-12 muted">
               Seleccione un año y los trimestres que desea visualizar. La matriz muestra actividades de planes operativos aprobados. Los avances se guardan por familia, actividad, año y trimestre.
             </p>
@@ -7981,7 +8395,9 @@ function ProcurementDeliveriesActs({
             canEdit={canEditImplementation}
             onChange={updateTrackingDraft}
             onHectaresChange={saveTrackingHectares}
+            onBaselineChange={saveTrackingBaseline}
             onTargetChange={saveTrackingTarget}
+            frozenColumns={frozenTrackingColumns}
           />
           <div className="alert info">
             La matriz toma metas desde planes operativos aprobados. Los avances, entregados, sembrados y cumplimiento se guardan por familia, actividad, trimestre y año.
@@ -8026,13 +8442,16 @@ function ProcurementDeliveriesActs({
                 Exportar mantenimiento Excel
               </button>
             </div>
+            <FrozenTrackingColumns value={frozenTrackingColumns} onChange={setFrozenTrackingColumns} />
           </div>
           <MaintenanceMatrixTable
             matrix={maintenanceVisibleMatrix}
             canEdit={canEditImplementation && !saving}
             onSave={saveMaintenanceCell}
             onSaveOrganic={saveMaintenanceOrganicCell}
+            onBaselineChange={saveTrackingBaseline}
             onTargetChange={saveTrackingTarget}
+            frozenColumns={frozenTrackingColumns}
           />
           <div className="alert info">
             La matriz toma actividades desde planes operativos aprobados. Las fechas y avances de abonos se guardan por familia, actividad y año.
@@ -8048,8 +8467,8 @@ function ProcurementDeliveriesActs({
               <input type="date" value={actDeliveryDate} onChange={(event) => setActDeliveryDate(event.target.value)} />
             </label>
             <label className="span-3">
-              Texto base de entrega
-              <input value={actNumberPrefix} onChange={(event) => setActNumberPrefix(event.target.value)} />
+              Numeración
+              <input value="Automática por familia (Acta 1, 2, 3...)" disabled />
             </label>
             <label className="span-3">
               Nombre tecnico
@@ -8068,78 +8487,57 @@ function ProcurementDeliveriesActs({
               <textarea value={actFinalText} onChange={(event) => setActFinalText(event.target.value)} rows={2} />
             </label>
           </div>
-          <DataTable
-            headers={["Familia", "Plan operativo", "Municipio", "Vereda", "Entrega No.", "Fecha", "Fuente", "Materiales"]}
-            emptyMessage="No hay familias con materiales para los filtros seleccionados."
-            rows={actExportRecords.map((record) => [
-              `${record.family.family_code} - ${record.family.representative_name}`,
-              deliveryPlanLabel(record.plan),
-              record.municipality?.name ?? "",
-              record.village?.name ?? "",
-              record.actNumber,
-              record.deliveryDate,
-              record.sourceLabel,
-              String(record.items.length)
-            ])}
-          />
-          <div className="form-actions">
-            <button disabled={saving || !canGenerateActs || actExportRecords.length === 0} type="button" onClick={() => void exportFilteredDeliveryActs("pdf")}>{saving ? "Generando..." : "Exportar PDF"}</button>
-            <button className="secondary" disabled={saving || !canGenerateActs || actExportRecords.length === 0} type="button" onClick={() => void exportFilteredDeliveryActs("word")}>{saving ? "Generando..." : "Exportar Word"}</button>
-            <button className="secondary" disabled={saving || actExportRecords.length === 0} type="button" onClick={() => void exportFilteredDeliveryActs("excel")}>{saving ? "Generando..." : "Exportar Excel"}</button>
-          </div>
-          <details className="collapsible-panel">
-            <summary>Registrar entrega manual</summary>
-            <div className="grid compact-panel">
+          {!filters.family_id ? (
+            <div className="alert info">Seleccione una familia en los filtros superiores para preparar su acta de entrega.</div>
+          ) : (
+            <div className="panel grid compact-panel">
               <label className="span-6">
-                Material aprobado pendiente
-                <select value={selectedNeedId} onChange={(event) => setSelectedNeedId(event.target.value)}>
+                Plan operativo aprobado
+                <select value={actPlanId} onChange={(event) => { setActPlanId(event.target.value); setActChecklist({}); setEditingActId(null); }}>
                   <option value="">Seleccione</option>
-                  {filteredNeeds.filter((need) => need.pendingQuantity > 0 || canAdminOverride).map((need) => (
-                    <option key={need.id} value={need.id}>
-                      {need.familyCode} - {need.materialName} - pendiente {formatNumber(need.pendingQuantity)} {need.unit}
-                    </option>
-                  ))}
+                  {familyActPlans.map((plan) => <option key={plan.id} value={plan.id}>{deliveryPlanLabel(plan)}</option>)}
                 </select>
               </label>
-              <label className="span-2">
-                Fecha entrega
-                <input type="date" value={deliveryDate} onChange={(event) => setDeliveryDate(event.target.value)} />
-              </label>
-              <label className="span-2">
-                Cantidad
-                <input
-                  min="0"
-                  step="0.01"
-                  type="number"
-                  value={deliveryQuantity}
-                  onChange={(event) => setDeliveryQuantity(event.target.value)}
-                />
-              </label>
-              <label className="checkbox span-2">
-                <input type="checkbox" checked={adminOverride} onChange={(event) => setAdminOverride(event.target.checked)} />
-                Autorizar sobreentrega
-              </label>
-              <label className="span-12">
+              <label className="span-6">
                 Observaciones
-                <textarea value={deliveryObservation} onChange={(event) => setDeliveryObservation(event.target.value)} rows={2} />
+                <input value={deliveryObservation} onChange={(event) => setDeliveryObservation(event.target.value)} />
               </label>
-              {selectedNeed ? (
-                <div className="span-12 alert info">
-                  Aprobado: {formatNumber(selectedNeed.approvedQuantity)} {selectedNeed.unit}. Entregado: {formatNumber(selectedNeed.deliveredQuantity)}. Saldo: {formatNumber(selectedNeed.pendingQuantity)}.
-                </div>
-              ) : null}
+              {editingAct ? <div className="span-12 alert info">Corrigiendo {editingAct.act_number}, versión actual {editingAct.version}. Al confirmar se creará la versión {editingAct.version + 1}.</div> : null}
+              <div className="span-12 delivery-checklist">
+                {actChecklistNeeds.length === 0 ? <div className="muted">No hay materiales pendientes para este plan.</div> : actChecklistNeeds.map((need) => {
+                  const draft = actChecklist[need.id] ?? { selected: false, quantity: "" };
+                  const available = need.pendingQuantity + (editingQuantityByNeed.get(need.plan_project_material_id) ?? 0);
+                  return (
+                    <div className="delivery-checklist-row" key={need.id}>
+                      <label className="checkbox">
+                        <input type="checkbox" checked={draft.selected} onChange={(event) => updateActChecklist(need.id, {
+                          selected: event.target.checked,
+                          quantity: event.target.checked && !draft.quantity ? String(available) : draft.quantity
+                        })} />
+                        <span><strong>{need.materialName}</strong><br /><span className="muted">Pendiente disponible: {formatNumber(available)} {need.unit}</span></span>
+                      </label>
+                      <label>
+                        Cantidad a entregar
+                        <input type="number" min="0.01" max={available} step="0.01" disabled={!draft.selected}
+                          value={draft.quantity} onChange={(event) => updateActChecklist(need.id, { quantity: event.target.value })} />
+                      </label>
+                    </div>
+                  );
+                })}
+              </div>
               <div className="span-12 form-actions">
-                <button disabled={saving || !canManageProcurement || !selectedNeed} type="button" onClick={() => void registerDelivery()}>
-                  Registrar entrega
+                <button disabled={saving || !canGenerateActs || actChecklistNeeds.length === 0} type="button" onClick={() => void confirmActChecklist()}>
+                  {saving ? "Guardando..." : editingActId ? "Confirmar corrección" : "Confirmar y generar acta"}
                 </button>
+                {editingActId ? <button className="secondary" type="button" onClick={() => { setEditingActId(null); setActChecklist({}); }}>Cancelar corrección</button> : null}
               </div>
             </div>
-          </details>
+          )}
           <details className="collapsible-panel">
             <summary>Actas registradas</summary>
             <DataTable
               embedded
-              headers={["Fecha", "Familia", "Estado entrega", "Acta", "Exportar"]}
+              headers={["Fecha", "Familia", "Acta", "Versión", "Estado", "Documentos", "Acciones"]}
               emptyMessage="No hay entregas registradas para los filtros seleccionados."
               rows={materialDeliveries
                 .filter((delivery) => {
@@ -8150,22 +8548,98 @@ function ProcurementDeliveriesActs({
                 .map((delivery) => {
                   const family = families.find((item) => item.id === delivery.family_id);
                   const act = deliveryActs.find((item) => item.material_delivery_id === delivery.id && !item.is_deleted);
+                  const latestVersion = actVersions.find((item) => item.delivery_act_id === act?.id && item.version === act?.version);
                   return [
                     delivery.delivery_date,
                     family ? `${family.family_code} - ${family.representative_name}` : "",
-                    delivery.status,
                     act?.act_number ?? "Pendiente",
-                    <div className="table-actions" key={delivery.id}>
-                      <button className="secondary" type="button" disabled={!canGenerateActs || saving} onClick={() => void exportDeliveryAct(delivery, "pdf")}>{saving ? "Generando..." : "PDF"}</button>
-                      <button className="secondary" type="button" disabled={!canGenerateActs || saving} onClick={() => void exportDeliveryAct(delivery, "word")}>{saving ? "Generando..." : "Word"}</button>
+                    act ? `v${act.version}` : "—",
+                    act?.status === "void" ? "Anulada" : delivery.status,
+                    <div className="table-actions" key={`files-${delivery.id}`}>
+                      <button className="secondary" type="button" disabled={!latestVersion || saving} onClick={() => latestVersion && void exportStoredActVersion(latestVersion, "pdf")}>PDF</button>
+                      <button className="secondary" type="button" disabled={!latestVersion || saving} onClick={() => latestVersion && void exportStoredActVersion(latestVersion, "word")}>Word</button>
+                      <button className="secondary" type="button" disabled={!latestVersion || saving} onClick={() => latestVersion && void exportStoredActVersion(latestVersion, "excel")}>Excel</button>
+                    </div>,
+                    <div className="table-actions" key={`actions-${delivery.id}`}>
+                      <button className="secondary" type="button" disabled={!act || act.status === "void" || saving || !canGenerateActs} onClick={() => act && startActCorrection(act)}>Corregir</button>
+                      <button className="danger" type="button" disabled={!act || act.status === "void" || saving || !canGenerateActs} onClick={() => act && void voidAct(act)}>Anular</button>
                     </div>
                   ];
                 })}
             />
+            {actVersions.filter((version) => !filters.family_id || version.family_id === filters.family_id).length > 0 ? (
+              <div className="delivery-version-history">
+                <h3>Historial de versiones</h3>
+                <DataTable embedded headers={["Acta", "Versión", "Fecha", "Estado", "Documentos"]} emptyMessage="No hay versiones."
+                  rows={actVersions.filter((version) => !filters.family_id || version.family_id === filters.family_id).map((version) => {
+                    const act = deliveryActs.find((item) => item.id === version.delivery_act_id);
+                    return [act?.act_number ?? "Acta", `v${version.version}`, version.delivery_date, version.status === "void" ? "Anulada" : "Vigente",
+                      <div className="table-actions" key={version.id}>
+                        <button className="secondary" type="button" disabled={saving} onClick={() => void exportStoredActVersion(version, "pdf")}>PDF</button>
+                        <button className="secondary" type="button" disabled={saving} onClick={() => void exportStoredActVersion(version, "word")}>Word</button>
+                        <button className="secondary" type="button" disabled={saving} onClick={() => void exportStoredActVersion(version, "excel")}>Excel</button>
+                      </div>];
+                  })} />
+              </div>
+            ) : null}
           </details>
         </div>
       ) : null}
     </section>
+  );
+}
+
+function trackingBaseCellProps(key: TrackingBaseColumnKey, frozenOffsets: Record<TrackingBaseColumnKey, number | null>) {
+  const column = TRACKING_BASE_COLUMNS.find((item) => item.key === key)!;
+  const left = frozenOffsets[key];
+  return {
+    className: left === null ? "tracking-base-col" : "tracking-base-col sticky-col",
+    style: { left: left ?? undefined, width: column.width, minWidth: column.width, maxWidth: column.width }
+  };
+}
+
+async function confirmPlanActivityValueChange(
+  event: React.FocusEvent<HTMLInputElement>,
+  planActivityId: string,
+  activityName: string,
+  label: string,
+  onSave: (planActivityId: string, value: string) => Promise<void>
+) {
+  const previous = event.currentTarget.defaultValue;
+  const next = event.currentTarget.value;
+  if (next === previous) return;
+  if (!confirmManualChange(`Va a cambiar ${label.toLowerCase()} para "${activityName}" de "${previous || "N/A"}" a "${next || "0"}". ¿Desea aplicar este cambio?`)) {
+    event.currentTarget.value = previous;
+    return;
+  }
+  try {
+    await onSave(planActivityId, next);
+    event.currentTarget.defaultValue = next;
+  } catch {
+    event.currentTarget.value = previous;
+  }
+}
+
+function FrozenTrackingColumns({ value, onChange }: {
+  value: TrackingBaseColumnKey[];
+  onChange: (value: TrackingBaseColumnKey[]) => void;
+}) {
+  return (
+    <fieldset className="span-12 frozen-columns-picker">
+      <legend>Columnas inmovilizadas</legend>
+      {TRACKING_BASE_COLUMNS.map((column) => (
+        <label className="checkbox-row" key={column.key}>
+          <input
+            checked={value.includes(column.key)}
+            onChange={(event) => onChange(event.target.checked
+              ? [...value, column.key]
+              : value.filter((key) => key !== column.key))}
+            type="checkbox"
+          />
+          <span>{column.label}</span>
+        </label>
+      ))}
+    </fieldset>
   );
 }
 
@@ -8175,35 +8649,23 @@ function TrackingMatrixTable({
   canEdit,
   onChange,
   onHectaresChange,
-  onTargetChange
+  onBaselineChange,
+  onTargetChange,
+  frozenColumns
 }: {
   matrix: TrackingMatrix;
   drafts: Record<string, string>;
   canEdit: boolean;
   onChange: (key: string, value: string) => void;
   onHectaresChange: (row: TrackingFamilyRow, value: string) => Promise<void>;
+  onBaselineChange: (planActivityId: string, value: string) => Promise<void>;
   onTargetChange?: (planActivityId: string, value: string) => Promise<void>;
+  frozenColumns: TrackingBaseColumnKey[];
 }) {
-  const baseHeaders = ["Codigo Predio", "Familia", "Cedula", "Edad Años", "Municipio", "Vereda", "Hectareas del predio"];
+  const frozenOffsets = trackingFrozenOffsets(frozenColumns);
   const agreementColSpan = 2;
   if (matrix.rows.length === 0) {
     return <div className="panel muted">No hay planes aprobados con actividades para los filtros seleccionados.</div>;
-  }
-
-  async function confirmTargetChange(event: React.FocusEvent<HTMLInputElement>, planActivityId: string, activityName: string) {
-    const previous = event.currentTarget.defaultValue;
-    const next = event.currentTarget.value;
-    if (next === previous) return;
-    if (!confirmManualChange(`Va a cambiar la meta para "${activityName}" de "${previous || "N/A"}" a "${next || "0"}". ¿Desea aplicar este cambio?`)) {
-      event.currentTarget.value = previous;
-      return;
-    }
-    try {
-      if (onTargetChange) await onTargetChange(planActivityId, next);
-      event.currentTarget.defaultValue = next;
-    } catch {
-      event.currentTarget.value = previous;
-    }
   }
 
   function confirmTrackingCellChange(
@@ -8275,8 +8737,8 @@ function TrackingMatrixTable({
       <table className="tracking-table">
         <thead>
           <tr>
-            {baseHeaders.map((header, index) => (
-              <th className={`sticky-col sticky-col-${index + 1}`} key={header} rowSpan={2}>{header}</th>
+            {TRACKING_BASE_COLUMNS.map((column) => (
+              <th {...trackingBaseCellProps(column.key, frozenOffsets)} key={column.key} rowSpan={2}>{column.label}</th>
             ))}
             {matrix.counterpartVegetalGroups.map((group, groupIndex) => (
               <th
@@ -8318,13 +8780,13 @@ function TrackingMatrixTable({
         <tbody>
           {matrix.rows.map((row) => (
             <tr key={row.key}>
-              <td className="sticky-col sticky-col-1">{row.familyCode}</td>
-              <td className="sticky-col sticky-col-2">{row.familyName}</td>
-              <td className="sticky-col sticky-col-3">{row.documentNumber}</td>
-              <td className="sticky-col sticky-col-4">{row.ageYears}</td>
-              <td className="sticky-col sticky-col-5">{row.municipalityName}</td>
-              <td className="sticky-col sticky-col-6">{row.villageName}</td>
-              <td className="sticky-col sticky-col-7">
+              <td {...trackingBaseCellProps("familyCode", frozenOffsets)}>{row.familyCode}</td>
+              <td {...trackingBaseCellProps("familyName", frozenOffsets)}>{row.familyName}</td>
+              <td {...trackingBaseCellProps("documentNumber", frozenOffsets)}>{row.documentNumber}</td>
+              <td {...trackingBaseCellProps("ageYears", frozenOffsets)}>{row.ageYears}</td>
+              <td {...trackingBaseCellProps("municipalityName", frozenOffsets)}>{row.municipalityName}</td>
+              <td {...trackingBaseCellProps("villageName", frozenOffsets)}>{row.villageName}</td>
+              <td {...trackingBaseCellProps("hectares", frozenOffsets)}>
                 <input
                   className="tracking-input"
                   defaultValue={row.hectaresValue}
@@ -8440,22 +8902,29 @@ function TrackingMatrixTable({
                   ));
                 }
                 const cells = [
+                  <td className={trackingGroupCellClass("tracking-col-baseline", visualGroupIndex, true)} key={`${row.key}-${group.key}-baseline`}>
+                    <input
+                      className="tracking-input"
+                      disabled={!canEdit}
+                      defaultValue={cell.baselineQuantity ?? ""}
+                      min="0"
+                      onBlur={(event) => void confirmPlanActivityValueChange(event, cell.plan_activity_id, group.activityName, "Línea base", onBaselineChange)}
+                      placeholder="N/A"
+                      step="0.01"
+                      title="Línea base editable"
+                      type="number"
+                    />
+                  </td>,
                   <td className={trackingGroupCellClass("tracking-col-meta", visualGroupIndex, true)} key={`${row.key}-${group.key}-meta`}>
                     <input
                       className="tracking-input"
-                      style={{ width: "60px", textAlign: "center", border: "none", backgroundColor: "transparent", fontWeight: "bold" }}
+                      disabled={!canEdit}
                       defaultValue={cell.targetQuantity ?? ""}
-                      onBlur={(event) => {
-                        if (typeof document !== "undefined" && !document.body.classList.contains("is-super-admin")) {
-                          event.currentTarget.value = event.currentTarget.defaultValue;
-                          return;
-                        }
-                        void confirmTargetChange(event, cell.plan_activity_id, group.activityName);
-                      }}
+                      onBlur={(event) => onTargetChange && void confirmPlanActivityValueChange(event, cell.plan_activity_id, group.activityName, "Meta", onTargetChange)}
                       step="0.01"
                       type="number"
                       placeholder="N/A"
-                      title="Meta (Super Admin editable)"
+                      title="Meta editable"
                     />
                   </td>
                 ];
@@ -8536,7 +9005,9 @@ function MaintenanceMatrixTable({
   canEdit,
   onSave,
   onSaveOrganic,
-  onTargetChange
+  onBaselineChange,
+  onTargetChange,
+  frozenColumns
 }: {
   matrix: MaintenanceMatrix;
   canEdit: boolean;
@@ -8555,27 +9026,13 @@ function MaintenanceMatrixTable({
     quarter: number;
     value: string;
   }) => Promise<void>;
+  onBaselineChange: (planActivityId: string, value: string) => Promise<void>;
   onTargetChange?: (planActivityId: string, value: string) => Promise<void>;
+  frozenColumns: TrackingBaseColumnKey[];
 }) {
-  const baseHeaders = ["Codigo Predio", "Familia", "Cedula", "Edad Años", "Municipio", "Vereda", "Hectareas del predio"];
+  const frozenOffsets = trackingFrozenOffsets(frozenColumns);
   if (matrix.rows.length === 0) {
     return <div className="panel muted">No hay planes aprobados con actividades de mantenimiento para los filtros seleccionados.</div>;
-  }
-
-  async function confirmTargetChange(event: React.FocusEvent<HTMLInputElement>, planActivityId: string, activityName: string) {
-    const previous = event.currentTarget.defaultValue;
-    const next = event.currentTarget.value;
-    if (next === previous) return;
-    if (!confirmManualChange(`Va a cambiar la meta para "${activityName}" de "${previous || "N/A"}" a "${next || "0"}". ¿Desea aplicar este cambio?`)) {
-      event.currentTarget.value = previous;
-      return;
-    }
-    try {
-      if (onTargetChange) await onTargetChange(planActivityId, next);
-      event.currentTarget.defaultValue = next;
-    } catch {
-      event.currentTarget.value = previous;
-    }
   }
 
   function groupTone(index: number) {
@@ -8629,8 +9086,8 @@ function MaintenanceMatrixTable({
       <table className="tracking-table maintenance-table">
         <thead>
           <tr>
-            {baseHeaders.map((header, index) => (
-              <th className={`sticky-col sticky-col-${index + 1}`} key={header} rowSpan={2}>{header}</th>
+            {TRACKING_BASE_COLUMNS.map((column) => (
+              <th {...trackingBaseCellProps(column.key, frozenOffsets)} key={column.key} rowSpan={2}>{column.label}</th>
             ))}
             {matrix.groups.map((group, groupIndex) => (
               <th className={`tracking-group-header ${groupTone(groupIndex)} tracking-group-start`} colSpan={maintenanceGroupVisibleColSpan(group, matrix.visibleQuarters)} key={group.key}>
@@ -8653,13 +9110,13 @@ function MaintenanceMatrixTable({
         <tbody>
           {matrix.rows.map((row) => (
             <tr key={row.key}>
-              <td className="sticky-col sticky-col-1">{row.familyCode}</td>
-              <td className="sticky-col sticky-col-2">{row.familyName}</td>
-              <td className="sticky-col sticky-col-3">{row.documentNumber}</td>
-              <td className="sticky-col sticky-col-4">{row.ageYears}</td>
-              <td className="sticky-col sticky-col-5">{row.municipalityName}</td>
-              <td className="sticky-col sticky-col-6">{row.villageName}</td>
-              <td className="sticky-col sticky-col-7">{row.hectares}</td>
+              <td {...trackingBaseCellProps("familyCode", frozenOffsets)}>{row.familyCode}</td>
+              <td {...trackingBaseCellProps("familyName", frozenOffsets)}>{row.familyName}</td>
+              <td {...trackingBaseCellProps("documentNumber", frozenOffsets)}>{row.documentNumber}</td>
+              <td {...trackingBaseCellProps("ageYears", frozenOffsets)}>{row.ageYears}</td>
+              <td {...trackingBaseCellProps("municipalityName", frozenOffsets)}>{row.municipalityName}</td>
+              <td {...trackingBaseCellProps("villageName", frozenOffsets)}>{row.villageName}</td>
+              <td {...trackingBaseCellProps("hectares", frozenOffsets)}>{row.hectares}</td>
               {matrix.groups.flatMap((group, groupIndex) => {
                 const cell = row.activities[group.key];
                 const subheaders = maintenanceGroupVisibleSubheaders(group, matrix.visibleQuarters, matrix.year);
@@ -8669,22 +9126,29 @@ function MaintenanceMatrixTable({
                   ];
                 }
                 const cells = [
+                  <td className={groupCellClass("tracking-col-baseline", groupIndex, true)} key={`${row.key}-${group.key}-baseline`}>
+                    <input
+                      className="tracking-input"
+                      disabled={!canEdit}
+                      defaultValue={cell.baselineQuantity ?? ""}
+                      min="0"
+                      onBlur={(event) => void confirmPlanActivityValueChange(event, cell.plan_activity_id, group.activityName, "Línea base", onBaselineChange)}
+                      placeholder="N/A"
+                      step="0.01"
+                      title="Línea base editable"
+                      type="number"
+                    />
+                  </td>,
                   <td className={groupCellClass("tracking-col-meta", groupIndex, true)} key={`${row.key}-${group.key}-meta`}>
                     <input
                       className="tracking-input"
-                      style={{ width: "60px", textAlign: "center", border: "none", backgroundColor: "transparent", fontWeight: "bold" }}
+                      disabled={!canEdit}
                       defaultValue={cell.targetQuantity ?? ""}
-                      onBlur={(event) => {
-                        if (typeof document !== "undefined" && !document.body.classList.contains("is-super-admin")) {
-                          event.currentTarget.value = event.currentTarget.defaultValue;
-                          return;
-                        }
-                        void confirmTargetChange(event, cell.plan_activity_id, group.activityName);
-                      }}
+                      onBlur={(event) => onTargetChange && void confirmPlanActivityValueChange(event, cell.plan_activity_id, group.activityName, "Meta", onTargetChange)}
                       step="0.01"
                       type="number"
                       placeholder="N/A"
-                      title="Meta (Super Admin editable)"
+                      title="Meta editable"
                     />
                   </td>
                 ];
@@ -9123,6 +9587,7 @@ function comparePlanRecency(left: OperationalPlan, right: OperationalPlan) {
 
 function trackingGroupSubheaders(group: TrackingActivityGroup) {
   return [
+    "Línea base",
     "Meta",
     ...group.progressTypes.flatMap((type) => [1, 2, 3, 4].map((quarter) => `${trackingProgressTypeLabel(type)} Q${quarter}`)),
     "Avance acumulado"
@@ -9131,6 +9596,7 @@ function trackingGroupSubheaders(group: TrackingActivityGroup) {
 
 function trackingGroupVisibleSubheaders(group: TrackingActivityGroup, quarters: number[], year: number) {
   return [
+    "Línea base",
     "Meta",
     ...group.progressTypes.flatMap((type) => quarters.map((quarter) => `${trackingProgressTypeLabel(type)} Q${quarter}_${year}`)),
     "Avance acumulado"
@@ -9153,6 +9619,7 @@ function trackingGroupHeaderLabel(group: TrackingActivityGroup) {
 }
 
 function trackingHeaderClass(header: string) {
+  if (header === "Línea base") return "tracking-col-baseline";
   if (header === "Meta") return "tracking-col-meta";
   if (header === "Avance acumulado" || header.startsWith("Acumulado")) return "tracking-col-accumulated";
   if (header.includes("%")) return "tracking-col-percent";
@@ -9168,7 +9635,7 @@ function trackingGroupColSpan(group: TrackingActivityGroup) {
 }
 
 function trackingGroupVisibleColSpan(group: TrackingActivityGroup, quarters: number[]) {
-  return 1 + group.progressTypes.length * quarters.length + 1;
+  return 2 + group.progressTypes.length * quarters.length + 1;
 }
 
 function trackingVegetalVisibleColSpan(quarters: number[]) {
@@ -9532,6 +9999,7 @@ function maintenanceGroupHeaderLabel(group: MaintenanceActivityGroup) {
 
 function maintenanceGroupVisibleSubheaders(group: MaintenanceActivityGroup, quarters: number[], year: number) {
   return [
+    "Línea base",
     "Meta",
     ...group.tasks.map((task) => task.label),
     "Estado ciclo"
@@ -9539,7 +10007,7 @@ function maintenanceGroupVisibleSubheaders(group: MaintenanceActivityGroup, quar
 }
 
 function maintenanceGroupVisibleColSpan(group: MaintenanceActivityGroup, quarters: number[]) {
-  return 1 + group.tasks.length + 1;
+  return 2 + group.tasks.length + 1;
 }
 
 function maintenanceOrganicSubheaders(quarters: number[], year: number) {
@@ -9554,6 +10022,7 @@ function maintenanceOrganicColSpan(quarters: number[]) {
 }
 
 function maintenanceHeaderClass(header: string) {
+  if (header === "Línea base") return "tracking-col-baseline";
   if (header === "Meta") return "tracking-col-meta";
   if (header === "Estado ciclo") return "maintenance-col-cycle";
   if (header.startsWith("Acumulado")) return "tracking-col-accumulated";
@@ -10732,6 +11201,7 @@ async function exportTrackingMatrixExcel(matrix: TrackingMatrix) {
         values.push(...trackingGroupVisibleSubheaders(group, matrix.visibleQuarters, matrix.year).map(() => ""));
         continue;
       }
+      values.push(cell.baselineQuantity === null ? "" : Number(cell.baselineQuantity));
       values.push(cell.targetQuantity);
       for (const type of group.progressTypes) {
         for (const quarter of matrix.visibleQuarters) {
@@ -10896,6 +11366,7 @@ async function exportMaintenanceMatrixExcel(matrix: MaintenanceMatrix) {
         values.push(...maintenanceGroupVisibleSubheaders(group, matrix.visibleQuarters, matrix.year).map(() => "No aplica"));
         continue;
       }
+      values.push(cell.baselineQuantity === null ? "" : Number(cell.baselineQuantity));
       values.push(cell.targetQuantity);
       for (const task of group.tasks) {
         values.push(cell.progress[maintenanceProgressKey(task.type, task.number, null)]?.maintenance_date ?? "");
@@ -11278,12 +11749,16 @@ function buildDeliveryActContextFromRecord(data: {
       operational_plan_id: data.record.plan?.id ?? "",
       material_delivery_id: "",
       act_number: data.record.actNumber,
+      act_sequence: 1,
+      version: 1,
       status: "generated",
       generated_at: new Date().toISOString(),
       generated_by: data.technician?.id ?? null,
       pdf_path: null,
       word_path: null,
       observations: data.record.sourceLabel,
+      voided_at: null,
+      voided_by: null,
       is_deleted: false
     },
     delivery: {
@@ -13206,4 +13681,1029 @@ function formatMoney(value: number) {
     currency: "COP",
     maximumFractionDigits: 0
   }).format(value);
+}
+
+function estadoRevisionLabel(estado: string): string {
+  switch (estado) {
+    case "aprobada":
+      return "Aprobada";
+    case "devuelta":
+      return "Devuelta para corrección";
+    case "cerrada":
+      return "Cerrada";
+    case "borrador":
+      return "Borrador";
+    default:
+      return "Enviada (pendiente de revisión)";
+  }
+}
+
+// ==========================================================================
+// Fase 8: Economia Familiar - modulo web analitico (solo lectura + exportacion).
+// Carga sus propias tablas economia_* (aislado del loadAll principal) y presenta
+// las fuentes de ingreso por familia, agregadas por vereda/municipio/departamento.
+// ==========================================================================
+type EconomiaNivel = "departamento" | "municipio" | "vereda";
+
+type EconomiaRow = {
+  encuestaId: string;
+  familyId: string;
+  familia: string;
+  departamento: string;
+  municipio: string;
+  vereda: string;
+  ronda: string;
+  anio: number;
+  esPiloto: boolean;
+  personas: number;
+  ninos: number;
+  adolescentes: number;
+  jovenes: number;
+  adultos: number;
+  mayores: number;
+  ingProductos: number;
+  ingGobierno: number;
+  ingOtros: number;
+  ingTotal: number;
+  ingAnual: number;
+  ingPerCapita: number;
+  jornal: number;
+};
+
+function EconomiaAnalytics({
+  projects,
+  families,
+  municipalities,
+  villages
+}: {
+  projects: Project[];
+  families: Family[];
+  municipalities: Municipality[];
+  villages: Village[];
+}) {
+  const [loading, setLoading] = useState(true);
+  const [schemaError, setSchemaError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [rondas, setRondas] = useState<EconomiaRonda[]>([]);
+  const [productosCat, setProductosCat] = useState<EconomiaProductoCatalogo[]>([]);
+  const [categoriasCat, setCategoriasCat] = useState<EconomiaCategoria[]>([]);
+  const [lugaresVenta, setLugaresVenta] = useState<EconomiaLugarVenta[]>([]);
+  const [tiposApoyo, setTiposApoyo] = useState<EconomiaTipoApoyo[]>([]);
+  const [tiposPago, setTiposPago] = useState<EconomiaTipoPago[]>([]);
+  const [catalogoMsg, setCatalogoMsg] = useState<string | null>(null);
+  const [subiendoCatalogo, setSubiendoCatalogo] = useState(false);
+  const [encuestas, setEncuestas] = useState<EconomiaEncuesta[]>([]);
+  const [apoyos, setApoyos] = useState<EconomiaEncuestaApoyo[]>([]);
+  const [pagos, setPagos] = useState<EconomiaEncuestaPago[]>([]);
+  const [productos, setProductos] = useState<EconomiaEncuestaProducto[]>([]);
+  const [productoLugares, setProductoLugares] = useState<EconomiaProductoLugarVenta[]>([]);
+  const [conflictos, setConflictos] = useState<EconomiaSyncConflicto[]>([]);
+  const [rondaFilter, setRondaFilter] = useState<string>("all");
+  const [anioFilter, setAnioFilter] = useState<string>("all");
+  const [pilotoFilter, setPilotoFilter] = useState<"all" | "official" | "pilot">("official");
+  const [nivel, setNivel] = useState<EconomiaNivel>("municipio");
+  const [comparaNivel, setComparaNivel] = useState<"familia" | EconomiaNivel>("familia");
+  const [expandedEncuesta, setExpandedEncuesta] = useState<string | null>(null);
+  const [mostrarAnalisis, setMostrarAnalisis] = useState(false);
+  const [estadoFilter, setEstadoFilter] = useState("all");
+  const [revisionMsg, setRevisionMsg] = useState<string | null>(null);
+  const [devolucionId, setDevolucionId] = useState<string | null>(null);
+  const [devolucionNotas, setDevolucionNotas] = useState("");
+
+  const loadEconomia = useCallback(async () => {
+    setLoading(true);
+    setSchemaError(null);
+    setLoadError(null);
+    const [rondasRes, productosCatRes, categoriasRes, lugaresRes, tiposApoyoRes, tiposPagoRes, encuestasRes, apoyosRes, pagosRes, productosRes, productoLugaresRes, conflictosRes] = await Promise.all([
+      fetchAllPages((from, to) => supabase.from("economia_rondas").select("*").eq("is_deleted", false).order("orden").order("id").range(from, to)),
+      fetchAllPages((from, to) => supabase.from("economia_productos").select("*").eq("is_deleted", false).order("orden").order("id").range(from, to)),
+      fetchAllPages((from, to) => supabase.from("economia_categorias").select("*").eq("is_deleted", false).order("orden").order("id").range(from, to)),
+      fetchAllPages((from, to) => supabase.from("economia_lugares_venta").select("*").eq("is_deleted", false).order("orden").order("id").range(from, to)),
+      fetchAllPages((from, to) => supabase.from("economia_tipos_apoyo").select("*").eq("is_deleted", false).order("orden").order("id").range(from, to)),
+      fetchAllPages((from, to) => supabase.from("economia_tipos_pago").select("*").eq("is_deleted", false).order("orden").order("id").range(from, to)),
+      fetchAllPages((from, to) => supabase.from("economia_encuestas").select("*").eq("is_deleted", false).order("id").range(from, to)),
+      fetchAllPages((from, to) => supabase.from("economia_encuesta_apoyos").select("*").eq("is_deleted", false).order("id").range(from, to)),
+      fetchAllPages((from, to) => supabase.from("economia_encuesta_pagos").select("*").eq("is_deleted", false).order("id").range(from, to)),
+      fetchAllPages((from, to) => supabase.from("economia_encuesta_productos").select("*").eq("is_deleted", false).order("id").range(from, to)),
+      fetchAllPages((from, to) => supabase.from("economia_producto_lugares_venta").select("*").eq("is_deleted", false).order("id").range(from, to)),
+      fetchAllPages((from, to) => supabase.from("economia_sync_conflictos").select("*").eq("estado", "pendiente").order("created_at", { ascending: false }).order("id").range(from, to))
+    ]);
+    const results = [rondasRes, productosCatRes, categoriasRes, lugaresRes, tiposApoyoRes, tiposPagoRes, encuestasRes, apoyosRes, pagosRes, productosRes, productoLugaresRes, conflictosRes];
+    const missing = results.some((r) => r.error && isMissingTableError(r.error));
+    if (missing) {
+      setSchemaError(
+        "Faltan migraciones de Economia Familiar en Supabase. Aplique 20260813120000_phase8_economia_familiar.sql antes de usar este modulo."
+      );
+      setLoading(false);
+      return;
+    }
+    const anyError = results.find((r) => r.error);
+    if (anyError?.error) {
+      setLoadError(getErrorMessage(anyError.error));
+      setLoading(false);
+      return;
+    }
+    setRondas((rondasRes.data as EconomiaRonda[]) ?? []);
+    setProductosCat((productosCatRes.data as EconomiaProductoCatalogo[]) ?? []);
+    setCategoriasCat((categoriasRes.data as EconomiaCategoria[]) ?? []);
+    setLugaresVenta((lugaresRes.data as EconomiaLugarVenta[]) ?? []);
+    setTiposApoyo((tiposApoyoRes.data as EconomiaTipoApoyo[]) ?? []);
+    setTiposPago((tiposPagoRes.data as EconomiaTipoPago[]) ?? []);
+    setEncuestas((encuestasRes.data as EconomiaEncuesta[]) ?? []);
+    setApoyos((apoyosRes.data as EconomiaEncuestaApoyo[]) ?? []);
+    setPagos((pagosRes.data as EconomiaEncuestaPago[]) ?? []);
+    setProductos((productosRes.data as EconomiaEncuestaProducto[]) ?? []);
+    setProductoLugares((productoLugaresRes.data as EconomiaProductoLugarVenta[]) ?? []);
+    setConflictos((conflictosRes.data as EconomiaSyncConflicto[]) ?? []);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    void loadEconomia();
+  }, [loadEconomia]);
+
+  async function cambiarEstadoEncuesta(encuestaId: string, estado: string, motivoDevolucion?: string) {
+    setRevisionMsg(null);
+    const notas = estado === "devuelta" ? motivoDevolucion?.trim() : null;
+    if (estado === "devuelta" && !notas) { setRevisionMsg("Debe escribir el motivo de devolución."); return; }
+    const { data: authData } = await supabase.auth.getUser();
+    const { error } = await supabase.from("economia_encuestas").update({
+      estado, notas_revision: notas, reviewed_at: new Date().toISOString(), reviewed_by: authData.user?.id ?? null
+    }).eq("id", encuestaId);
+    if (error) {
+      setRevisionMsg(`No fue posible cambiar el estado (¿tiene rol administrador?): ${getErrorMessage(error)}`);
+      return;
+    }
+    setRevisionMsg(estado === "aprobada" ? "Encuesta aprobada." : "Encuesta devuelta. El técnico la verá para corregir tras “Descargar”.");
+    if (estado === "devuelta") {
+      setDevolucionId(null);
+      setDevolucionNotas("");
+    }
+    await loadEconomia();
+  }
+
+  async function resolverConflictoServidor(id: string) {
+    const { data: authData } = await supabase.auth.getUser();
+    const { error } = await supabase.from("economia_sync_conflictos").update({
+      estado: "resuelto_servidor", resolved_at: new Date().toISOString(), resolved_by: authData.user?.id ?? null
+    }).eq("id", id);
+    if (error) setRevisionMsg(`No fue posible resolver el conflicto: ${getErrorMessage(error)}`); else await loadEconomia();
+  }
+
+  async function resolverConflictoAndroid(conflicto: EconomiaSyncConflicto) {
+    const payload = conflicto.client_payload as { encuesta?: unknown; apoyos?: unknown; pagos?: unknown; productos?: unknown };
+    if (!payload.encuesta) { setRevisionMsg("El conflicto no contiene una encuesta Android recuperable."); return; }
+    const encuestaCliente = payload.encuesta as Record<string, unknown>;
+    const idCanonico = conflicto.server_payload?.id;
+    // Si dos telefonos crearon la misma medicion, conservar Android reemplaza el registro
+    // canonico existente; no intenta insertar un segundo ano/monitoreo prohibido.
+    const encuestaParaResolver = typeof idCanonico === "string"
+      ? { ...encuestaCliente, id: idCanonico }
+      : encuestaCliente;
+    const { data, error } = await supabase.rpc("sync_economia_encuesta_v2", {
+      p_encuesta: encuestaParaResolver, p_apoyos: payload.apoyos ?? [], p_pagos: payload.pagos ?? [],
+      p_productos: payload.productos ?? [], p_expected_version: conflicto.current_version ?? 0
+    });
+    if (error || (data as { conflict?: boolean } | null)?.conflict) {
+      setRevisionMsg(`No fue posible conservar la versión Android: ${error ? getErrorMessage(error) : "la versión volvió a cambiar"}.`);
+      return;
+    }
+    const { data: authData } = await supabase.auth.getUser();
+    const { error: closeError } = await supabase.from("economia_sync_conflictos").update({
+      estado: "resuelto_cliente", resolved_at: new Date().toISOString(), resolved_by: authData.user?.id ?? null
+    }).eq("id", conflicto.id);
+    if (closeError) setRevisionMsg(`La encuesta se recuperó, pero no se pudo cerrar el conflicto: ${getErrorMessage(closeError)}`);
+    await loadEconomia();
+  }
+
+  async function descargarCatalogos() {
+    const ExcelJS = await import("exceljs");
+    const workbook = new ExcelJS.Workbook();
+    const catCodigoById = new Map(categoriasCat.map((c) => [c.id, c.codigo]));
+
+    const sp = workbook.addWorksheet("Productos");
+    sp.addRow(["categoria_codigo", "codigo", "nombre", "es_pecuario", "unidad_base", "orden", "activo"]);
+    productosCat.forEach((p) =>
+      sp.addRow([catCodigoById.get(p.categoria_id) ?? "", p.codigo, p.nombre, p.es_pecuario ? "SI" : "NO", p.unidad_base, p.orden, p.activo ? "SI" : "NO"])
+    );
+    sp.getRow(1).font = { bold: true };
+
+    const simples: Array<[string, { codigo: string; nombre: string; orden: number; activo: boolean }[]]> = [
+      ["Categorias", categoriasCat],
+      ["LugaresVenta", lugaresVenta],
+      ["TiposApoyo", tiposApoyo],
+      ["TiposPago", tiposPago]
+    ];
+    simples.forEach(([nombre, filas]) => {
+      const s = workbook.addWorksheet(nombre);
+      s.addRow(["codigo", "nombre", "orden", "activo"]);
+      filas.forEach((f) => s.addRow([f.codigo, f.nombre, f.orden, f.activo ? "SI" : "NO"]));
+      s.getRow(1).font = { bold: true };
+    });
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    saveBlob(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), `economia-catalogos-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  }
+
+  async function subirCatalogos(file: File | null) {
+    if (!file) return;
+    setSubiendoCatalogo(true);
+    setCatalogoMsg(null);
+    try {
+      const ExcelJS = await import("exceljs");
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(await file.arrayBuffer());
+      const siNo = (v: string) => !(v.trim().toUpperCase() === "NO" || v.trim() === "0" || v.trim().toLowerCase() === "false");
+      const leer = (nombre: string, campos: string[]) => {
+        const sheet = workbook.worksheets.find((s) => normalizeHeader(s.name) === normalizeHeader(nombre));
+        if (!sheet) return [] as Array<Record<string, string>>;
+        const headers = excelHeaderMap(sheet);
+        const filas: Array<Record<string, string>> = [];
+        for (let n = 2; n <= sheet.rowCount; n += 1) {
+          const row = sheet.getRow(n);
+          if (!excelRowHasValue(row)) continue;
+          const obj: Record<string, string> = {};
+          campos.forEach((campo) => {
+            obj[campo] = materialExcelValue(row, headers, [campo]);
+          });
+          filas.push(obj);
+        }
+        return filas;
+      };
+      const resumen: string[] = [];
+
+      // Categorias primero (los productos referencian su codigo).
+      const cats = leer("Categorias", ["codigo", "nombre", "orden", "activo"]).filter((r) => r.codigo);
+      if (cats.length) {
+        const { error } = await supabase.from("economia_categorias").upsert(
+          cats.map((r) => ({ codigo: r.codigo, nombre: r.nombre || r.codigo, orden: Number(r.orden) || 0, activo: siNo(r.activo || "SI") })),
+          { onConflict: "codigo" }
+        );
+        if (error) throw new Error(`Categorías: ${getErrorMessage(error)}`);
+        resumen.push(`${cats.length} categoría(s)`);
+      }
+      const { data: catsNow } = await supabase.from("economia_categorias").select("id,codigo").eq("is_deleted", false);
+      const catIdByCodigo = new Map(((catsNow as { id: string; codigo: string }[]) ?? []).map((c) => [c.codigo, c.id]));
+
+      // Productos.
+      const prods = leer("Productos", ["categoria_codigo", "codigo", "nombre", "es_pecuario", "unidad_base", "orden", "activo"]).filter((r) => r.codigo);
+      if (prods.length) {
+        const payload = prods.map((r) => {
+          const catId = catIdByCodigo.get(r.categoria_codigo);
+          if (!catId) throw new Error(`Producto "${r.codigo}": la categoría "${r.categoria_codigo}" no existe (créela en la hoja Categorias).`);
+          const unidadSolicitada = (r.unidad_base || "kg").toLowerCase();
+          const unidad = ["g", "kg", "litro", "unidad", "animal"].includes(unidadSolicitada) ? unidadSolicitada : "kg";
+          return {
+            categoria_id: catId,
+            codigo: r.codigo,
+            nombre: r.nombre || r.codigo,
+            es_pecuario: siNo(r.es_pecuario || (unidad === "animal" ? "SI" : "NO")),
+            unidad_base: unidad,
+            orden: Number(r.orden) || 0,
+            activo: siNo(r.activo || "SI")
+          };
+        });
+        const { error } = await supabase.from("economia_productos").upsert(payload, { onConflict: "codigo" });
+        if (error) throw new Error(`Productos: ${getErrorMessage(error)}`);
+        resumen.push(`${payload.length} producto(s)`);
+      }
+
+      // Catalogos simples.
+      const simples: Array<[string, string]> = [
+        ["LugaresVenta", "economia_lugares_venta"],
+        ["TiposApoyo", "economia_tipos_apoyo"],
+        ["TiposPago", "economia_tipos_pago"]
+      ];
+      for (const [hoja, tabla] of simples) {
+        const filas = leer(hoja, ["codigo", "nombre", "orden", "activo"]).filter((r) => r.codigo);
+        if (!filas.length) continue;
+        const { error } = await supabase.from(tabla).upsert(
+          filas.map((r) => ({ codigo: r.codigo, nombre: r.nombre || r.codigo, orden: Number(r.orden) || 0, activo: siNo(r.activo || "SI") })),
+          { onConflict: "codigo" }
+        );
+        if (error) throw new Error(`${hoja}: ${getErrorMessage(error)}`);
+        resumen.push(`${filas.length} de ${hoja}`);
+      }
+
+      setCatalogoMsg(resumen.length ? `Actualizado: ${resumen.join(", ")}. Recuerde "Descargar" en la app.` : "El archivo no tenía filas para actualizar.");
+      await loadEconomia();
+    } catch (e) {
+      setCatalogoMsg(`No fue posible subir (¿rol administrador y hojas correctas?): ${getErrorMessage(e)}`);
+    }
+    setSubiendoCatalogo(false);
+  }
+
+  const municById = useMemo(() => new Map(municipalities.map((m) => [m.id, m] as const)), [municipalities]);
+  const villById = useMemo(() => new Map(villages.map((v) => [v.id, v] as const)), [villages]);
+  const famById = useMemo(() => new Map(families.map((f) => [f.id, f] as const)), [families]);
+  const rondaById = useMemo(() => new Map(rondas.map((r) => [r.id, r] as const)), [rondas]);
+  const prodCatById = useMemo(() => new Map(productosCat.map((p) => [p.id, p] as const)), [productosCat]);
+  const lugarVentaById = useMemo(() => new Map(lugaresVenta.map((l) => [l.id, l] as const)), [lugaresVenta]);
+  const tipoApoyoById = useMemo(() => new Map(tiposApoyo.map((t) => [t.id, t] as const)), [tiposApoyo]);
+  const tipoPagoById = useMemo(() => new Map(tiposPago.map((t) => [t.id, t] as const)), [tiposPago]);
+  const aniosDisponibles = useMemo(() => Array.from(new Set(encuestas.map((e) => e.anio))).sort((a,b) => b-a), [encuestas]);
+  const numerosMonitoreo = useMemo(() => Array.from(new Set(encuestas.map((e) => e.numero_monitoreo).filter((n): n is number => n != null))).sort((a,b) => a-b), [encuestas]);
+
+  const nombreProducto = (p: EconomiaEncuestaProducto): string =>
+    p.producto_id ? prodCatById.get(p.producto_id)?.nombre ?? "(producto)" : p.nombre_otro ?? "Otro producto";
+  const lugaresProducto = (productoId: string): string => {
+    const nombres = productoLugares.filter((l) => l.encuesta_producto_id === productoId).map((l) =>
+      l.lugar_venta_id ? lugarVentaById.get(l.lugar_venta_id)?.nombre ?? "Lugar no disponible" : l.nombre_libre ?? "Otro lugar"
+    );
+    return nombres.length > 0 ? nombres.join(", ") : "-";
+  };
+
+  const rows = useMemo<EconomiaRow[]>(() => {
+    const familyIds = new Set(families.map((f) => f.id));
+    const prodByEnc = new Map<string, number>();
+    productos.forEach((p) => prodByEnc.set(p.encuesta_id, (prodByEnc.get(p.encuesta_id) ?? 0) + (p.ingreso_mensual ?? 0)));
+    const prodAnnualByEnc = new Map<string, number>();
+    productos.forEach((p) => prodAnnualByEnc.set(p.encuesta_id, (prodAnnualByEnc.get(p.encuesta_id) ?? 0) + (p.ingreso_anual ?? 0)));
+    const apoyoByEnc = new Map<string, number>();
+    apoyos.forEach((a) => apoyoByEnc.set(a.encuesta_id, (apoyoByEnc.get(a.encuesta_id) ?? 0) + (a.valor_mensual ?? 0)));
+    const pagoByEnc = new Map<string, number>();
+    pagos.forEach((p) => pagoByEnc.set(p.encuesta_id, (pagoByEnc.get(p.encuesta_id) ?? 0) + (p.valor_mensual ?? 0)));
+    return encuestas
+      .filter((e) => familyIds.has(e.family_id)
+        && (rondaFilter === "all" || (rondaFilter === "linea_base" ? e.tipo_medicion === "linea_base" : e.numero_monitoreo === Number(rondaFilter)))
+        && (anioFilter === "all" || e.anio === Number(anioFilter))
+        && (pilotoFilter === "all" || (pilotoFilter === "pilot" ? e.es_piloto : !e.es_piloto)))
+      .map((e) => {
+        const fam = famById.get(e.family_id);
+        const m = fam?.municipality_id ? municById.get(fam.municipality_id) : undefined;
+        const v = fam?.village_id ? villById.get(fam.village_id) : undefined;
+        const ingProductos = prodByEnc.get(e.id) ?? 0;
+        const ingProductosAnual = prodAnnualByEnc.get(e.id) ?? 0;
+        const ingGobierno = apoyoByEnc.get(e.id) ?? 0;
+        const ingOtros = pagoByEnc.get(e.id) ?? 0;
+        return {
+          encuestaId: e.id,
+          familyId: e.family_id,
+          familia: fam ? `${fam.family_code} - ${fam.representative_name}` : "(familia desconocida)",
+          departamento: m?.department ?? "Sin departamento",
+          municipio: m?.name ?? "Sin municipio",
+          vereda: v?.name ?? "Sin vereda",
+          ronda: e.tipo_medicion === "linea_base" ? "Línea base" : `Monitoreo ${e.numero_monitoreo ?? "-"}`,
+          anio: e.anio,
+          esPiloto: e.es_piloto,
+          personas: e.personas_total ?? 0,
+          ninos: e.personas_ninos ?? 0,
+          adolescentes: e.personas_adolescentes ?? 0,
+          jovenes: e.personas_jovenes ?? 0,
+          adultos: e.personas_adultos ?? 0,
+          mayores: e.personas_mayores ?? 0,
+          ingProductos,
+          ingGobierno,
+          ingOtros,
+          ingTotal: ingProductos + ingGobierno + ingOtros,
+          ingAnual: annualHouseholdIncome(ingProductosAnual, ingGobierno, ingOtros),
+          ingPerCapita: (e.personas_total ?? 0) > 0 ? (ingProductos + ingGobierno + ingOtros) / (e.personas_total ?? 1) : 0,
+          jornal: e.valor_jornal ?? 0
+        };
+      })
+      .sort((a, b) => b.ingTotal - a.ingTotal);
+  }, [encuestas, productos, apoyos, pagos, families, rondaFilter, anioFilter, pilotoFilter, famById, municById, villById]);
+
+  // Indicadores oficiales: solo encuestas aprobadas. La bandeja operativa conserva todas.
+  const reportRows = useMemo(() => rows.filter((r) => encuestas.find((e) => e.id === r.encuestaId)?.estado === "aprobada"), [rows, encuestas]);
+
+  const totales = useMemo(() => {
+    const familias = new Set(reportRows.map((r) => r.familyId));
+    const ingProductos = reportRows.reduce((acc, r) => acc + r.ingProductos, 0);
+    const ingGobierno = reportRows.reduce((acc, r) => acc + r.ingGobierno, 0);
+    const ingOtros = reportRows.reduce((acc, r) => acc + r.ingOtros, 0);
+    const ingTotal = ingProductos + ingGobierno + ingOtros;
+    return {
+      familias: familias.size,
+      encuestas: reportRows.length,
+      ingProductos,
+      ingGobierno,
+      ingOtros,
+      ingTotal,
+      promedio: familias.size > 0 ? ingTotal / familias.size : 0
+    };
+  }, [reportRows]);
+
+  const aggRows = useMemo(() => {
+    const map = new Map<string, { clave: string; familias: Set<string>; encuestas: number; ingProductos: number; ingGobierno: number; ingOtros: number; ingTotal: number }>();
+    reportRows.forEach((r) => {
+      const clave =
+        nivel === "departamento" ? r.departamento : nivel === "municipio" ? `${r.departamento} / ${r.municipio}` : `${r.municipio} / ${r.vereda}`;
+      const cur = map.get(clave) ?? { clave, familias: new Set<string>(), encuestas: 0, ingProductos: 0, ingGobierno: 0, ingOtros: 0, ingTotal: 0 };
+      cur.familias.add(r.familyId);
+      cur.encuestas += 1;
+      cur.ingProductos += r.ingProductos;
+      cur.ingGobierno += r.ingGobierno;
+      cur.ingOtros += r.ingOtros;
+      cur.ingTotal += r.ingTotal;
+      map.set(clave, cur);
+    });
+    return Array.from(map.values()).sort((a, b) => b.ingTotal - a.ingTotal);
+  }, [reportRows, nivel]);
+
+  const topProductos = useMemo(() => {
+    const encIds = new Set(reportRows.map((r) => r.encuestaId));
+    const map = new Map<string, { nombre: string; ingreso: number; encuestas: Set<string> }>();
+    productos
+      .filter((p) => encIds.has(p.encuesta_id))
+      .forEach((p) => {
+        const nombre = p.producto_id ? prodCatById.get(p.producto_id)?.nombre ?? "(producto)" : p.nombre_otro ?? "Otro producto";
+        const cur = map.get(nombre) ?? { nombre, ingreso: 0, encuestas: new Set<string>() };
+        cur.ingreso += p.ingreso_mensual ?? 0;
+        cur.encuestas.add(p.encuesta_id);
+        map.set(nombre, cur);
+      });
+    return Array.from(map.values()).sort((a, b) => b.ingreso - a.ingreso).slice(0, 20);
+  }, [productos, reportRows, prodCatById]);
+
+  const nivelLabel = nivel === "departamento" ? "Departamento" : nivel === "municipio" ? "Departamento / Municipio" : "Municipio / Vereda";
+
+  // --- Comparacion entre rondas (linea base vs monitoreos). Ignora el filtro de una sola ronda:
+  //     usa TODAS las rondas como columnas para poder compararlas. Escala a muchos monitoreos.
+  const ingresoPorEncuesta = useMemo(() => {
+    const m = new Map<string, number>();
+    const add = (encuestaId: string, valor: number) => m.set(encuestaId, (m.get(encuestaId) ?? 0) + valor);
+    productos.forEach((p) => add(p.encuesta_id, p.ingreso_mensual ?? 0));
+    apoyos.forEach((a) => add(a.encuesta_id, a.valor_mensual ?? 0));
+    pagos.forEach((p) => add(p.encuesta_id, p.valor_mensual ?? 0));
+    return m;
+  }, [productos, apoyos, pagos]);
+
+  const rondasOrdenadas = useMemo(() => [
+    { id: "linea_base", nombre: "Línea base" },
+    ...numerosMonitoreo.map((n) => ({ id: `monitoreo_${n}`, nombre: `Monitoreo ${n}` }))
+  ], [numerosMonitoreo]);
+
+  const comparaNivelLabel =
+    comparaNivel === "familia" ? "Familia" : comparaNivel === "departamento" ? "Departamento" : comparaNivel === "municipio" ? "Departamento / Municipio" : "Municipio / Vereda";
+
+  const pivotRondas = useMemo(() => {
+    const familyIds = new Set(families.map((f) => f.id));
+    const reportIds = new Set(reportRows.map((r) => r.encuestaId));
+    const claveDe = (e: EconomiaEncuesta): string => {
+      const fam = famById.get(e.family_id);
+      if (comparaNivel === "familia") return fam ? `${fam.family_code} - ${fam.representative_name}` : "(familia desconocida)";
+      const m = fam?.municipality_id ? municById.get(fam.municipality_id) : undefined;
+      const v = fam?.village_id ? villById.get(fam.village_id) : undefined;
+      if (comparaNivel === "departamento") return m?.department ?? "Sin departamento";
+      if (comparaNivel === "municipio") return `${m?.department ?? "Sin departamento"} / ${m?.name ?? "Sin municipio"}`;
+      return `${m?.name ?? "Sin municipio"} / ${v?.name ?? "Sin vereda"}`;
+    };
+    const map = new Map<string, Map<string, number>>();
+    encuestas
+      .filter((e) => familyIds.has(e.family_id) && reportIds.has(e.id))
+      .forEach((e) => {
+        const clave = claveDe(e);
+        const inner = map.get(clave) ?? new Map<string, number>();
+        const medicionId = e.tipo_medicion === "linea_base" ? "linea_base" : `monitoreo_${e.numero_monitoreo}`;
+        inner.set(medicionId, (inner.get(medicionId) ?? 0) + (ingresoPorEncuesta.get(e.id) ?? 0));
+        map.set(clave, inner);
+      });
+    return Array.from(map.entries())
+      .map(([clave, inner]) => {
+        const valores = rondasOrdenadas.map((r) => (inner.has(r.id) ? inner.get(r.id) ?? 0 : null));
+        const conDato = valores.filter((v): v is number => v != null);
+        let variacion: number | null = null;
+        if (conDato.length >= 2) {
+          const base = conDato[0];
+          const ultimo = conDato[conDato.length - 1];
+          variacion = base > 0 ? ((ultimo - base) / base) * 100 : null;
+        }
+        return { clave, valores, variacion };
+      })
+      .sort((a, b) => {
+        const ultA = [...a.valores].reverse().find((v) => v != null) ?? 0;
+        const ultB = [...b.valores].reverse().find((v) => v != null) ?? 0;
+        return ultB - ultA;
+      });
+  }, [encuestas, families, reportRows, comparaNivel, famById, municById, villById, rondasOrdenadas, ingresoPorEncuesta]);
+
+  async function exportarExcel() {
+    const ExcelJS = await import("exceljs");
+    const workbook = new ExcelJS.Workbook();
+
+    const s1 = workbook.addWorksheet("Por familia");
+    s1.addRow(["Familia", "Departamento", "Municipio", "Vereda", "Medición", "Año", "Piloto", "Niños", "Adolescentes", "Jóvenes", "Adultos", "Mayores", "Personas", "Ing. productos", "Ing. gobierno", "Ing. otros", "Ing. total mensual", "Ing. total anual", "Ing. mensual/persona", "Valor jornal"]);
+    reportRows.forEach((r) => s1.addRow([r.familia, r.departamento, r.municipio, r.vereda, r.ronda, r.anio, r.esPiloto ? "SI" : "NO", r.ninos,r.adolescentes,r.jovenes,r.adultos,r.mayores,r.personas, r.ingProductos, r.ingGobierno, r.ingOtros, r.ingTotal, r.ingAnual,r.ingPerCapita,r.jornal]));
+    s1.getRow(1).font = { bold: true };
+
+    const s2 = workbook.addWorksheet("Agregado");
+    s2.addRow([nivelLabel, "Familias", "Encuestas", "Ing. productos", "Ing. gobierno", "Ing. otros", "Ing. total", "Promedio por familia"]);
+    aggRows.forEach((a) =>
+      s2.addRow([a.clave, a.familias.size, a.encuestas, a.ingProductos, a.ingGobierno, a.ingOtros, a.ingTotal, a.familias.size > 0 ? a.ingTotal / a.familias.size : 0])
+    );
+    s2.getRow(1).font = { bold: true };
+
+    const s3 = workbook.addWorksheet("Fuentes por producto");
+    s3.addRow(["Producto", "Ingreso mensual total", "Encuestas"]);
+    topProductos.forEach((p) => s3.addRow([p.nombre, p.ingreso, p.encuestas.size]));
+    s3.getRow(1).font = { bold: true };
+
+    const s4 = workbook.addWorksheet("Comparacion rondas");
+    s4.addRow([comparaNivelLabel, ...rondasOrdenadas.map((r) => r.nombre), "Variacion %"]);
+    pivotRondas.forEach((row) =>
+      s4.addRow([row.clave, ...row.valores.map((v) => (v == null ? "" : v)), row.variacion == null ? "" : Math.round(row.variacion)])
+    );
+    s4.getRow(1).font = { bold: true };
+
+    // Detalle desglosado: por cada familia, cada fuente (producto/apoyo/otro) con cantidades y valor.
+    const s5 = workbook.addWorksheet("Detalle ingresos");
+    s5.addRow(["Familia", "Departamento", "Municipio", "Vereda", "Medición", "Año", "Estado", "Piloto", "Personas", "Fuente", "Detalle", "Unidad", "Temporalidad", "Producido", "Consumido", "Vendido", "Precio unitario", "Lugares de venta", "Motivo de no venta", "Ingreso mensual", "Ingreso anual", "Apoyo ACT"]);
+    reportRows.forEach((r) => {
+      const estado = encuestas.find((e) => e.id === r.encuestaId)?.estado ?? "";
+      productos.filter((p) => p.encuesta_id === r.encuestaId).forEach((p) => {
+        s5.addRow([
+          r.familia, r.departamento, r.municipio, r.vereda, r.ronda,r.anio,estadoRevisionLabel(estado),r.esPiloto ? "SI" : "NO",r.personas,
+          "Producto",nombreProducto(p),p.unidad ?? prodCatById.get(p.producto_id ?? "")?.unidad_base ?? "",p.temporalidad ?? "mensual",
+          p.cantidad_producida ?? 0,p.consumo ?? 0,p.vendido ?? 0,p.precio_unitario ?? 0,lugaresProducto(p.id),p.motivo_no_venta ?? "",
+          p.ingreso_mensual ?? 0,p.ingreso_anual ?? (p.ingreso_mensual ?? 0)*12,p.apoyo_act ? "Si" : "No"
+        ]);
+      });
+      apoyos.filter((a) => a.encuesta_id === r.encuestaId).forEach((a) => {
+        s5.addRow([
+          r.familia,r.departamento,r.municipio,r.vereda,r.ronda,r.anio,estadoRevisionLabel(estado),r.esPiloto ? "SI" : "NO",r.personas,"Apoyo gobierno",
+          tipoApoyoById.get(a.tipo_apoyo_id)?.nombre ?? a.nombre_libre ?? "Apoyo","mensual","mensual","","","","","","",a.valor_mensual ?? 0,(a.valor_mensual ?? 0)*12,""
+        ]);
+      });
+      pagos.filter((p) => p.encuesta_id === r.encuestaId).forEach((p) => {
+        s5.addRow([
+          r.familia,r.departamento,r.municipio,r.vereda,r.ronda,r.anio,estadoRevisionLabel(estado),r.esPiloto ? "SI" : "NO",r.personas,"Otro ingreso",
+          tipoPagoById.get(p.tipo_pago_id)?.nombre ?? "Ingreso","mensual","mensual","","","","","","",p.valor_mensual ?? 0,(p.valor_mensual ?? 0)*12,""
+        ]);
+      });
+    });
+    s5.getRow(1).font = { bold: true };
+    s5.views = [{ state: "frozen", ySplit: 1 }];
+    s5.autoFilter = { from: "A1", to: "V1" };
+    s5.columns.forEach((column, index) => { column.width = index === 0 || index === 10 ? 32 : index === 17 || index === 18 ? 24 : 15; });
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const marcaTiempo = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    saveBlob(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), `economia-familiar-${marcaTiempo}.xlsx`);
+  }
+
+  return (
+    <section className="section">
+      <div className="toolbar">
+        <div>
+          <h2>Economía Familiar</h2>
+        </div>
+        <button className="secondary" type="button" onClick={() => void exportarExcel()} disabled={loading}>
+          Descargar Excel detallado
+        </button>
+      </div>
+
+      {schemaError ? <div className="alert error">{schemaError}</div> : null}
+      {loadError ? <div className="alert error">No fue posible cargar Economía Familiar: {loadError}</div> : null}
+      {loading ? <div className="muted">Cargando…</div> : null}
+
+      {!loading && !schemaError && !loadError ? (
+        <>
+          <div className="panel grid compact-panel">
+            <label>
+              Medición
+              <select value={rondaFilter} onChange={(e) => setRondaFilter(e.target.value)}>
+                <option value="all">Todas</option>
+                <option value="linea_base">Línea base</option>
+                {numerosMonitoreo.map((n) => <option key={n} value={n}>Monitoreo {n}</option>)}
+              </select>
+            </label>
+            <label>Año<select value={anioFilter} onChange={(e)=>setAnioFilter(e.target.value)}><option value="all">Todos</option>{aniosDisponibles.map((a)=><option key={a} value={a}>{a}</option>)}</select></label>
+            <label>Datos<select value={pilotoFilter} onChange={(e)=>setPilotoFilter(e.target.value as "all"|"official"|"pilot")}><option value="all">Todos</option><option value="official">Oficiales</option><option value="pilot">Piloto / no oficial</option></select></label>
+            <label>
+              Agregar por
+              <select value={nivel} onChange={(e) => setNivel(e.target.value as EconomiaNivel)}>
+                <option value="departamento">Departamento</option>
+                <option value="municipio">Municipio</option>
+                <option value="vereda">Vereda</option>
+              </select>
+            </label>
+          </div>
+
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <button className="secondary" type="button" onClick={() => setMostrarAnalisis((v) => !v)}>
+              {mostrarAnalisis ? "Ocultar análisis, comparaciones y monitoreos" : "Mostrar análisis, comparaciones y monitoreos"}
+            </button>
+          </div>
+
+          {mostrarAnalisis ? (
+          <>
+          <div className="panel">
+            <div className="panel-heading">Secuencia anual</div>
+            <div className="muted">La línea base se registra una sola vez. Después, Android habilita automáticamente Monitoreo 1, 2, 3… cuando la medición anterior está aprobada.</div>
+          </div>
+
+          <div className="panel">
+            <div className="panel-heading">Catálogos por Excel</div>
+            <div className="chip-list">
+              <button className="secondary" type="button" onClick={() => void descargarCatalogos()}>Descargar catálogos (Excel)</button>
+              <label className="secondary" style={{ cursor: "pointer" }}>
+                {subiendoCatalogo ? "Subiendo…" : "Subir catálogos (Excel)"}
+                <input
+                  type="file"
+                  accept=".xlsx"
+                  disabled={subiendoCatalogo}
+                  style={{ display: "none" }}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0] ?? null;
+                    e.target.value = "";
+                    void subirCatalogos(f);
+                  }}
+                />
+              </label>
+            </div>
+            {catalogoMsg ? <div className="muted">{catalogoMsg}</div> : null}
+          </div>
+
+          <div className="summary-grid">
+            <div className="metric">
+              <strong>{totales.encuestas}</strong>
+              <span>Encuestas</span>
+            </div>
+            <div className="metric">
+              <strong>{totales.familias}</strong>
+              <span>Familias</span>
+            </div>
+            <div className="metric">
+              <strong>{formatMoney(totales.ingTotal)}</strong>
+              <span>Ingreso total mensual</span>
+            </div>
+            <div className="metric">
+              <strong>{formatMoney(totales.promedio)}</strong>
+              <span>Promedio por familia</span>
+            </div>
+          </div>
+
+          <div className="panel">
+            <div className="panel-heading">Fuentes de ingreso</div>
+            <div className="summary-grid">
+              <div className="metric">
+                <strong>{formatMoney(totales.ingProductos)}</strong>
+                <span>Venta de productos</span>
+              </div>
+              <div className="metric">
+                <strong>{formatMoney(totales.ingGobierno)}</strong>
+                <span>Apoyos del gobierno</span>
+              </div>
+              <div className="metric">
+                <strong>{formatMoney(totales.ingOtros)}</strong>
+                <span>Otros ingresos</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="panel">
+            <div className="panel-heading">Comparación por {nivel}</div>
+            <div className="tracking-table-wrapper">
+              <table className="tracking-table">
+                <thead>
+                  <tr>
+                    <th>{nivelLabel}</th>
+                    <th>Familias</th>
+                    <th>Encuestas</th>
+                    <th>Ing. productos</th>
+                    <th>Ing. gobierno</th>
+                    <th>Ing. otros</th>
+                    <th>Ing. total</th>
+                    <th>Promedio/familia</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {aggRows.map((a) => (
+                    <tr key={a.clave}>
+                      <td>{a.clave}</td>
+                      <td>{a.familias.size}</td>
+                      <td>{a.encuestas}</td>
+                      <td>{formatMoney(a.ingProductos)}</td>
+                      <td>{formatMoney(a.ingGobierno)}</td>
+                      <td>{formatMoney(a.ingOtros)}</td>
+                      <td>{formatMoney(a.ingTotal)}</td>
+                      <td>{formatMoney(a.familias.size > 0 ? a.ingTotal / a.familias.size : 0)}</td>
+                    </tr>
+                  ))}
+                  {aggRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="muted">
+                        No hay encuestas para los filtros seleccionados.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="panel">
+            <div className="panel-heading">Comparación entre rondas (línea base vs monitoreos)</div>
+            <div className="panel grid compact-panel">
+              <label>
+                Comparar por
+                <select value={comparaNivel} onChange={(e) => setComparaNivel(e.target.value as "familia" | EconomiaNivel)}>
+                  <option value="familia">Familia</option>
+                  <option value="departamento">Departamento</option>
+                  <option value="municipio">Municipio</option>
+                  <option value="vereda">Vereda</option>
+                </select>
+              </label>
+            </div>
+            <div className="tracking-table-wrapper">
+              <table className="tracking-table">
+                <thead>
+                  <tr>
+                    <th>{comparaNivelLabel}</th>
+                    {rondasOrdenadas.map((r) => (
+                      <th key={r.id}>{r.nombre}</th>
+                    ))}
+                    <th>Variación</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pivotRondas.map((row) => (
+                    <tr key={row.clave}>
+                      <td>{row.clave}</td>
+                      {row.valores.map((v, i) => (
+                        <td key={rondasOrdenadas[i]?.id ?? i}>{v == null ? "—" : formatMoney(v)}</td>
+                      ))}
+                      <td>{row.variacion == null ? "—" : `${row.variacion >= 0 ? "+" : ""}${row.variacion.toFixed(0)}%`}</td>
+                    </tr>
+                  ))}
+                  {pivotRondas.length === 0 ? (
+                    <tr>
+                      <td colSpan={rondasOrdenadas.length + 2} className="muted">
+                        No hay encuestas registradas todavía.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          </>
+          ) : null}
+
+          <div className="panel">
+            <div className="panel-heading">Conflictos de sincronización ({conflictos.length})</div>
+            {conflictos.length === 0 ? <div className="muted">No hay conflictos pendientes.</div> : conflictos.map((c) => (
+              <div key={c.id} className="panel">
+                <strong>{famById.get(c.family_id)?.family_code ?? c.family_id}</strong> · versión Android {c.expected_version} / servidor {c.current_version ?? "sin registro"}
+                <details><summary>Comparar datos</summary><pre style={{whiteSpace:"pre-wrap",maxHeight:320,overflow:"auto"}}>{JSON.stringify({servidor:c.server_payload,android:c.client_payload},null,2)}</pre></details>
+                <button className="secondary" type="button" onClick={()=>void resolverConflictoServidor(c.id)}>Conservar versión del servidor</button>
+                <button className="secondary" type="button" onClick={()=>void resolverConflictoAndroid(c)}>Conservar versión Android</button>
+              </div>
+            ))}
+          </div>
+
+          <div className="panel">
+            <div className="panel-heading">Encuestas</div>
+            <div className="panel grid compact-panel">
+              <label>
+                Estado
+                <select value={estadoFilter} onChange={(e) => setEstadoFilter(e.target.value)}>
+                  <option value="all">Todos</option>
+                  <option value="completada">Enviadas (por revisar)</option>
+                  <option value="aprobada">Aprobadas</option>
+                  <option value="devuelta">Devueltas</option>
+                </select>
+              </label>
+            </div>
+            {revisionMsg ? <div className="muted">{revisionMsg}</div> : null}
+            {devolucionId ? (
+              <div className="panel grid compact-panel">
+                <label>
+                  Motivo de devolución
+                  <textarea
+                    aria-label="Motivo de devolución"
+                    value={devolucionNotas}
+                    onChange={(e) => setDevolucionNotas(e.target.value)}
+                    placeholder="Indique claramente qué debe corregir el técnico."
+                  />
+                </label>
+                <div className="chip-list">
+                  <button
+                    type="button"
+                    disabled={!devolucionNotas.trim()}
+                    onClick={() => void cambiarEstadoEncuesta(devolucionId, "devuelta", devolucionNotas)}
+                  >
+                    Confirmar devolución
+                  </button>
+                  <button
+                    className="secondary"
+                    type="button"
+                    onClick={() => { setDevolucionId(null); setDevolucionNotas(""); }}
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            <div className="tracking-table-wrapper">
+              <table className="tracking-table">
+                <thead>
+                  <tr>
+                    <th>Acciones</th>
+                    <th>Familia</th>
+                    <th>Departamento</th>
+                    <th>Municipio</th>
+                    <th>Vereda</th>
+                    <th>Ronda</th>
+                    <th>Año</th>
+                    <th>Estado</th>
+                    <th>Personas</th>
+                    <th>Ing. productos</th>
+                    <th>Ing. gobierno</th>
+                    <th>Ing. otros</th>
+                    <th>Ing. total</th>
+                    <th>Ing. anual</th>
+                    <th>Ing./persona</th>
+                    <th>Jornal</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows
+                    .filter((r) => estadoFilter === "all" || (encuestas.find((e) => e.id === r.encuestaId)?.estado ?? "completada") === estadoFilter)
+                    .map((r) => {
+                    const abierto = expandedEncuesta === r.encuestaId;
+                    const prods = productos.filter((p) => p.encuesta_id === r.encuestaId);
+                    const aps = apoyos.filter((a) => a.encuesta_id === r.encuestaId);
+                    const pgs = pagos.filter((p) => p.encuesta_id === r.encuestaId);
+                    const estado = encuestas.find((e) => e.id === r.encuestaId)?.estado ?? "completada";
+                    return (
+                      <Fragment key={r.encuestaId}>
+                        <tr>
+                          <td>
+                            <div className="chip-list">
+                              <button className="secondary" type="button" onClick={() => setExpandedEncuesta(abierto ? null : r.encuestaId)}>
+                                {abierto ? "Ocultar" : "Ver"}
+                              </button>
+                              <button className="secondary" type="button" disabled={estado === "aprobada"} onClick={() => void cambiarEstadoEncuesta(r.encuestaId, "aprobada")}>
+                                Aprobar
+                              </button>
+                              <button
+                                className="secondary"
+                                type="button"
+                                disabled={estado === "devuelta"}
+                                onClick={() => { setDevolucionId(r.encuestaId); setDevolucionNotas(""); setRevisionMsg(null); }}
+                              >
+                                Devolver
+                              </button>
+                            </div>
+                          </td>
+                          <td>{r.familia}</td>
+                          <td>{r.departamento}</td>
+                          <td>{r.municipio}</td>
+                          <td>{r.vereda}</td>
+                          <td>{r.ronda}</td>
+                          <td>{r.anio}{r.esPiloto ? " · PILOTO" : ""}</td>
+                          <td>{estadoRevisionLabel(estado)}</td>
+                          <td>{r.personas}</td>
+                          <td>{formatMoney(r.ingProductos)}</td>
+                          <td>{formatMoney(r.ingGobierno)}</td>
+                          <td>{formatMoney(r.ingOtros)}</td>
+                          <td>{formatMoney(r.ingTotal)}</td>
+                          <td>{formatMoney(r.ingAnual)}</td>
+                          <td>{formatMoney(r.ingPerCapita)}</td>
+                          <td>{formatMoney(r.jornal)}</td>
+                        </tr>
+                        {abierto ? (
+                          <tr>
+                            <td colSpan={16}>
+                              <div className="panel">
+                                <div className="panel-heading">Personas del hogar</div>
+                                <div className="chip-list">
+                                  <span className="chip">0–11: {r.ninos}</span><span className="chip">12–17: {r.adolescentes}</span>
+                                  <span className="chip">18–28: {r.jovenes}</span><span className="chip">29–64: {r.adultos}</span>
+                                  <span className="chip">65+: {r.mayores}</span><span className="chip">Total: {r.personas}</span>
+                                </div>
+                                <div className="panel-heading">Productos que generan ingreso</div>
+                                <div className="tracking-table-wrapper">
+                                  <table className="tracking-table">
+                                    <thead>
+                                      <tr>
+                                        <th>Producto</th>
+                                        <th>Unidad</th>
+                                        <th>Temporalidad</th>
+                                        <th>Producido</th>
+                                        <th>Consumido</th>
+                                        <th>Vendido</th>
+                                        <th>Precio unitario</th>
+                                        <th>Ingreso mensual</th>
+                                        <th>Ingreso anual</th>
+                                        <th>Lugares de venta</th>
+                                        <th>Motivo de no venta</th>
+                                        <th>Apoyo ACT</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {prods.map((p) => (
+                                        <tr key={p.id}>
+                                          <td>{nombreProducto(p)}{p.producto_id ? "" : " · Producto no catalogado"}{p.es_pecuario ? " (pecuario)" : ""}</td>
+                                          <td>{p.unidad ?? prodCatById.get(p.producto_id ?? "")?.unidad_base ?? "-"}</td>
+                                          <td>{p.temporalidad ?? "mensual"}</td>
+                                          <td>{p.cantidad_producida ?? 0}</td>
+                                          <td>{p.consumo ?? 0}</td>
+                                          <td>{p.vendido ?? 0}</td>
+                                          <td>{formatMoney(p.precio_unitario ?? 0)}</td>
+                                          <td>{formatMoney(p.ingreso_mensual ?? 0)}</td>
+                                          <td>{formatMoney(p.ingreso_anual ?? (p.ingreso_mensual ?? 0) * 12)}</td>
+                                          <td>{lugaresProducto(p.id)}</td>
+                                          <td>{p.motivo_no_venta ?? "-"}</td>
+                                          <td>{p.apoyo_act ? "Sí" : "No"}</td>
+                                        </tr>
+                                      ))}
+                                      {prods.length === 0 ? (
+                                        <tr>
+                                          <td colSpan={12} className="muted">Sin productos registrados.</td>
+                                        </tr>
+                                      ) : null}
+                                    </tbody>
+                                  </table>
+                                </div>
+                                <div className="chip-list">
+                                  <span className="chip">Productos/mes: {formatMoney(r.ingProductos)}</span>
+                                  <span className="chip">Gobierno/mes: {formatMoney(r.ingGobierno)}</span>
+                                  <span className="chip">Otros/mes: {formatMoney(r.ingOtros)}</span>
+                                  <span className="chip">Total mensual: {formatMoney(r.ingTotal)}</span>
+                                  <span className="chip">Total anual: {formatMoney(r.ingAnual)}</span>
+                                  <span className="chip">Mensual por persona: {formatMoney(r.ingPerCapita)}</span>
+                                </div>
+                                <div className="panel-heading">Apoyos del gobierno</div>
+                                {aps.length === 0 ? (
+                                  <div className="muted">Ninguno.</div>
+                                ) : (
+                                  <ul>
+                                    {aps.map((a) => (
+                                      <li key={a.id}>
+                                        {tipoApoyoById.get(a.tipo_apoyo_id)?.nombre ?? a.nombre_libre ?? "Apoyo"}: {formatMoney(a.valor_mensual ?? 0)} / mes
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                                <div className="panel-heading">Otros ingresos</div>
+                                {pgs.length === 0 ? (
+                                  <div className="muted">Ninguno.</div>
+                                ) : (
+                                  <ul>
+                                    {pgs.map((p) => (
+                                      <li key={p.id}>
+                                        {tipoPagoById.get(p.tipo_pago_id)?.nombre ?? "Ingreso"}: {formatMoney(p.valor_mensual ?? 0)} / mes
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
+                    );
+                  })}
+                  {rows.length === 0 ? (
+                    <tr>
+                      <td colSpan={16} className="muted">
+                        No hay encuestas para los filtros seleccionados.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {mostrarAnalisis ? (
+          <div className="panel">
+            <div className="panel-heading">Productos con más ingreso</div>
+            <div className="tracking-table-wrapper">
+              <table className="tracking-table">
+                <thead>
+                  <tr>
+                    <th>Producto</th>
+                    <th>Ingreso mensual total</th>
+                    <th>Encuestas</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {topProductos.map((p) => (
+                    <tr key={p.nombre}>
+                      <td>{p.nombre}</td>
+                      <td>{formatMoney(p.ingreso)}</td>
+                      <td>{p.encuestas.size}</td>
+                    </tr>
+                  ))}
+                  {topProductos.length === 0 ? (
+                    <tr>
+                      <td colSpan={3} className="muted">
+                        Sin productos registrados.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          ) : null}
+        </>
+      ) : null}
+    </section>
+  );
 }

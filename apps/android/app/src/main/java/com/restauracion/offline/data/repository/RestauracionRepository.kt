@@ -1,6 +1,13 @@
 package com.restauracion.offline.data.repository
 
+import com.restauracion.offline.BuildConfig
+import com.restauracion.offline.data.PendingSyncLog
 import com.restauracion.offline.data.SessionStore
+import com.restauracion.offline.data.local.EconomiaEncuestaApoyoEntity
+import com.restauracion.offline.data.local.EconomiaEncuestaEntity
+import com.restauracion.offline.data.local.EconomiaEncuestaPagoEntity
+import com.restauracion.offline.data.local.EconomiaEncuestaProductoEntity
+import com.restauracion.offline.data.local.EconomiaProductoLugarVentaEntity
 import com.restauracion.offline.data.local.MaterialDeliveryEntity
 import com.restauracion.offline.data.local.MaterialDeliveryItemEntity
 import com.restauracion.offline.data.local.OperationalPlanEntity
@@ -12,6 +19,7 @@ import com.restauracion.offline.data.local.RestauracionDatabase
 import com.restauracion.offline.data.local.SyncState
 import com.restauracion.offline.data.remote.SupabaseRestClient
 import java.time.LocalDate
+import java.time.Instant
 import java.util.UUID
 
 class RestauracionRepository(
@@ -38,6 +46,106 @@ class RestauracionRepository(
     fun planCounterpartsTotal(planId: String) = db.planDao().counterpartsForPlan(planId)
     fun deliveriesForPlan(planId: String) = db.planDao().deliveriesForPlan(planId)
     fun deliveryItemsForPlan(planId: String) = db.planDao().deliveryItemsForPlan(planId)
+
+    // --- Economia Familiar (Fase 8): lecturas para la UI ---
+    fun economiaEquipos() = db.economiaDao().equipos()
+    fun economiaEncuestadores() = db.economiaDao().encuestadores()
+    fun economiaRondas() = db.economiaDao().rondas()
+    fun economiaCategorias() = db.economiaDao().categorias()
+    fun economiaProductos() = db.economiaDao().productos()
+    fun economiaProductosPorCategoria(categoriaId: String) = db.economiaDao().productosPorCategoria(categoriaId)
+    fun economiaTiposApoyo() = db.economiaDao().tiposApoyo()
+    fun economiaTiposPago() = db.economiaDao().tiposPago()
+    fun economiaLugaresVenta() = db.economiaDao().lugaresVenta()
+    fun economiaFamilias(projectId: String) = db.economiaDao().familiasEconomia(projectId)
+    fun economiaEncuestas(projectId: String) = db.economiaDao().encuestas(projectId)
+    fun economiaEncuestasAll() = db.economiaDao().allEncuestas()
+    fun economiaAllFamilies() = db.catalogDao().allFamilies()
+    fun economiaEncuestasForFamily(familyId: String) = db.economiaDao().encuestasForFamily(familyId)
+    fun economiaEncuesta(id: String) = db.economiaDao().encuesta(id)
+    fun economiaApoyos(encuestaId: String) = db.economiaDao().apoyos(encuestaId)
+    fun economiaPagos(encuestaId: String) = db.economiaDao().pagos(encuestaId)
+    fun economiaProductosEncuesta(encuestaId: String) = db.economiaDao().productosEncuesta(encuestaId)
+    fun economiaLugaresDeProducto(encuestaProductoId: String) = db.economiaDao().lugaresDeProducto(encuestaProductoId)
+    suspend fun economiaEncuestaForFamilyRonda(familyId: String, rondaId: String) =
+        db.economiaDao().encuestaForFamilyRonda(familyId, rondaId)
+
+    // Lecturas puntuales de hijos (para editar una encuesta desde la bandeja).
+    suspend fun economiaApoyosOnce(encuestaId: String) = db.economiaDao().apoyosOnce(encuestaId)
+    suspend fun economiaPagosOnce(encuestaId: String) = db.economiaDao().pagosOnce(encuestaId)
+    suspend fun economiaProductosOnce(encuestaId: String) = db.economiaDao().productosEncuestaOnce(encuestaId)
+    suspend fun economiaLugaresOnce(encuestaProductoId: String) = db.economiaDao().lugaresDeProductoOnce(encuestaProductoId)
+
+    // Guarda la encuesta completa offline (cabecera + hijos), marcada PENDING_SYNC.
+    // Reemplaza los hijos previos: soporta re-guardar/editar una encuesta existente.
+    suspend fun guardarEncuestaEconomia(
+        encuesta: EconomiaEncuestaEntity,
+        apoyos: List<EconomiaApoyoInput>,
+        pagos: List<EconomiaPagoInput>,
+        productos: List<EconomiaProductoInput>
+    ) {
+        val dao = db.economiaDao()
+        val cabecera = encuesta.copy(syncState = SyncState.PENDING_SYNC, lastError = null)
+        val apoyosLocal = apoyos.map { a ->
+            EconomiaEncuestaApoyoEntity(
+                    encuestaId = cabecera.id,
+                    projectId = cabecera.projectId,
+                    familyId = cabecera.familyId,
+                    tipoApoyoId = a.tipoApoyoId,
+                    valorMensual = a.valorMensual,
+                    nombreLibre = a.nombreLibre
+                )
+        }
+        val pagosLocal = pagos.map { p ->
+            EconomiaEncuestaPagoEntity(
+                    encuestaId = cabecera.id,
+                    projectId = cabecera.projectId,
+                    familyId = cabecera.familyId,
+                    tipoPagoId = p.tipoPagoId,
+                    valorMensual = p.valorMensual
+                )
+        }
+        val productosLocal = productos.map { pr ->
+            EconomiaEncuestaProductoEntity(
+                id = pr.id,
+                encuestaId = cabecera.id,
+                projectId = cabecera.projectId,
+                familyId = cabecera.familyId,
+                productoId = pr.productoId,
+                nombreOtro = pr.nombreOtro,
+                unidad = pr.unidad,
+                esPecuario = pr.esPecuario,
+                temporalidad = pr.temporalidad,
+                cantidadProducida = pr.cantidadProducida,
+                consumo = pr.consumo,
+                vendido = pr.vendido,
+                motivoNoVenta = pr.motivoNoVenta,
+                precioUnitario = pr.precioUnitario,
+                apoyoAct = pr.apoyoAct
+            )
+        }
+        val lugaresLocal = productos.flatMap { pr ->
+            pr.lugaresVentaIds.map { lugarId ->
+                EconomiaProductoLugarVentaEntity(
+                        encuestaProductoId = pr.id,
+                        projectId = cabecera.projectId,
+                        familyId = cabecera.familyId,
+                        lugarVentaId = lugarId,
+                        nombreLibre = null
+                    )
+            }
+        }
+        dao.saveEncuestaAggregate(cabecera, apoyosLocal, pagosLocal, productosLocal, lugaresLocal)
+    }
+
+    suspend fun eliminarEncuestaEconomia(encuestaId: String) {
+        val dao = db.economiaDao()
+        dao.deleteLugaresForEncuesta(encuestaId)
+        dao.deleteProductosForEncuesta(encuestaId)
+        dao.deleteApoyosForEncuesta(encuestaId)
+        dao.deletePagosForEncuesta(encuestaId)
+        dao.deleteEncuesta(encuestaId)
+    }
     fun hasSession() = sessionStore.hasSession
     fun lastScreen() = sessionStore.lastScreen
     fun lastProjectId() = sessionStore.lastProjectId
@@ -59,7 +167,12 @@ class RestauracionRepository(
 
     suspend fun login(email: String, password: String) = remote.login(email, password)
 
-    suspend fun downloadInitialData() {
+    suspend fun downloadInitialData(): DownloadResult {
+        remote.resetDownloadedRowCount()
+        return monitorSync("download", 0, { remote.downloadedRowCount() }) { performDownloadInitialData() }
+    }
+
+    private suspend fun performDownloadInitialData(): DownloadResult {
         db.catalogDao().upsertProjects(remote.projects())
         db.catalogDao().upsertFamilies(remote.families())
         db.catalogDao().upsertMunicipalities(remote.municipalities())
@@ -111,6 +224,54 @@ class RestauracionRepository(
         // Entregas existentes (web u otro tecnico) para calcular saldos pendientes correctos.
         remote.deliveries().forEach { db.planDao().upsertDelivery(it) }
         remote.deliveryItems().forEach { db.planDao().upsertDeliveryItem(it) }
+
+        // --- Economia Familiar (Fase 8): catalogos (replace) + familias marcadas. ---
+        // Best-effort y AISLADO: si el modulo aun no esta aplicado en el servidor (404/400),
+        // runCatching evita romper la descarga de lo critico (catalogos/planes/entregas).
+        val economiaError = runCatching {
+            val eco = db.economiaDao()
+            eco.replaceEquipos(remote.economiaEquipos())
+            eco.replaceEncuestadores(remote.economiaEncuestadores())
+            eco.replaceRondas(remote.economiaRondas())
+            eco.replaceCategorias(remote.economiaCategorias())
+            eco.replaceProductos(remote.economiaProductos())
+            eco.replaceTiposApoyo(remote.economiaTiposApoyo())
+            eco.replaceTiposPago(remote.economiaTiposPago())
+            eco.replaceLugaresVenta(remote.economiaLugaresVenta())
+            eco.replaceFamiliasEconomia(remote.economiaFamilias())
+            // Encuestas existentes (para saber que monitoreos ya tiene cada familia).
+            // Las capturas pendientes se conservan; las ya sincronizadas sí se refrescan para
+            // reflejar año, ronda, revisión y demás cambios hechos en la web.
+            val serverEncuestas = remote.economiaEncuestas()
+            val conflictosPendientes = remote.economiaConflictosPendientes()
+            remote.economiaConflictosResueltos().forEach { (clientId, canonicalId) ->
+                val local = eco.encuestaById(clientId)
+                if (local?.syncState == SyncState.CONFLICT && canonicalId != null && canonicalId != clientId) {
+                    eco.deleteEncuestaAggregate(clientId)
+                }
+            }
+            val serverApoyos = remote.economiaApoyos().groupBy { it.encuestaId }
+            val serverPagos = remote.economiaPagos().groupBy { it.encuestaId }
+            val serverProductos = remote.economiaProductosEncuesta().groupBy { it.encuestaId }
+            val serverLugares = remote.economiaLugaresProducto().groupBy { it.encuestaProductoId }
+            serverEncuestas.forEach { server ->
+                val local = eco.encuestaById(server.id)
+                val puedeRefrescar = shouldRefreshEconomiaFromServer(
+                    local?.syncState, server.id in conflictosPendientes
+                )
+                if (puedeRefrescar) {
+                    val productos = serverProductos[server.id].orEmpty()
+                    eco.replaceEncuestaFromServer(
+                        server.copy(syncState = SyncState.SYNCED, lastError = null),
+                        serverApoyos[server.id].orEmpty(),
+                        serverPagos[server.id].orEmpty(),
+                        productos,
+                        productos.flatMap { serverLugares[it.id].orEmpty() }
+                    )
+                }
+            }
+        }.exceptionOrNull()
+        return DownloadResult(economiaError?.message)
     }
 
     // Fase 4: actividades (con su plan) que otra familia tiene en este dispositivo, para reasignar.
@@ -399,6 +560,11 @@ class RestauracionRepository(
     }
 
     suspend fun syncPending() {
+        val pendingBefore = pendingUploadCount()
+        monitorSync("upload", pendingBefore, { pendingBefore - pendingUploadCount() }) { performSyncPending() }
+    }
+
+    private suspend fun performSyncPending() {
         val planDao = db.planDao()
         val errors = mutableListOf<String>()
         // Estados en el servidor: si un plan ya fue aprobado/cerrado en la web, NO se debe re-subir
@@ -505,9 +671,108 @@ class RestauracionRepository(
         deliveriesJustSynced.forEach { deliveryId ->
             runCatching { remote.requestActGeneration(deliveryId) }
         }
+
+        // Economia Familiar: una encuesta completa es una sola unidad atomica de sync.
+        val economiaDao = db.economiaDao()
+        val economiaServerEstados = runCatching { remote.economiaEncuestas().associate { it.id to it.estado } }.getOrDefault(emptyMap())
+        economiaDao.pendingEncuestas().forEach { item ->
+            if (economiaServerEstados[item.id] == "aprobada") {
+                economiaDao.updateEncuesta(item.copy(syncState = SyncState.SYNCED, estado = "aprobada", lastError = null))
+                return@forEach
+            }
+            runCatching {
+                val apoyos = economiaDao.apoyosOnce(item.id)
+                val pagos = economiaDao.pagosOnce(item.id)
+                val productos = economiaDao.productosEncuestaOnce(item.id).map { p ->
+                    p to economiaDao.lugaresDeProductoOnce(p.id)
+                }
+                val result = remote.syncEconomiaEncuesta(item, apoyos, pagos, productos)
+                if (result.conflict) error("ECONOMIA_CONFLICT: la encuesta cambió en la web; revise el conflicto antes de reenviar.")
+                economiaDao.updateEncuesta(item.copy(
+                    syncState = SyncState.SYNCED, lastError = null, serverVersion = result.serverVersion,
+                    revision = result.revision, estado = result.estado
+                ))
+                apoyos.forEach { economiaDao.updateApoyo(it.copy(syncState = SyncState.SYNCED)) }
+                pagos.forEach { economiaDao.updatePago(it.copy(syncState = SyncState.SYNCED)) }
+                productos.forEach { (p, lugares) ->
+                    economiaDao.updateProducto(p.copy(syncState = SyncState.SYNCED))
+                    lugares.forEach { economiaDao.updateLugarProducto(it.copy(syncState = SyncState.SYNCED)) }
+                }
+            }.onFailure {
+                val conflict = it.message?.contains("ECONOMIA_CONFLICT") == true
+                economiaDao.updateEncuesta(item.copy(syncState = if (conflict) SyncState.CONFLICT else SyncState.ERROR, lastError = it.message))
+                errors += it.message ?: "Error sincronizando encuesta de economia."
+            }
+        }
+
         if (errors.isNotEmpty()) {
             error(errors.distinct().joinToString(separator = "\n"))
         }
+    }
+
+    private suspend fun pendingUploadCount(): Int {
+        val planDao = db.planDao()
+        return planDao.pendingPlans().size + planDao.pendingActivities().size + planDao.pendingMaterials().size +
+            planDao.pendingMaterialDeletions().size + planDao.pendingCounterparts().size +
+            planDao.pendingDeliveries().size + planDao.pendingDeliveryItems().size +
+            db.economiaDao().pendingEncuestas().size
+    }
+
+    private suspend fun <T> monitorSync(
+        operation: String,
+        pendingBefore: Int,
+        processedCount: suspend () -> Int,
+        block: suspend () -> T
+    ): T {
+        flushQueuedSyncLogs()
+        val startedAt = Instant.now()
+        try {
+            val result = block()
+            saveSyncLog(startedAt, "success", operation, pendingBefore, processedCount().coerceAtLeast(0), null)
+            return result
+        } catch (error: Exception) {
+            val processed = runCatching { processedCount() }.getOrDefault(0).coerceAtLeast(0)
+            saveSyncLog(startedAt, if (processed > 0) "partial" else "error", operation, pendingBefore, processed, error)
+            throw error
+        }
+    }
+
+    private suspend fun saveSyncLog(
+        startedAt: Instant,
+        status: String,
+        operation: String,
+        requested: Int,
+        processed: Int,
+        error: Throwable?
+    ) {
+        val log = PendingSyncLog(
+            startedAt = startedAt.toString(),
+            finishedAt = Instant.now().toString(),
+            status = status,
+            details = buildMap {
+                put("operation", operation)
+                put("requested_records", requested.toString())
+                put("processed_records", processed.toString())
+                put("app_version", BuildConfig.VERSION_NAME)
+                error?.message?.let { put("error", sanitizeSyncError(it)) }
+            }
+        )
+        runCatching { remote.recordSyncLog(log, sessionStore.deviceId) }
+            .onFailure { sessionStore.enqueueSyncLog(log) }
+    }
+
+    private suspend fun flushQueuedSyncLogs() {
+        val queued = sessionStore.queuedSyncLogs()
+        if (queued.isEmpty()) return
+        val remaining = mutableListOf<PendingSyncLog>()
+        var blocked = false
+        queued.forEach { log ->
+            if (blocked || runCatching { remote.recordSyncLog(log, sessionStore.deviceId) }.isFailure) {
+                blocked = true
+                remaining += log
+            }
+        }
+        sessionStore.replaceQueuedSyncLogs(remaining)
     }
 
     fun logout() = sessionStore.clear()
@@ -531,4 +796,49 @@ data class DeliveryLineInput(
     val unit: String,
     val approvedQuantity: Double,
     val deliveredQuantity: Double
+)
+
+// --- Economia Familiar (Fase 8): entradas de captura para guardarEncuestaEconomia ---
+data class DownloadResult(val economiaError: String? = null) {
+    val message: String
+        get() = economiaError?.let {
+            "Planes Operativos actualizados. Economia Familiar no se pudo actualizar: $it"
+        } ?: "Catalogos actualizados, incluida Economia Familiar."
+}
+
+internal fun sanitizeSyncError(message: String): String = message
+    .replace(Regex("(?i)Bearer\\s+[A-Za-z0-9._~-]+"), "Bearer [oculto]")
+    .replace(Regex("eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+"), "[token oculto]")
+    .replace(Regex("(?i)(password|refresh_token|access_token)=?[^\\s,;]+"), "$1=[oculto]")
+    .take(500)
+
+internal fun shouldRefreshEconomiaFromServer(localState: SyncState?, hasPendingConflict: Boolean): Boolean =
+    localState == null || localState == SyncState.SYNCED ||
+        (localState == SyncState.CONFLICT && !hasPendingConflict)
+
+data class EconomiaApoyoInput(
+    val tipoApoyoId: String,
+    val valorMensual: Double?,
+    val nombreLibre: String?
+)
+
+data class EconomiaPagoInput(
+    val tipoPagoId: String,
+    val valorMensual: Double?
+)
+
+data class EconomiaProductoInput(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val productoId: String?,          // null si es "otro" producto libre
+    val nombreOtro: String?,
+    val unidad: String?,
+    val esPecuario: Boolean,
+    val temporalidad: String?,
+    val cantidadProducida: Double?,
+    val consumo: Double?,
+    val vendido: Double?,
+    val motivoNoVenta: String?,
+    val precioUnitario: Double?,
+    val apoyoAct: Boolean?,
+    val lugaresVentaIds: List<String>
 )

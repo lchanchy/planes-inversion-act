@@ -16,6 +16,9 @@ interface CatalogDao {
     @Query("select * from families where projectId = :projectId order by familyCode")
     fun families(projectId: String): Flow<List<FamilyEntity>>
 
+    @Query("select * from families order by familyCode")
+    fun allFamilies(): Flow<List<FamilyEntity>>
+
     @Query("select * from municipalities order by name")
     fun municipalities(): Flow<List<MunicipalityEntity>>
 

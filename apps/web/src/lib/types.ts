@@ -347,13 +347,30 @@ export type DeliveryAct = {
   operational_plan_id: string;
   material_delivery_id: string;
   act_number: string;
+  act_sequence: number;
+  version: number;
   status: "generated" | "signed" | "void";
   generated_at: string;
   generated_by: string | null;
   pdf_path: string | null;
   word_path: string | null;
   observations: string | null;
+  voided_at: string | null;
+  voided_by: string | null;
   is_deleted: boolean;
+};
+
+export type DeliveryActVersion = {
+  id: string;
+  delivery_act_id: string;
+  project_id: string;
+  family_id: string;
+  version: number;
+  status: "generated" | "signed" | "void";
+  delivery_date: string;
+  observations: string | null;
+  items: MaterialDeliveryItem[];
+  created_at: string;
 };
 
 export type ImplementationProgressStatus = "pending" | "in_progress" | "completed" | "overdue" | "cancelled";
@@ -436,4 +453,168 @@ export type MaintenanceProgress = {
   unit: string | null;
   observations: string | null;
   is_deleted: boolean;
+};
+
+// ==========================================================================
+// Fase 8: Economia Familiar
+// ==========================================================================
+export type EconomiaCategoria = {
+  id: string;
+  codigo: string;
+  nombre: string;
+  orden: number;
+  activo: boolean;
+};
+
+export type EconomiaProductoCatalogo = {
+  id: string;
+  categoria_id: string;
+  codigo: string;
+  nombre: string;
+  es_pecuario: boolean;
+  unidad_base: string;
+  orden: number;
+  activo: boolean;
+};
+
+export type EconomiaTipoApoyo = {
+  id: string;
+  codigo: string;
+  nombre: string;
+  orden: number;
+  activo: boolean;
+};
+
+export type EconomiaTipoPago = {
+  id: string;
+  codigo: string;
+  nombre: string;
+  orden: number;
+  activo: boolean;
+};
+
+export type EconomiaLugarVenta = {
+  id: string;
+  codigo: string;
+  nombre: string;
+  orden: number;
+  activo: boolean;
+};
+
+export type EconomiaRonda = {
+  id: string;
+  codigo: string;
+  nombre: string;
+  orden: number;
+  activo: boolean;
+};
+
+export type EconomiaEncuesta = {
+  id: string;
+  project_id: string;
+  family_id: string;
+  ronda_id: string;
+  equipo_id: string | null;
+  encuestador_id: string | null;
+  fecha: string;
+  anio: number;
+  tipo_medicion: "linea_base" | "monitoreo";
+  numero_monitoreo: number | null;
+  cambio_num_personas: boolean | null;
+  personas_ninos: number | null;
+  personas_adolescentes: number | null;
+  personas_jovenes: number | null;
+  personas_adultos: number | null;
+  personas_mayores: number | null;
+  personas_total: number | null;
+  recibe_apoyo_gobierno: boolean | null;
+  recibe_otros_pagos: boolean | null;
+  valor_jornal: number | null;
+  estado: string;
+  observaciones: string | null;
+  server_version: number;
+  revision: number;
+  notas_revision: string | null;
+  es_piloto: boolean;
+  is_deleted: boolean;
+};
+
+export type EconomiaEncuestaApoyo = {
+  id: string;
+  encuesta_id: string;
+  project_id: string;
+  family_id: string;
+  tipo_apoyo_id: string;
+  valor_mensual: number | null;
+  nombre_libre: string | null;
+  is_deleted: boolean;
+};
+
+export type EconomiaEncuestaPago = {
+  id: string;
+  encuesta_id: string;
+  project_id: string;
+  family_id: string;
+  tipo_pago_id: string;
+  valor_mensual: number | null;
+  is_deleted: boolean;
+};
+
+export type EconomiaEncuestaProducto = {
+  id: string;
+  encuesta_id: string;
+  project_id: string;
+  family_id: string;
+  producto_id: string | null;
+  nombre_otro: string | null;
+  unidad: string | null;
+  es_pecuario: boolean;
+  temporalidad: string | null;
+  cantidad_producida: number | null;
+  consumo: number | null;
+  vendido: number | null;
+  motivo_no_venta: string | null;
+  precio_unitario: number | null;
+  ingreso_mensual: number | null;
+  ingreso_anual: number | null;
+  apoyo_act: boolean | null;
+  is_deleted: boolean;
+};
+
+export type AuditLog = {
+  id: string;
+  project_id: string | null;
+  user_id: string | null;
+  entity_type: string;
+  entity_id: string | null;
+  action: "insert" | "update" | "delete" | string;
+  before_data: Record<string, unknown> | null;
+  after_data: Record<string, unknown> | null;
+  created_at: string;
+};
+
+export type SyncLog = {
+  id: string;
+  user_id: string | null;
+  device_id: string | null;
+  started_at: string;
+  finished_at: string | null;
+  status: "started" | "success" | "partial" | "error" | string;
+  details: Record<string, unknown>;
+};
+
+export type EconomiaProductoLugarVenta = {
+  id: string;
+  encuesta_producto_id: string;
+  project_id: string;
+  family_id: string;
+  lugar_venta_id: string | null;
+  nombre_libre: string | null;
+  is_deleted: boolean;
+};
+
+export type EconomiaSyncConflicto = {
+  id: string; encuesta_id: string; project_id: string; family_id: string;
+  expected_version: number; current_version: number | null; estado: string;
+  server_payload: Record<string, unknown> | null; client_payload: Record<string, unknown>; created_at: string;
 };

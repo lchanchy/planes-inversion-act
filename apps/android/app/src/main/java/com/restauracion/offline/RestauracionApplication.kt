@@ -2,6 +2,7 @@ package com.restauracion.offline
 
 import android.app.Application
 import com.restauracion.offline.data.AppContainer
+import com.restauracion.offline.data.CrashDiagnostics
 
 class RestauracionApplication : Application() {
     lateinit var container: AppContainer
@@ -9,6 +10,7 @@ class RestauracionApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        container = AppContainer(this)
+        val crashDiagnostics = CrashDiagnostics(this).also { it.install() }
+        container = AppContainer(this, crashDiagnostics)
     }
 }
