@@ -25,7 +25,7 @@ import { supabase, supabaseConfigured } from "@/lib/supabase";
 import { fetchAllPages } from "@/lib/supabase-pagination";
 import { annualHouseholdIncome } from "@/lib/economia-income";
 import { deliveryQuantityError } from "@/lib/delivery-act-checklist";
-import { TRACKING_BASE_COLUMNS, canEditTracking, trackingFrozenOffsets, type TrackingBaseColumnKey } from "@/lib/tracking-columns";
+import { TRACKING_BASE_COLUMNS, canEditTracking, resolveTrackingTarget, trackingFrozenOffsets, type TrackingBaseColumnKey } from "@/lib/tracking-columns";
 import type {
   Activity,
   AuditLog,
@@ -5148,6 +5148,9 @@ function PlansAdmin({
   const selectedPlanActivities = selectedPlan
     ? planActivities.filter((activity) => activity.plan_id === selectedPlan.id)
     : [];
+  const selectedPlanCompletenessIssues = selectedPlan
+    ? planCompletenessIssues(selectedPlan, { activities, planActivities, planMaterials, planCounterparts })
+    : [];
   const exportContext = {
     projects,
     families,
@@ -5256,6 +5259,7 @@ function PlansAdmin({
         activities,
         planActivities,
         planMaterials,
+        planCounterparts,
         provisionalMaterials
       });
       if (validation.length > 0) {
@@ -5534,11 +5538,12 @@ function PlansAdmin({
       <div className="grid">
         <div className="plan-list-column">
           <DataTable
-            headers={["Codigo", "Familia", "Municipio", "Vereda", "Estado", "Acciones"]}
+            headers={["Codigo", "Familia", "Municipio", "Vereda", "Estado", "Sincronización", "Acciones"]}
             rows={visiblePlans.map((plan) => {
               const family = families.find((item) => item.id === plan.family_id);
               const municipality = municipalities.find((item) => item.id === family?.municipality_id);
               const village = villages.find((item) => item.id === family?.village_id);
+              const incomplete = planCompletenessIssues(plan, { activities, planActivities, planMaterials, planCounterparts }).length > 0;
               return [
                 <button className="secondary" key="open" type="button" onClick={() => setSelectedPlanId(plan.id)}>
                   v{plan.version}
@@ -5547,6 +5552,9 @@ function PlansAdmin({
                 municipality?.name ?? "",
                 village?.name ?? "",
                 <span className="badge" key="status">{planStatusLabel(plan.status)}</span>,
+                <span className={incomplete ? "badge error" : "badge"} key="sync-status">
+                  {incomplete ? "Plan incompleto" : "Completo"}
+                </span>,
                 <button className="danger plan-deleter-only" key="delete" type="button" onClick={() => void deleteOperationalPlan(plan.id)}>Eliminar</button>
               ];
             })}
@@ -5554,29 +5562,37 @@ function PlansAdmin({
         </div>
         <div className="plan-detail-column">
           {selectedPlan ? (
-            <PlanDetail
-              plan={selectedPlan}
-              families={families}
-              activities={activities}
-              materials={materials}
-              planActivities={selectedPlanActivities}
-              allPlans={plans}
-              allPlanActivities={planActivities}
-              planMaterials={planMaterials}
-              planCounterparts={planCounterparts}
-              provisionalMaterials={provisionalMaterials}
-              projects={projects}
-              municipalities={municipalities}
-              villages={villages}
-              projectLogos={projectLogos}
-              canReview={canReview}
-              onApprove={() => updatePlanStatus(selectedPlan, "approved")}
-              onReturn={() => updatePlanStatus(selectedPlan, "returned")}
-              onClose={() => updatePlanStatus(selectedPlan, "closed")}
-              onMoveToReview={() => updatePlanStatus(selectedPlan, "pending_review")}
-              onResolveMaterial={resolveProvisionalMaterial}
-              onChange={onChange}
-            />
+            <>
+              {selectedPlanCompletenessIssues.length > 0 ? (
+                <div className="alert error">
+                  <strong>Este plan no se sincronizó completo.</strong> {selectedPlanCompletenessIssues.join(" ")}
+                  {selectedPlan.status === "returned" ? " Debe corregirse y sincronizarse nuevamente desde Android." : " No puede aprobarse hasta completar la sincronización."}
+                </div>
+              ) : null}
+              <PlanDetail
+                plan={selectedPlan}
+                families={families}
+                activities={activities}
+                materials={materials}
+                planActivities={selectedPlanActivities}
+                allPlans={plans}
+                allPlanActivities={planActivities}
+                planMaterials={planMaterials}
+                planCounterparts={planCounterparts}
+                provisionalMaterials={provisionalMaterials}
+                projects={projects}
+                municipalities={municipalities}
+                villages={villages}
+                projectLogos={projectLogos}
+                canReview={canReview}
+                onApprove={() => updatePlanStatus(selectedPlan, "approved")}
+                onReturn={() => updatePlanStatus(selectedPlan, "returned")}
+                onClose={() => updatePlanStatus(selectedPlan, "closed")}
+                onMoveToReview={() => updatePlanStatus(selectedPlan, "pending_review")}
+                onResolveMaterial={resolveProvisionalMaterial}
+                onChange={onChange}
+              />
+            </>
           ) : (
             <div className="panel muted">Seleccione un plan para revisar el detalle.</div>
           )}
@@ -5632,7 +5648,7 @@ function PlanDetail({
   onChange: () => Promise<void>;
 }) {
   const family = families.find((item) => item.id === plan.family_id);
-  const validation = validatePlanForApproval(plan, { activities, planActivities, planMaterials, provisionalMaterials });
+  const validation = validatePlanForApproval(plan, { activities, planActivities, planMaterials, planCounterparts, provisionalMaterials });
   const canEditStatus = canReview && !["approved", "closed"].includes(plan.status);
   const canEditPlan = canReview && plan.status !== "closed";
   const [planNotice, setPlanNotice] = useState<Notice>(null);
@@ -6202,12 +6218,12 @@ function validatePlanForApproval(
     activities: Activity[];
     planActivities: PlanActivity[];
     planMaterials: PlanProjectMaterial[];
+    planCounterparts: PlanFamilyCounterpart[];
     provisionalMaterials: ProvisionalMaterial[];
   }
 ) {
-  const errors: string[] = [];
-  const activitiesForPlan = data.planActivities.filter((activity) => activity.plan_id === plan.id);
-  if (activitiesForPlan.length === 0) errors.push("El plan debe tener al menos una actividad.");
+  const errors = planCompletenessIssues(plan, data);
+  const activitiesForPlan = data.planActivities.filter((activity) => activity.plan_id === plan.id && !activity.is_deleted);
   for (const planActivity of activitiesForPlan) {
     const catalogActivity = data.activities.find((activity) => activity.id === planActivity.activity_id);
     if (catalogActivity?.requires_baseline && planActivity.baseline === null) {
@@ -6239,6 +6255,29 @@ function validatePlanForApproval(
     }
   }
   return errors;
+}
+
+function planCompletenessIssues(
+  plan: OperationalPlan,
+  data: {
+    activities: Activity[];
+    planActivities: PlanActivity[];
+    planMaterials: PlanProjectMaterial[];
+    planCounterparts: PlanFamilyCounterpart[];
+  }
+) {
+  const planRows = data.planActivities.filter((activity) => activity.plan_id === plan.id && !activity.is_deleted);
+  if (planRows.length === 0) return ["El plan no tiene actividades sincronizadas."];
+  const incompleteNames = planRows
+    .filter((activity) => {
+      const hasMaterials = data.planMaterials.some((material) => material.plan_activity_id === activity.id && !material.is_deleted);
+      const hasCounterparts = data.planCounterparts.some((counterpart) => counterpart.plan_activity_id === activity.id && !counterpart.is_deleted);
+      return !hasMaterials && !hasCounterparts;
+    })
+    .map((activity) => data.activities.find((catalog) => catalog.id === activity.activity_id)?.name ?? "Actividad sin nombre");
+  return incompleteNames.length > 0
+    ? [`Faltan materiales o contrapartidas en ${incompleteNames.length} actividad(es): ${incompleteNames.join(", ")}.`]
+    : [];
 }
 
 function phase5TabFromView(view: ViewKey): Phase5Tab | null {
@@ -7587,6 +7626,72 @@ function ProcurementDeliveriesActs({
     }
   }
 
+  async function saveTrackingVegetalTarget(row: TrackingFamilyRow, group: VegetalIndicatorGroup, rawValue: string) {
+    const cell = row.vegetalIndicators[group];
+    if (!cell) return;
+    await saveTrackingGroupedTarget({
+      row,
+      rawValue,
+      progress: cell.values.vegetal_entrega?.[1],
+      progressType: "vegetal_entrega",
+      vegetalGroup: group
+    });
+  }
+
+  async function saveTrackingCounterpartTarget(row: TrackingFamilyRow, group: CounterpartVegetalCategory, rawValue: string) {
+    const cell = row.counterpartVegetalIndicators[group];
+    if (!cell) return;
+    await saveTrackingGroupedTarget({
+      row,
+      rawValue,
+      progress: cell.siembra[1],
+      progressType: "contrapartida_siembra",
+      vegetalGroup: group
+    });
+  }
+
+  async function saveTrackingGroupedTarget(payload: {
+    row: TrackingFamilyRow;
+    rawValue: string;
+    progress?: QuarterlyProgress;
+    progressType: "vegetal_entrega" | "contrapartida_siembra";
+    vegetalGroup: VegetalIndicatorGroup | CounterpartVegetalCategory;
+  }) {
+    setNotice(null);
+    if (!canEditImplementation) {
+      setNotice({ type: "error", message: "No tiene permisos para editar metas de seguimiento." });
+      return;
+    }
+    const target = Number(payload.rawValue);
+    if (!Number.isFinite(target) || target < 0) {
+      setNotice({ type: "error", message: "La meta debe ser un valor numérico mayor o igual a cero." });
+      throw new Error("Valor de meta no válido.");
+    }
+    setSaving(true);
+    try {
+      await upsertQuarterlyProgress({
+        project_id: payload.row.project_id,
+        family_id: payload.row.family_id,
+        operational_plan_id: null,
+        plan_activity_id: null,
+        activity_id: null,
+        year: trackingYear,
+        quarter: 1,
+        target_quantity: target,
+        progress_quantity: Number(payload.progress?.progress_quantity ?? 0),
+        progress_type: payload.progressType,
+        vegetal_indicator_group: payload.vegetalGroup
+      });
+      setNotice({ type: "info", message: "Meta actualizada." });
+      await onChange();
+    } catch (error) {
+      setNotice({ type: "error", message: getErrorMessage(error) });
+      throw error;
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function saveTrackingMatrix() {
     setNotice(null);
     if (phase5Blocked) {
@@ -8409,12 +8514,13 @@ function ProcurementDeliveriesActs({
             canEdit={canEditImplementation}
             onChange={updateTrackingDraft}
             onHectaresChange={saveTrackingHectares}
-            onBaselineChange={saveTrackingBaseline}
             onTargetChange={saveTrackingTarget}
+            onVegetalTargetChange={saveTrackingVegetalTarget}
+            onCounterpartTargetChange={saveTrackingCounterpartTarget}
             frozenColumns={frozenTrackingColumns}
           />
           <div className="alert info">
-            La matriz toma metas desde planes operativos aprobados. Los avances, entregados, sembrados y cumplimiento se guardan por familia, actividad, trimestre y año.
+            Las metas pueden ajustarse manualmente con confirmación. Los avances, entregados, sembrados y cumplimiento se guardan por familia, actividad, trimestre y año.
           </div>
         </div>
       ) : null}
@@ -8687,8 +8793,9 @@ function TrackingMatrixTable({
   canEdit,
   onChange,
   onHectaresChange,
-  onBaselineChange,
   onTargetChange,
+  onVegetalTargetChange,
+  onCounterpartTargetChange,
   frozenColumns
 }: {
   matrix: TrackingMatrix;
@@ -8696,8 +8803,9 @@ function TrackingMatrixTable({
   canEdit: boolean;
   onChange: (key: string, value: string) => void;
   onHectaresChange: (row: TrackingFamilyRow, value: string) => Promise<void>;
-  onBaselineChange: (planActivityId: string, value: string) => Promise<void>;
   onTargetChange?: (planActivityId: string, value: string) => Promise<void>;
+  onVegetalTargetChange: (row: TrackingFamilyRow, group: VegetalIndicatorGroup, value: string) => Promise<void>;
+  onCounterpartTargetChange: (row: TrackingFamilyRow, group: CounterpartVegetalCategory, value: string) => Promise<void>;
   frozenColumns: TrackingBaseColumnKey[];
 }) {
   const frozenOffsets = trackingFrozenOffsets(frozenColumns);
@@ -8765,6 +8873,26 @@ function TrackingMatrixTable({
     }
     try {
       await onHectaresChange(row, next);
+    } catch {
+      event.currentTarget.value = previous;
+    }
+  }
+
+  async function confirmGroupedTargetChange(
+    event: React.FocusEvent<HTMLInputElement>,
+    label: string,
+    onSave: (value: string) => Promise<void>
+  ) {
+    const previous = event.currentTarget.defaultValue;
+    const next = event.currentTarget.value;
+    if (next === previous) return;
+    if (!confirmManualChange(`Va a cambiar la meta de "${label}" de "${previous || "0"}" a "${next || "0"}". ¿Desea aplicar este cambio?`)) {
+      event.currentTarget.value = previous;
+      return;
+    }
+    try {
+      await onSave(next);
+      event.currentTarget.defaultValue = next;
     } catch {
       event.currentTarget.value = previous;
     }
@@ -8844,7 +8972,18 @@ function TrackingMatrixTable({
                   ));
                 }
                 const cells = [
-                  <td className={trackingGroupCellClass("tracking-col-meta", visualGroupIndex, true)} key={`${row.key}-cp-${group.key}-meta`}>{formatNumber(cell.targetQuantity)}</td>
+                  <td className={trackingGroupCellClass("tracking-col-meta", visualGroupIndex, true)} key={`${row.key}-cp-${group.key}-meta`}>
+                    <input
+                      className="tracking-input"
+                      defaultValue={String(cell.targetQuantity)}
+                      disabled={!canEdit}
+                      min="0"
+                      onBlur={(event) => void confirmGroupedTargetChange(event, `${row.familyCode} - ${group.label}`, (value) => onCounterpartTargetChange(row, group.key, value))}
+                      step="0.01"
+                      title="Meta editable"
+                      type="number"
+                    />
+                  </td>
                 ];
                 for (const quarter of matrix.visibleQuarters) {
                   const draftKey = trackingCounterpartDraftKey(row.family_id, group.key, quarter);
@@ -8893,7 +9032,18 @@ function TrackingMatrixTable({
                   ));
                 }
                 const cells = [
-                  <td className={trackingGroupCellClass("tracking-col-meta", visualGroupIndex, true)} key={`${row.key}-${group.key}-meta`}>{formatNumber(cell.targetQuantity)}</td>
+                  <td className={trackingGroupCellClass("tracking-col-meta", visualGroupIndex, true)} key={`${row.key}-${group.key}-meta`}>
+                    <input
+                      className="tracking-input"
+                      defaultValue={String(cell.targetQuantity)}
+                      disabled={!canEdit}
+                      min="0"
+                      onBlur={(event) => void confirmGroupedTargetChange(event, `${row.familyCode} - ${group.label}`, (value) => onVegetalTargetChange(row, group.key, value))}
+                      step="0.01"
+                      title="Meta editable"
+                      type="number"
+                    />
+                  </td>
                 ];
                 for (const type of ["vegetal_entrega", "vegetal_siembra"] as VegetalQuarterlyType[]) {
                   for (const quarter of matrix.visibleQuarters) {
@@ -8940,19 +9090,6 @@ function TrackingMatrixTable({
                   ));
                 }
                 const cells = [
-                  <td className={trackingGroupCellClass("tracking-col-baseline", visualGroupIndex, true)} key={`${row.key}-${group.key}-baseline`}>
-                    <input
-                      className="tracking-input"
-                      disabled={!canEdit}
-                      defaultValue={cell.baselineQuantity ?? ""}
-                      min="0"
-                      onBlur={(event) => void confirmPlanActivityValueChange(event, cell.plan_activity_id, group.activityName, "Línea base", onBaselineChange)}
-                      placeholder="N/A"
-                      step="0.01"
-                      title="Línea base editable"
-                      type="number"
-                    />
-                  </td>,
                   <td className={trackingGroupCellClass("tracking-col-meta", visualGroupIndex, true)} key={`${row.key}-${group.key}-meta`}>
                     <input
                       className="tracking-input"
@@ -9520,7 +9657,7 @@ function buildTrackingMatrix(data: {
     );
     for (const planMaterial of activityMaterials) {
       const material = planMaterial.material_id ? materialById.get(planMaterial.material_id) : undefined;
-      const vegetalGroup = material?.vegetal_indicator_group;
+      const vegetalGroup = material?.vegetal_indicator_group ?? (material ? inferCounterpartVegetalCategory(material.name) : null);
       if (!isTrackableVegetalGroup(vegetalGroup)) continue;
       const current = row.vegetalIndicators[vegetalGroup] ?? {
         targetQuantity: 0,
@@ -9539,6 +9676,15 @@ function buildTrackingMatrix(data: {
         }
       }
       row.vegetalIndicators[vegetalGroup] = current;
+    }
+    for (const group of VEGETAL_INDICATOR_GROUPS) {
+      const cell = row.vegetalIndicators[group.key];
+      if (!cell) continue;
+      cell.targetQuantity = resolveTrackingTarget(
+        cell.targetQuantity,
+        cell.values.vegetal_entrega?.[1]?.target_quantity,
+        cell.values.vegetal_siembra?.[1]?.target_quantity
+      );
     }
     rows.set(family.id, row);
   }
@@ -9582,6 +9728,7 @@ function buildTrackingMatrix(data: {
       const progress = progressByCounterpartSiembra.get(counterpartSiembraProgressKey(familyId, category, quarter));
       if (progress) current.siembra[quarter] = progress;
     }
+    current.targetQuantity = resolveTrackingTarget(current.targetQuantity, current.siembra[1]?.target_quantity);
     row.counterpartVegetalIndicators[category] = current;
   }
   const counterpartVegetalGroups: TrackingCounterpartVegetalGroup[] = COUNTERPART_VEGETAL_CATEGORIES
@@ -9625,7 +9772,6 @@ function comparePlanRecency(left: OperationalPlan, right: OperationalPlan) {
 
 function trackingGroupSubheaders(group: TrackingActivityGroup) {
   return [
-    "Línea base",
     "Meta",
     ...group.progressTypes.flatMap((type) => [1, 2, 3, 4].map((quarter) => `${trackingProgressTypeLabel(type)} Q${quarter}`)),
     "Avance acumulado"
@@ -9634,7 +9780,6 @@ function trackingGroupSubheaders(group: TrackingActivityGroup) {
 
 function trackingGroupVisibleSubheaders(group: TrackingActivityGroup, quarters: number[], year: number) {
   return [
-    "Línea base",
     "Meta",
     ...group.progressTypes.flatMap((type) => quarters.map((quarter) => `${trackingProgressTypeLabel(type)} Q${quarter}_${year}`)),
     "Avance acumulado"
@@ -9673,7 +9818,7 @@ function trackingGroupColSpan(group: TrackingActivityGroup) {
 }
 
 function trackingGroupVisibleColSpan(group: TrackingActivityGroup, quarters: number[]) {
-  return 2 + group.progressTypes.length * quarters.length + 1;
+  return 1 + group.progressTypes.length * quarters.length + 1;
 }
 
 function trackingVegetalVisibleColSpan(quarters: number[]) {

@@ -16,6 +16,10 @@ export function canEditTracking(roleNames: Iterable<string>) {
   return Array.from(roleNames).some((role) => TRACKING_EDITOR_ROLES.has(role));
 }
 
+export function resolveTrackingTarget(fallback: number, ...savedTargets: Array<number | null | undefined>) {
+  return savedTargets.find((value) => value !== null && value !== undefined) ?? fallback;
+}
+
 export function trackingFrozenOffsets(frozen: TrackingBaseColumnKey[]) {
   let left = 0;
   return Object.fromEntries(TRACKING_BASE_COLUMNS.map((column) => {

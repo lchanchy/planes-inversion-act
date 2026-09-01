@@ -1646,8 +1646,11 @@ private fun PlanCaptureScreen(
                             message = errors.joinToString("\n")
                         } else {
                             scope.launch {
-                                runCatching { container.repository.markPlanPendingReview(currentPlan) }
-                                    .onSuccess { message = "Plan marcado como pendiente de revision." }
+                                runCatching {
+                                    container.repository.markPlanPendingReview(currentPlan)
+                                    container.repository.syncPending()
+                                }
+                                    .onSuccess { message = "Plan completo enviado para revisión." }
                                     .onFailure { message = it.message ?: "No fue posible marcar el plan para revision." }
                             }
                         }
@@ -2109,6 +2112,12 @@ private fun validatePlanForReview(
     val errors = validatePlanForSync(activities, materials, counterparts, catalog).toMutableList()
     if (materials.isEmpty() && counterparts.isEmpty()) {
         errors += "Agregue materiales del proyecto o contrapartida familiar."
+    }
+    activities.filter { activity ->
+        materials.none { it.planActivityId == activity.id } && counterparts.none { it.planActivityId == activity.id }
+    }.forEach { activity ->
+        val name = catalog.firstOrNull { it.id == activity.activityId }?.name ?: "Actividad"
+        errors += "Agregue materiales o contrapartida en $name."
     }
     if (materials.any { it.materialId == null || it.provisionalName != null }) {
         errors += "Resuelva los materiales provisionales en la web antes de marcar listo para revision."

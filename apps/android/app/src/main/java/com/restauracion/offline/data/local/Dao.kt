@@ -170,6 +170,15 @@ interface PlanDao {
     @Query("select * from plan_family_counterparts where syncState in ('PENDING_SYNC','ERROR','CONFLICT')")
     suspend fun pendingCounterparts(): List<PlanFamilyCounterpartEntity>
 
+    @Query("update plan_activities set syncState = 'PENDING_SYNC' where planId = :planId")
+    suspend fun retryActivitiesForPlan(planId: String)
+
+    @Query("update plan_project_materials set syncState = 'PENDING_SYNC' where planActivityId in (select id from plan_activities where planId = :planId)")
+    suspend fun retryMaterialsForPlan(planId: String)
+
+    @Query("update plan_family_counterparts set syncState = 'PENDING_SYNC' where planActivityId in (select id from plan_activities where planId = :planId)")
+    suspend fun retryCounterpartsForPlan(planId: String)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertPlan(item: OperationalPlanEntity)
 

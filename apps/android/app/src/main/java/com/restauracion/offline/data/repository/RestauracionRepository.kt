@@ -437,6 +437,7 @@ class RestauracionRepository(
     }
 
     suspend fun markPlanPending(plan: OperationalPlanEntity) {
+        retryCompletePlan(plan.id)
         db.planDao().updatePlan(plan.copy(syncState = SyncState.PENDING_SYNC, lastError = null))
     }
 
@@ -451,7 +452,14 @@ class RestauracionRepository(
 
     suspend fun markPlanPendingReview(plan: OperationalPlanEntity) {
         require(plan.status !in listOf("approved", "closed")) { "No se puede enviar a revision un plan aprobado o cerrado." }
+        retryCompletePlan(plan.id)
         db.planDao().updatePlan(plan.copy(status = "pending_review", syncState = SyncState.PENDING_SYNC, lastError = null))
+    }
+
+    private suspend fun retryCompletePlan(planId: String) {
+        db.planDao().retryActivitiesForPlan(planId)
+        db.planDao().retryMaterialsForPlan(planId)
+        db.planDao().retryCounterpartsForPlan(planId)
     }
 
     suspend fun updateActivity(item: PlanActivityEntity) {
@@ -567,6 +575,8 @@ class RestauracionRepository(
     private suspend fun performSyncPending() {
         val planDao = db.planDao()
         val errors = mutableListOf<String>()
+        val plansPendingReview = mutableMapOf<String, OperationalPlanEntity>()
+        val failedPlanIds = mutableSetOf<String>()
         // Estados en el servidor: si un plan ya fue aprobado/cerrado en la web, NO se debe re-subir
         // con el estado local "draft" (eso pisaba la aprobacion y hacia rebotar las entregas).
         val serverStatuses = runCatching { remote.operationalPlanStatuses() }.getOrDefault(emptyMap())
@@ -584,7 +594,9 @@ class RestauracionRepository(
             // Ante un choque de version (project_id, family_id, version), sube la version y reintenta.
             while (!uploaded && attempts < 5) {
                 try {
-                    remote.uploadPlan(current)
+                    // ponytail: el servidor recibe primero un borrador; pending_review se publica
+                    // solamente al final, cuando todos los hijos del plan ya subieron.
+                    remote.uploadPlan(if (current.status == "pending_review") current.copy(status = "draft") else current)
                     uploaded = true
                 } catch (error: Exception) {
                     lastError = error
@@ -598,8 +610,13 @@ class RestauracionRepository(
                 }
             }
             if (uploaded) {
-                planDao.updatePlan(current.copy(syncState = SyncState.SYNCED, lastError = null))
+                if (current.status == "pending_review") {
+                    plansPendingReview[current.id] = current
+                } else {
+                    planDao.updatePlan(current.copy(syncState = SyncState.SYNCED, lastError = null))
+                }
             } else {
+                failedPlanIds += current.id
                 planDao.updatePlan(current.copy(syncState = SyncState.ERROR, lastError = lastError?.message))
                 errors += lastError?.message ?: "Error sincronizando plan."
             }
@@ -610,6 +627,7 @@ class RestauracionRepository(
                 planDao.updateActivity(item.copy(syncState = SyncState.SYNCED))
             }.onFailure {
                 planDao.updateActivity(item.copy(syncState = SyncState.ERROR))
+                failedPlanIds += item.planId
                 errors += it.message ?: "Error sincronizando actividad."
             }
         }
@@ -624,6 +642,7 @@ class RestauracionRepository(
                 planDao.updateMaterial(item.copy(syncState = SyncState.SYNCED))
             }.onFailure {
                 planDao.updateMaterial(item.copy(syncState = SyncState.ERROR))
+                planDao.activityById(item.planActivityId)?.let { activity -> failedPlanIds += activity.planId }
                 errors += it.message ?: "Error sincronizando material."
             }
         }
@@ -642,7 +661,23 @@ class RestauracionRepository(
                 planDao.updateCounterpart(item.copy(syncState = SyncState.SYNCED))
             }.onFailure {
                 planDao.updateCounterpart(item.copy(syncState = SyncState.ERROR))
+                planDao.activityById(item.planActivityId)?.let { activity -> failedPlanIds += activity.planId }
                 errors += it.message ?: "Error sincronizando contrapartida."
+            }
+        }
+        plansPendingReview.values.forEach { plan ->
+            if (plan.id in failedPlanIds) {
+                val message = "El plan no se envió completo. Revise la conexión y vuelva a sincronizar."
+                planDao.updatePlan(plan.copy(syncState = SyncState.ERROR, lastError = message))
+                errors += message
+            } else {
+                runCatching {
+                    remote.uploadPlan(plan)
+                    planDao.updatePlan(plan.copy(syncState = SyncState.SYNCED, lastError = null))
+                }.onFailure {
+                    planDao.updatePlan(plan.copy(syncState = SyncState.ERROR, lastError = it.message))
+                    errors += it.message ?: "No fue posible finalizar el envío del plan."
+                }
             }
         }
         // Entregas primero (padre), luego sus items (respeta la llave foranea).

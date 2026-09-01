@@ -992,6 +992,12 @@ th {
   font-size: 12px;
 }
 
+.badge.error {
+  background: #fee4e2;
+  border-color: #fda29b;
+  color: #b42318;
+}
+
 .logo-list {
   display: flex;
   flex-wrap: wrap;
