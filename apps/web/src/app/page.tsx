@@ -6763,9 +6763,11 @@ function ProcurementDeliveriesActs({
   const [actFinalText, setActFinalText] = useState(DefaultDeliveryActFinalText);
   const [actTechnicianName, setActTechnicianName] = useState(currentProfile?.full_name ?? "");
   const [actTechnicianDocument, setActTechnicianDocument] = useState(currentProfile?.document_number ?? "");
+  const [actFamilyId, setActFamilyId] = useState("");
   const [actPlanId, setActPlanId] = useState("");
   const [actChecklist, setActChecklist] = useState<Record<string, { selected: boolean; quantity: string }>>({});
   const [editingActId, setEditingActId] = useState<string | null>(null);
+  const [lastConfirmedActId, setLastConfirmedActId] = useState<string | null>(null);
   const [actVersions, setActVersions] = useState<DeliveryActVersion[]>([]);
   const [selectedIndicatorKey, setSelectedIndicatorKey] = useState("");
   const [implementedQuantity, setImplementedQuantity] = useState("");
@@ -6952,27 +6954,33 @@ function ProcurementDeliveriesActs({
     deliveryDate: actDeliveryDate,
     actNumberPrefix
   }), [filteredNeeds, materialDeliveries, materialDeliveryItems, projects, families, municipalities, villages, plans, filters, actDeliveryDate, actNumberPrefix]);
+  const eligibleActFamilies = useMemo(() => {
+    const eligibleIds = new Set(approvedNeeds.map((need) => need.family_id));
+    return families.filter((family) => eligibleIds.has(family.id) && plans.some((plan) =>
+      plan.family_id === family.id && plan.status === "approved" && !plan.is_deleted
+    )).sort((left, right) => `${left.family_code}-${left.representative_name}`.localeCompare(`${right.family_code}-${right.representative_name}`));
+  }, [approvedNeeds, families, plans]);
   const familyActPlans = useMemo(() => plans.filter((plan) =>
-    plan.family_id === filters.family_id && plan.status === "approved" && !plan.is_deleted
-  ).sort((left, right) => right.version - left.version), [plans, filters.family_id]);
+    plan.family_id === actFamilyId && plan.status === "approved" && !plan.is_deleted
+  ).sort((left, right) => right.version - left.version), [plans, actFamilyId]);
   const editingAct = editingActId ? deliveryActs.find((act) => act.id === editingActId) ?? null : null;
   const editingDeliveryItems = editingAct
     ? materialDeliveryItems.filter((item) => item.material_delivery_id === editingAct.material_delivery_id && !item.is_deleted)
     : [];
   const editingQuantityByNeed = new Map(editingDeliveryItems.map((item) => [item.plan_project_material_id, item.delivered_quantity]));
   const actChecklistNeeds = approvedNeeds.filter((need) =>
-    need.family_id === filters.family_id
+    need.family_id === actFamilyId
     && need.operational_plan_id === actPlanId
     && (need.pendingQuantity > 0 || editingQuantityByNeed.has(need.plan_project_material_id))
   );
 
   useEffect(() => {
     const activeEdit = editingActId ? deliveryActs.find((act) => act.id === editingActId) : null;
-    if (activeEdit?.family_id === filters.family_id) return;
+    if (activeEdit?.family_id === actFamilyId) return;
     setActPlanId(familyActPlans[0]?.id ?? "");
     setActChecklist({});
     setEditingActId(null);
-  }, [filters.family_id, familyActPlans, editingActId, deliveryActs]);
+  }, [actFamilyId, familyActPlans, editingActId, deliveryActs]);
 
   useEffect(() => {
     let active = true;
@@ -6984,6 +6992,10 @@ function ProcurementDeliveriesActs({
     void loadActVersions();
     return () => { active = false; };
   }, [deliveryActs]);
+  const lastConfirmedAct = lastConfirmedActId ? deliveryActs.find((act) => act.id === lastConfirmedActId) ?? null : null;
+  const lastConfirmedVersion = lastConfirmedAct
+    ? actVersions.find((version) => version.delivery_act_id === lastConfirmedAct.id && version.version === lastConfirmedAct.version) ?? null
+    : null;
 
   useEffect(() => {
     if (!selectedIndicator) {
@@ -7805,7 +7817,7 @@ function ProcurementDeliveriesActs({
 
   async function confirmActChecklist() {
     setNotice(null);
-    if (!filters.family_id || !actPlanId) {
+    if (!actFamilyId || !actPlanId) {
       setNotice({ type: "error", message: "Seleccione una familia y su plan operativo." });
       return;
     }
@@ -7831,9 +7843,11 @@ function ProcurementDeliveriesActs({
     try {
       const args = editingActId
         ? { p_delivery_act_id: editingActId, p_delivery_date: actDeliveryDate, p_items: selected, p_observations: deliveryObservation.trim() || null }
-        : { p_family_id: filters.family_id, p_operational_plan_id: actPlanId, p_delivery_date: actDeliveryDate, p_items: selected, p_observations: deliveryObservation.trim() || null };
-      const { error } = await supabase.rpc(editingActId ? "correct_delivery_act" : "confirm_delivery_act", args);
+        : { p_family_id: actFamilyId, p_operational_plan_id: actPlanId, p_delivery_date: actDeliveryDate, p_items: selected, p_observations: deliveryObservation.trim() || null };
+      const currentEditingActId = editingActId;
+      const { data: savedActId, error } = await supabase.rpc(editingActId ? "correct_delivery_act" : "confirm_delivery_act", args);
       if (error) throw error;
+      setLastConfirmedActId(currentEditingActId ?? (savedActId as string));
       setActChecklist({});
       setEditingActId(null);
       setDeliveryObservation("");
@@ -7849,7 +7863,7 @@ function ProcurementDeliveriesActs({
   function startActCorrection(act: DeliveryAct) {
     const delivery = materialDeliveries.find((item) => item.id === act.material_delivery_id);
     const items = materialDeliveryItems.filter((item) => item.material_delivery_id === act.material_delivery_id && !item.is_deleted);
-    setFilters((current) => ({ ...current, project_id: act.project_id, family_id: act.family_id }));
+    setActFamilyId(act.family_id);
     setActPlanId(act.operational_plan_id);
     setActDeliveryDate(delivery?.delivery_date ?? new Date().toISOString().slice(0, 10));
     setDeliveryObservation(act.observations ?? "");
@@ -8035,7 +8049,7 @@ function ProcurementDeliveriesActs({
         <span className="badge">{canManageProcurement ? "Operacion habilitada" : "Solo lectura"}</span>
       </div>
       <AlertNotice notice={notice} onClose={() => setNotice(null)} />
-      <Phase5Filters
+      {activeTab !== "acts" ? <Phase5Filters
         filters={filters}
         projects={projects}
         families={families}
@@ -8044,7 +8058,7 @@ function ProcurementDeliveriesActs({
         activities={activities}
         materials={materials}
         onChange={updateFilter}
-      />
+      /> : null}
       {phase5Blocked ? (
         <div className="alert error">{phase5SchemaStatus.message ?? PHASE5_MISSING_MIGRATIONS_MESSAGE}</div>
       ) : null}
@@ -8462,6 +8476,20 @@ function ProcurementDeliveriesActs({
       {!phase5Blocked && activeTab === "acts" ? (
         <div className="section compact-section">
           <div className="panel grid compact-panel">
+            <label className="span-6">
+              1. Familia con plan operativo aprobado
+              <select value={actFamilyId} onChange={(event) => {
+                setActFamilyId(event.target.value);
+                setActChecklist({});
+                setEditingActId(null);
+                setLastConfirmedActId(null);
+              }}>
+                <option value="">Seleccione una familia</option>
+                {eligibleActFamilies.map((family) => (
+                  <option key={family.id} value={family.id}>{family.family_code} - {family.representative_name}</option>
+                ))}
+              </select>
+            </label>
             <label className="span-3">
               Fecha de entrega
               <input type="date" value={actDeliveryDate} onChange={(event) => setActDeliveryDate(event.target.value)} />
@@ -8487,12 +8515,12 @@ function ProcurementDeliveriesActs({
               <textarea value={actFinalText} onChange={(event) => setActFinalText(event.target.value)} rows={2} />
             </label>
           </div>
-          {!filters.family_id ? (
-            <div className="alert info">Seleccione una familia en los filtros superiores para preparar su acta de entrega.</div>
+          {!actFamilyId ? (
+            <div className="alert info">Seleccione una familia para consultar los materiales pendientes de su plan operativo aprobado.</div>
           ) : (
             <div className="panel grid compact-panel">
               <label className="span-6">
-                Plan operativo aprobado
+                2. Plan operativo aprobado
                 <select value={actPlanId} onChange={(event) => { setActPlanId(event.target.value); setActChecklist({}); setEditingActId(null); }}>
                   <option value="">Seleccione</option>
                   {familyActPlans.map((plan) => <option key={plan.id} value={plan.id}>{deliveryPlanLabel(plan)}</option>)}
@@ -8517,7 +8545,7 @@ function ProcurementDeliveriesActs({
                         <span><strong>{need.materialName}</strong><br /><span className="muted">Pendiente disponible: {formatNumber(available)} {need.unit}</span></span>
                       </label>
                       <label>
-                        Cantidad a entregar
+                        3. Cantidad a entregar
                         <input type="number" min="0.01" max={available} step="0.01" disabled={!draft.selected}
                           value={draft.quantity} onChange={(event) => updateActChecklist(need.id, { quantity: event.target.value })} />
                       </label>
@@ -8527,12 +8555,22 @@ function ProcurementDeliveriesActs({
               </div>
               <div className="span-12 form-actions">
                 <button disabled={saving || !canGenerateActs || actChecklistNeeds.length === 0} type="button" onClick={() => void confirmActChecklist()}>
-                  {saving ? "Guardando..." : editingActId ? "Confirmar corrección" : "Confirmar y generar acta"}
+                  {saving ? "Guardando..." : editingActId ? "4. Confirmar corrección" : "4. Confirmar entrega y generar acta"}
                 </button>
                 {editingActId ? <button className="secondary" type="button" onClick={() => { setEditingActId(null); setActChecklist({}); }}>Cancelar corrección</button> : null}
               </div>
             </div>
           )}
+          {lastConfirmedAct && lastConfirmedVersion ? (
+            <div className="alert info">
+              <strong>{lastConfirmedAct.act_number} confirmada.</strong> Ahora puede exportarla:
+              <div className="form-actions">
+                <button type="button" disabled={saving} onClick={() => void exportStoredActVersion(lastConfirmedVersion, "pdf")}>Exportar PDF</button>
+                <button className="secondary" type="button" disabled={saving} onClick={() => void exportStoredActVersion(lastConfirmedVersion, "word")}>Exportar Word</button>
+                <button className="secondary" type="button" disabled={saving} onClick={() => void exportStoredActVersion(lastConfirmedVersion, "excel")}>Exportar Excel</button>
+              </div>
+            </div>
+          ) : null}
           <details className="collapsible-panel">
             <summary>Actas registradas</summary>
             <DataTable
