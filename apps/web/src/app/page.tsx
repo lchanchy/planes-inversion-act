@@ -424,6 +424,7 @@ function AdminApp({ session }: { session: Session }) {
   }, [profile, projectUsers, roles]);
 
   const canWrite = roleNames.has("super_admin") || roleNames.has("admin") || roleNames.has("project_admin") || roleNames.has("coordinator");
+  const canEditOperationalPlans = canWrite || roleNames.has("technician") || roleNames.has("municipal_technician");
   const canManageDeliveryActs = canWrite || roleNames.has("technician") || roleNames.has("municipal_technician");
   useEffect(() => {
     if (roleNames.has("super_admin")) document.body.classList.add("is-super-admin");
@@ -836,7 +837,7 @@ function AdminApp({ session }: { session: Session }) {
               planMaterials={scoped.planMaterials}
               planCounterparts={scoped.planCounterparts}
               provisionalMaterials={scoped.provisionalMaterials}
-              canReview={canWrite}
+              canReview={canEditOperationalPlans}
               canManageLogos={roleNames.has("admin") || roleNames.has("super_admin") || roleNames.has("project_admin") || roleNames.has("coordinator")}
               currentProfile={profile}
               onChange={loadAll}
@@ -5566,7 +5567,7 @@ function PlansAdmin({
               {selectedPlanCompletenessIssues.length > 0 ? (
                 <div className="alert error">
                   <strong>Este plan no se sincronizó completo.</strong> {selectedPlanCompletenessIssues.join(" ")}
-                  {selectedPlan.status === "returned" ? " Debe corregirse y sincronizarse nuevamente desde Android." : " No puede aprobarse hasta completar la sincronización."}
+                  {selectedPlan.status === "returned" ? " Puede completarlo aquí en la web o sincronizarlo nuevamente desde Android." : " No puede enviarse a revisión ni aprobarse hasta completarlo."}
                 </div>
               ) : null}
               <PlanDetail
@@ -5914,7 +5915,7 @@ function PlanDetail({
         <button className="secondary" type="button" onClick={() => void exportPlansAsWord([plan], exportContext)}>
           Exportar Word
         </button>
-        <button disabled={!canEditStatus} onClick={onMoveToReview} type="button">Enviar a revision</button>
+        <button disabled={!canEditStatus || validation.length > 0} onClick={onMoveToReview} type="button">Enviar a revision</button>
         <button disabled={!canReview || validation.length > 0 || plan.status === "approved" || plan.status === "closed"} onClick={onApprove} type="button">
           Aprobar
         </button>
