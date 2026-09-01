@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback, createContext, useContext, Fragment } from "react";
+import { useEffect, useMemo, useState, useCallback, useId, useRef, createContext, useContext, Fragment } from "react";
 import {
   AlignmentType,
   BorderStyle,
@@ -5339,23 +5339,14 @@ function PlansAdmin({
           value={manualPlan.project_id}
           onChange={(project_id) => setManualPlan({ project_id, family_id: "" })}
         />
-        <label className="span-4">
-          Familia
-          <select
-            value={manualPlan.family_id}
-            onChange={(event) => setManualPlan({ ...manualPlan, family_id: event.target.value })}
-            required
-          >
-            <option value="">Seleccione</option>
-            {families
-              .filter((family) => !manualPlan.project_id || family.project_id === manualPlan.project_id)
-              .map((family) => (
-                <option key={family.id} value={family.id}>
-                  {family.family_code} - {family.representative_name}
-                </option>
-              ))}
-          </select>
-        </label>
+        <FamilySearchSelect
+          className="span-4"
+          emptyLabel="Seleccione por nombre o código"
+          families={families.filter((family) => !manualPlan.project_id || family.project_id === manualPlan.project_id)}
+          onChange={(family_id) => setManualPlan({ ...manualPlan, family_id })}
+          required
+          value={manualPlan.family_id}
+        />
         <div className="span-4 form-actions">
           <button disabled={!canReview || !manualPlan.project_id || !manualPlan.family_id}>Crear borrador</button>
         </div>
@@ -5366,17 +5357,13 @@ function PlansAdmin({
           value={filters.projectId}
           onChange={(projectId) => setFilters({ ...filters, projectId, familyId: "" })}
         />
-        <label className="span-3">
-          Familia
-          <select value={filters.familyId} onChange={(event) => setFilters({ ...filters, familyId: event.target.value })}>
-            <option value="">Todas</option>
-            {families
-              .filter((family) => !filters.projectId || family.project_id === filters.projectId)
-              .map((family) => (
-                <option key={family.id} value={family.id}>{family.family_code}</option>
-              ))}
-          </select>
-        </label>
+        <FamilySearchSelect
+          className="span-3"
+          emptyLabel="Todas: escriba nombre o código"
+          families={families.filter((family) => !filters.projectId || family.project_id === filters.projectId)}
+          onChange={(familyId) => setFilters({ ...filters, familyId })}
+          value={filters.familyId}
+        />
         <label className="span-3">
           Municipio
           <select value={filters.municipalityId} onChange={(event) => setFilters({ ...filters, municipalityId: event.target.value })}>
@@ -5652,6 +5639,8 @@ function PlanDetail({
   const validation = validatePlanForApproval(plan, { activities, planActivities, planMaterials, planCounterparts, provisionalMaterials });
   const canEditStatus = canReview && !["approved", "closed"].includes(plan.status);
   const canEditPlan = canReview && plan.status !== "closed";
+  const editorRef = useRef<HTMLDetailsElement>(null);
+  const [editorOpen, setEditorOpen] = useState(plan.status !== "approved");
   const [planNotice, setPlanNotice] = useState<Notice>(null);
   const [activityForm, setActivityForm] = useState({ id: "", activity_id: "", baseline: "", target: "", observations: "" });
   const [materialForm, setMaterialForm] = useState({ id: "", plan_activity_id: "", material_id: "", quantity: "", observations: "" });
@@ -5728,6 +5717,11 @@ function PlanDetail({
   function confirmPlanMutation(action: string) {
     if (plan.status !== "approved") return true;
     return confirmManualChange(`Este plan ya esta aprobado. ${action} puede cambiar consolidados, ETEC e indicadores. Desea continuar?`);
+  }
+
+  function revealPlanEditor() {
+    setEditorOpen(true);
+    requestAnimationFrame(() => editorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
   }
 
   function clearPlanForms() {
@@ -5923,7 +5917,7 @@ function PlanDetail({
         <button className="danger" disabled={!canReview || plan.status !== "approved"} onClick={onClose} type="button">Cerrar</button>
       </div>
       {planNotice ? <div className={`alert ${planNotice.type}`}>{planNotice.message}</div> : null}
-      <details className="collapsible-panel" open={plan.status !== "approved"}>
+      <details className="collapsible-panel" onToggle={(event) => setEditorOpen(event.currentTarget.open)} open={editorOpen} ref={editorRef}>
         <summary>Editar plan operativo desde web</summary>
         <div className="grid compact-panel">
           <form className="span-12 grid compact-panel plan-editor-form" onSubmit={savePlanActivity}>
@@ -6064,15 +6058,50 @@ function PlanDetail({
                   className="secondary"
                   disabled={!canEditPlan}
                   type="button"
-                  onClick={() => setActivityForm({
-                    id: planActivity.id,
-                    activity_id: planActivity.activity_id,
-                    baseline: planActivity.baseline?.toString() ?? "",
-                    target: planActivity.target?.toString() ?? "",
-                    observations: planActivity.observations ?? ""
-                  })}
+                  onClick={() => {
+                    setActivityForm({
+                      id: planActivity.id,
+                      activity_id: planActivity.activity_id,
+                      baseline: planActivity.baseline?.toString() ?? "",
+                      target: planActivity.target?.toString() ?? "",
+                      observations: planActivity.observations ?? ""
+                    });
+                    revealPlanEditor();
+                  }}
                 >
                   Editar actividad
+                </button>
+                <button
+                  className="secondary"
+                  disabled={!canEditPlan}
+                  type="button"
+                  onClick={() => {
+                    setMaterialForm({ id: "", plan_activity_id: planActivity.id, material_id: "", quantity: "", observations: "" });
+                    revealPlanEditor();
+                  }}
+                >
+                  Agregar material
+                </button>
+                <button
+                  className="secondary"
+                  disabled={!canEditPlan}
+                  type="button"
+                  onClick={() => {
+                    setCounterpartForm({
+                      id: "",
+                      plan_activity_id: planActivity.id,
+                      contribution_type: "material_propio",
+                      name: "",
+                      quantity: "",
+                      unit: "",
+                      estimated_unit_value: "",
+                      vegetal_indicator_group: "",
+                      observations: ""
+                    });
+                    revealPlanEditor();
+                  }}
+                >
+                  Agregar contrapartida
                 </button>
                 <button className="danger" disabled={!canEditPlan} type="button" onClick={() => void deletePlanActivity(planActivity)}>
                   Eliminar actividad
@@ -6108,13 +6137,16 @@ function PlanDetail({
                         className="secondary"
                         disabled={!canEditPlan || !item.material_id}
                         type="button"
-                        onClick={() => setMaterialForm({
-                          id: item.id,
-                          plan_activity_id: item.plan_activity_id,
-                          material_id: item.material_id ?? "",
-                          quantity: item.quantity.toString(),
-                          observations: item.observations ?? ""
-                        })}
+                        onClick={() => {
+                          setMaterialForm({
+                            id: item.id,
+                            plan_activity_id: item.plan_activity_id,
+                            material_id: item.material_id ?? "",
+                            quantity: item.quantity.toString(),
+                            observations: item.observations ?? ""
+                          });
+                          revealPlanEditor();
+                        }}
                       >
                         Editar
                       </button>
@@ -6145,17 +6177,20 @@ function PlanDetail({
                       className="secondary"
                       disabled={!canEditPlan}
                       type="button"
-                      onClick={() => setCounterpartForm({
-                        id: item.id,
-                        plan_activity_id: item.plan_activity_id,
-                        contribution_type: item.contribution_type,
-                        name: item.name,
-                        quantity: item.quantity.toString(),
-                        unit: item.unit,
-                        estimated_unit_value: item.estimated_unit_value.toString(),
-                        vegetal_indicator_group: item.vegetal_indicator_group ?? "",
-                        observations: item.observations ?? ""
-                      })}
+                      onClick={() => {
+                        setCounterpartForm({
+                          id: item.id,
+                          plan_activity_id: item.plan_activity_id,
+                          contribution_type: item.contribution_type,
+                          name: item.name,
+                          quantity: item.quantity.toString(),
+                          unit: item.unit,
+                          estimated_unit_value: item.estimated_unit_value.toString(),
+                          vegetal_indicator_group: item.vegetal_indicator_group ?? "",
+                          observations: item.observations ?? ""
+                        });
+                        revealPlanEditor();
+                      }}
                     >
                       Editar
                     </button>
@@ -6179,13 +6214,14 @@ function PlanDetail({
               <p className="span-12 muted">
                 Se mueve <strong>{materialName}</strong> ({formatNumber(reassign.item.quantity)} {reassign.item.unit}) de esta familia a la que elijas. Compras e indicadores se actualizan solos.
               </p>
-              <label className="span-12">
-                Familia destino
-                <select value={reassign.targetFamilyId} onChange={(e) => setReassign({ ...reassign, targetFamilyId: e.target.value, targetActivityId: "" })}>
-                  <option value="">Seleccione</option>
-                  {targetFamilies.map((f) => <option key={f.id} value={f.id}>{f.family_code} - {f.representative_name}</option>)}
-                </select>
-              </label>
+              <FamilySearchSelect
+                className="span-12"
+                emptyLabel="Seleccione por nombre o código"
+                families={targetFamilies}
+                label="Familia destino"
+                onChange={(targetFamilyId) => setReassign({ ...reassign, targetFamilyId, targetActivityId: "" })}
+                value={reassign.targetFamilyId}
+              />
               {reassign.targetFamilyId ? (
                 targetActivities.length > 0 ? (
                   <label className="span-12">
@@ -8244,15 +8280,14 @@ function ProcurementDeliveriesActs({
           <details className="collapsible-panel">
             <summary>Detalle por familia y material ({detailNeeds.length})</summary>
             <div className="grid compact-panel detail-filter-panel">
-              <label className="span-6">
-                Filtrar familia
-                <select value={detailFamilyFilter} onChange={(event) => setDetailFamilyFilter(event.target.value)}>
-                  <option value="">Todas</option>
-                  {detailFamilyOptions.map((family) => (
-                    <option key={family.id} value={family.id}>{family.label}</option>
-                  ))}
-                </select>
-              </label>
+              <FamilySearchSelect
+                className="span-6"
+                emptyLabel="Todas: escriba nombre o código"
+                families={families.filter((family) => detailFamilyOptions.some((option) => option.id === family.id))}
+                label="Filtrar familia"
+                onChange={setDetailFamilyFilter}
+                value={detailFamilyFilter}
+              />
               <label className="span-3">
                 Filtrar numero compra
                 <select value={detailPurchaseFilter} onChange={(event) => setDetailPurchaseFilter(event.target.value)}>
@@ -8583,20 +8618,19 @@ function ProcurementDeliveriesActs({
       {!phase5Blocked && activeTab === "acts" ? (
         <div className="section compact-section">
           <div className="panel grid compact-panel">
-            <label className="span-6">
-              1. Familia con plan operativo aprobado
-              <select value={actFamilyId} onChange={(event) => {
-                setActFamilyId(event.target.value);
+            <FamilySearchSelect
+              className="span-6"
+              emptyLabel="Seleccione por nombre o código"
+              families={eligibleActFamilies}
+              label="1. Familia con plan operativo aprobado"
+              onChange={(familyId) => {
+                setActFamilyId(familyId);
                 setActChecklist({});
                 setEditingActId(null);
                 setLastConfirmedActId(null);
-              }}>
-                <option value="">Seleccione una familia</option>
-                {eligibleActFamilies.map((family) => (
-                  <option key={family.id} value={family.id}>{family.family_code} - {family.representative_name}</option>
-                ))}
-              </select>
-            </label>
+              }}
+              value={actFamilyId}
+            />
             <label className="span-3">
               Fecha de entrega
               <input type="date" value={actDeliveryDate} onChange={(event) => setActDeliveryDate(event.target.value)} />
@@ -9486,15 +9520,13 @@ function Phase5Filters({
           {visibleVillages.map((village) => <option key={village.id} value={village.id}>{village.name}</option>)}
         </select>
       </label>
-      <label className="span-3">
-        Familia
-        <select value={filters.family_id} onChange={(event) => onChange("family_id", event.target.value)}>
-          <option value="">Todas</option>
-          {visibleFamilies.map((family) => (
-            <option key={family.id} value={family.id}>{family.family_code} - {family.representative_name}</option>
-          ))}
-        </select>
-      </label>
+      <FamilySearchSelect
+        className="span-3"
+        emptyLabel="Todas: escriba nombre o código"
+        families={visibleFamilies}
+        onChange={(familyId) => onChange("family_id", familyId)}
+        value={filters.family_id}
+      />
       <label className="span-3">
         Actividad
         <select value={filters.activity_id} onChange={(event) => onChange("activity_id", event.target.value)}>
@@ -13774,6 +13806,81 @@ function ChipList({ labels }: { labels: string[] }) {
 function getSelectedLabels(options: { value: string; label: string }[], ids: string[]) {
   const labelsById = new Map(options.map((option) => [option.value, option.label]));
   return ids.map((id) => labelsById.get(id)).filter((label): label is string => Boolean(label));
+}
+
+function FamilySearchSelect({
+  families,
+  value,
+  onChange,
+  label = "Familia",
+  emptyLabel = "Todas: escriba nombre o código",
+  required = false,
+  className = "span-3"
+}: {
+  families: Family[];
+  value: string;
+  onChange: (value: string) => void;
+  label?: string;
+  emptyLabel?: string;
+  required?: boolean;
+  className?: string;
+}) {
+  const listId = useId();
+  const options = families
+    .filter((family) => !family.is_deleted)
+    .map((family) => ({
+      id: family.id,
+      label: `${family.representative_name} - ${family.family_code}`,
+      codeLabel: `${family.family_code} - ${family.representative_name}`
+    }))
+    .sort((left, right) => left.label.localeCompare(right.label, "es"));
+  const selectedLabel = options.find((option) => option.id === value)?.label ?? "";
+  const [query, setQuery] = useState(selectedLabel);
+
+  useEffect(() => setQuery(selectedLabel), [selectedLabel]);
+
+  function commit(nextQuery: string) {
+    const normalized = nextQuery.trim().toLocaleLowerCase("es");
+    const match = options.find((option) =>
+      option.label.toLocaleLowerCase("es") === normalized || option.codeLabel.toLocaleLowerCase("es") === normalized
+    );
+    if (match) {
+      setQuery(match.label);
+      onChange(match.id);
+      return;
+    }
+    setQuery(selectedLabel);
+    if (!nextQuery.trim()) onChange("");
+  }
+
+  return (
+    <label className={className}>
+      {label}
+      <input
+        aria-label={`${label}: buscar por nombre o código`}
+        list={listId}
+        onBlur={(event) => commit(event.currentTarget.value)}
+        onChange={(event) => {
+          const nextQuery = event.target.value;
+          setQuery(nextQuery);
+          const normalized = nextQuery.trim().toLocaleLowerCase("es");
+          const match = options.find((option) =>
+            option.label.toLocaleLowerCase("es") === normalized || option.codeLabel.toLocaleLowerCase("es") === normalized
+          );
+          if (match) onChange(match.id);
+        }}
+        placeholder={emptyLabel}
+        required={required}
+        value={query}
+      />
+      <datalist id={listId}>
+        {options.flatMap((option) => [
+          <option key={`${option.id}-name`} value={option.label} />,
+          <option key={`${option.id}-code`} value={option.codeLabel} />
+        ])}
+      </datalist>
+    </label>
+  );
 }
 
 function SelectProject({
