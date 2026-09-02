@@ -24,6 +24,7 @@ import type { Session } from "@supabase/supabase-js";
 import { supabase, supabaseConfigured } from "@/lib/supabase";
 import { fetchAllPages } from "@/lib/supabase-pagination";
 import { annualHouseholdIncome } from "@/lib/economia-income";
+import { materialSuggestions } from "@/lib/material-search";
 import { deliveryQuantityError } from "@/lib/delivery-act-checklist";
 import { TRACKING_BASE_COLUMNS, canEditTracking, resolveTrackingTarget, trackingFrozenOffsets, type TrackingBaseColumnKey } from "@/lib/tracking-columns";
 import type {
@@ -5724,10 +5725,10 @@ function PlanDetail({
     requestAnimationFrame(() => editorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
   }
 
-  function clearPlanForms() {
-    setActivityForm({ id: "", activity_id: "", baseline: "", target: "", observations: "" });
-    setMaterialForm({ id: "", plan_activity_id: "", material_id: "", quantity: "", observations: "" });
-    setCounterpartForm({
+  function clearPlanForms(kind: "activity" | "material" | "counterpart") {
+    if (kind === "activity") setActivityForm({ id: "", activity_id: "", baseline: "", target: "", observations: "" });
+    if (kind === "material") setMaterialForm({ id: "", plan_activity_id: "", material_id: "", quantity: "", observations: "" });
+    if (kind === "counterpart") setCounterpartForm({
       id: "",
       plan_activity_id: "",
       contribution_type: "material_propio",
@@ -5762,7 +5763,7 @@ function PlanDetail({
       return;
     }
     setPlanNotice({ type: "info", message: "Actividad del plan guardada." });
-    clearPlanForms();
+    clearPlanForms("activity");
     await onChange();
   }
 
@@ -5785,6 +5786,10 @@ function PlanDetail({
       setPlanNotice({ type: "error", message: "Seleccione material y cantidad valida." });
       return;
     }
+    if (planMaterials.some((item) => !item.is_deleted && item.plan_activity_id === materialForm.plan_activity_id && item.material_id === material.id && item.id !== materialForm.id)) {
+      setPlanNotice({ type: "error", message: "Este material ya está en la actividad. Use Editar en su fila para actualizar la cantidad." });
+      return;
+    }
     const payload = {
       plan_activity_id: materialForm.plan_activity_id,
       material_id: material.id,
@@ -5802,7 +5807,7 @@ function PlanDetail({
       return;
     }
     setPlanNotice({ type: "info", message: "Material del proyecto guardado." });
-    clearPlanForms();
+    clearPlanForms("material");
     await onChange();
   }
 
@@ -5867,7 +5872,7 @@ function PlanDetail({
           type: "info",
           message: "Contrapartida vegetal guardada en observaciones porque Supabase aun no refresco la columna nueva. Ejecute notify pgrst, 'reload schema'; para guardarla como campo estructurado."
         });
-        clearPlanForms();
+        clearPlanForms("counterpart");
         await onChange();
         return;
       }
@@ -5875,7 +5880,7 @@ function PlanDetail({
       return;
     }
     setPlanNotice({ type: "info", message: "Contrapartida familiar guardada." });
-    clearPlanForms();
+    clearPlanForms("counterpart");
     await onChange();
   }
 
@@ -5922,19 +5927,23 @@ function PlanDetail({
         <div className="grid compact-panel">
           <form className="span-12 grid compact-panel plan-editor-form" onSubmit={savePlanActivity}>
             <div className="span-12"><strong>Actividad</strong></div>
-            <label className="span-6">
+            <label className="span-5">
               Actividad
               <select disabled={!canEditPlan} required value={activityForm.activity_id} onChange={(event) => setActivityForm({ ...activityForm, activity_id: event.target.value })}>
                 <option value="">Seleccione</option>
                 {activities.filter((a) => !a.is_deleted).map((activity) => <option key={activity.id} value={activity.id}>{activity.name} ({activity.unit})</option>)}
               </select>
             </label>
-            <label className="span-3">
+            <label className="span-2">
+              Unidad
+              <input disabled readOnly value={activities.find((item) => item.id === activityForm.activity_id)?.unit ?? ""} />
+            </label>
+            <label className="span-2">
               Linea base
               <input disabled={!canEditPlan} type="number" step="0.01" value={activityForm.baseline} onChange={(event) => setActivityForm({ ...activityForm, baseline: event.target.value })} />
             </label>
             <label className="span-3">
-              Meta
+              Área/meta
               <input disabled={!canEditPlan} type="number" step="0.01" value={activityForm.target} onChange={(event) => setActivityForm({ ...activityForm, target: event.target.value })} />
             </label>
             <label className="span-8">
@@ -5945,103 +5954,13 @@ function PlanDetail({
               <button disabled={!canEditPlan || !activityForm.activity_id}>{activityForm.id ? "Actualizar" : "Agregar"}</button>
             </div>
           </form>
-          <form className="span-12 grid compact-panel plan-editor-form" onSubmit={savePlanMaterial}>
-            <div className="span-12"><strong>Material del proyecto</strong></div>
-            <label className="span-6">
-              Actividad del plan
-              <select disabled={!canEditPlan} required value={materialForm.plan_activity_id} onChange={(event) => setMaterialForm({ ...materialForm, plan_activity_id: event.target.value })}>
-                <option value="">Seleccione</option>
-                {planActivities.map((item) => {
-                  const activity = activities.find((catalog) => catalog.id === item.activity_id);
-                  return <option key={item.id} value={item.id}>{activity?.name ?? "Actividad"}</option>;
-                })}
-              </select>
-            </label>
-            <label className="span-4">
-              Material
-              <select disabled={!canEditPlan} required value={materialForm.material_id} onChange={(event) => setMaterialForm({ ...materialForm, material_id: event.target.value })}>
-                <option value="">Seleccione</option>
-                {materials.filter((m) => !m.is_deleted).map((material) => <option key={material.id} value={material.id}>{material.name} ({material.unit})</option>)}
-              </select>
-            </label>
-            <label className="span-3">
-              Cantidad
-              <input disabled={!canEditPlan} required type="number" step="0.01" value={materialForm.quantity} onChange={(event) => setMaterialForm({ ...materialForm, quantity: event.target.value })} />
-            </label>
-            <label className="span-3">
-              Obs.
-              <input disabled={!canEditPlan} value={materialForm.observations} onChange={(event) => setMaterialForm({ ...materialForm, observations: event.target.value })} />
-            </label>
-            <div className="span-12 form-actions">
-              <button disabled={!canEditPlan || !materialForm.plan_activity_id || !materialForm.material_id}>{materialForm.id ? "Actualizar" : "Agregar"}</button>
-            </div>
-          </form>
-          <form className="span-12 grid compact-panel plan-editor-form" onSubmit={savePlanCounterpart}>
-            <div className="span-12"><strong>Contrapartida familiar</strong></div>
-            <label className="span-6">
-              Actividad del plan
-              <select disabled={!canEditPlan} required value={counterpartForm.plan_activity_id} onChange={(event) => setCounterpartForm({ ...counterpartForm, plan_activity_id: event.target.value })}>
-                <option value="">Seleccione</option>
-                {planActivities.map((item) => {
-                  const activity = activities.find((catalog) => catalog.id === item.activity_id);
-                  return <option key={item.id} value={item.id}>{activity?.name ?? "Actividad"}</option>;
-                })}
-              </select>
-            </label>
-            <label className="span-3">
-              Tipo
-              <select disabled={!canEditPlan} value={counterpartForm.contribution_type} onChange={(event) => setCounterpartForm({ ...counterpartForm, contribution_type: event.target.value })}>
-                <option value="mano_obra">Mano de obra</option>
-                <option value="material_propio">Material propio</option>
-                <option value="otro">Otro</option>
-              </select>
-            </label>
-            <label className="span-6">
-              Aporte / especie
-              <input disabled={!canEditPlan} required value={counterpartForm.name} onChange={(event) => setCounterpartForm({ ...counterpartForm, name: event.target.value })} />
-            </label>
-            <label className="span-3">
-              Grupo vegetal
-              <select disabled={!canEditPlan} value={counterpartForm.vegetal_indicator_group} onChange={(event) => setCounterpartForm({ ...counterpartForm, vegetal_indicator_group: event.target.value })}>
-                <option value="">No aplica</option>
-                <option value="colinos">Colinos (platano y pina)</option>
-                <option value="cacao">Cacao</option>
-                <option value="frutales">Frutales</option>
-                <option value="forestales_nativos">Forestales nativos</option>
-                <option value="semilla_frijol">Semilla de frijol</option>
-                <option value="semilla_maiz">Semilla de maiz</option>
-                <option value="semilla_yuca">Semilla de yuca</option>
-                <option value="semilla_sandia">Semilla de sandia</option>
-                <option value="semilla_ahuyama">Semilla de ahuyama</option>
-                <option value="semilla_cana">Semilla de cana</option>
-                <option value="semilla_bore">Semilla de bore</option>
-                <option value="otro">Otro vegetal</option>
-              </select>
-            </label>
-            <label className="span-3">
-              Cant.
-              <input disabled={!canEditPlan} required type="number" step="0.01" value={counterpartForm.quantity} onChange={(event) => setCounterpartForm({ ...counterpartForm, quantity: event.target.value })} />
-            </label>
-            <label className="span-3">
-              Unidad
-              <input disabled={!canEditPlan} value={counterpartForm.unit} onChange={(event) => setCounterpartForm({ ...counterpartForm, unit: event.target.value })} />
-            </label>
-            <label className="span-3">
-              Valor unitario
-              <input disabled={!canEditPlan} type="number" step="0.01" value={counterpartForm.estimated_unit_value} onChange={(event) => setCounterpartForm({ ...counterpartForm, estimated_unit_value: event.target.value })} />
-            </label>
-            <label className="span-9">
-              Observaciones
-              <input disabled={!canEditPlan} value={counterpartForm.observations} onChange={(event) => setCounterpartForm({ ...counterpartForm, observations: event.target.value })} />
-            </label>
-            <div className="span-3 form-actions">
-              <button disabled={!canEditPlan || !counterpartForm.plan_activity_id || !counterpartForm.name}>{counterpartForm.id ? "Actualizar" : "Agregar"}</button>
-            </div>
-          </form>
+          <div className="span-12 muted">
+            Después de agregar la actividad, incluya sus materiales y contrapartidas directamente en la tarjeta de esa actividad.
+          </div>
         </div>
       </details>
       {planActivities.length === 0 ? (
-        <div className="muted">Este plan aun no tiene actividades. La captura principal llegara desde Android.</div>
+        <div className="muted">Seleccione una actividad y su área/meta arriba. Después podrá incluir aquí sus materiales y contrapartidas.</div>
       ) : (
         planActivities.map((planActivity) => {
           const catalogActivity = activities.find((activity) => activity.id === planActivity.activity_id);
@@ -6077,7 +5996,6 @@ function PlanDetail({
                   type="button"
                   onClick={() => {
                     setMaterialForm({ id: "", plan_activity_id: planActivity.id, material_id: "", quantity: "", observations: "" });
-                    revealPlanEditor();
                   }}
                 >
                   Agregar material
@@ -6098,7 +6016,6 @@ function PlanDetail({
                       vegetal_indicator_group: "",
                       observations: ""
                     });
-                    revealPlanEditor();
                   }}
                 >
                   Agregar contrapartida
@@ -6107,6 +6024,76 @@ function PlanDetail({
                   Eliminar actividad
                 </button>
               </div>
+              {materialForm.plan_activity_id === planActivity.id ? (() => {
+                const selectedMaterial = materials.find((item) => item.id === materialForm.material_id);
+                return (
+                  <form className="grid compact-panel plan-editor-form" onSubmit={savePlanMaterial}>
+                    <MaterialSearchSelect
+                      key={materialForm.id || "new"}
+                      className="span-5"
+                      disabled={!canEditPlan}
+                      materials={materials.filter((item) => !item.project_id || item.project_id === plan.project_id)}
+                      onChange={(material_id) => setMaterialForm({ ...materialForm, material_id })}
+                      required
+                      value={materialForm.material_id}
+                    />
+                    <label className="span-2">
+                      Cantidad
+                      <input disabled={!canEditPlan} min="0.01" required step="0.01" type="number" value={materialForm.quantity} onChange={(event) => setMaterialForm({ ...materialForm, quantity: event.target.value })} />
+                    </label>
+                    <label className="span-2">
+                      Unidad
+                      <input disabled readOnly value={selectedMaterial?.unit ?? ""} />
+                    </label>
+                    <label className="span-3">
+                      Valor cotizado unitario
+                      <input disabled readOnly value={selectedMaterial ? formatMoney(selectedMaterial.quoted_unit_price) : ""} />
+                    </label>
+                    <label className="span-8">
+                      Observaciones
+                      <input disabled={!canEditPlan} value={materialForm.observations} onChange={(event) => setMaterialForm({ ...materialForm, observations: event.target.value })} />
+                    </label>
+                    <div className="span-4 form-actions">
+                      <button disabled={!canEditPlan || !materialForm.material_id}>{materialForm.id ? "Actualizar material" : "Guardar material"}</button>
+                      <button className="secondary" type="button" onClick={() => setMaterialForm({ id: "", plan_activity_id: "", material_id: "", quantity: "", observations: "" })}>Cancelar</button>
+                    </div>
+                  </form>
+                );
+              })() : null}
+              {counterpartForm.plan_activity_id === planActivity.id ? (
+                <form className="grid compact-panel plan-editor-form" onSubmit={savePlanCounterpart}>
+                  <label className="span-3">
+                    Tipo
+                    <select disabled={!canEditPlan} value={counterpartForm.contribution_type} onChange={(event) => setCounterpartForm({ ...counterpartForm, contribution_type: event.target.value })}>
+                      <option value="mano_obra">Mano de obra</option><option value="material_propio">Material propio</option><option value="otro">Otro</option>
+                    </select>
+                  </label>
+                  <label className="span-5">Aporte / especie<input disabled={!canEditPlan} required value={counterpartForm.name} onChange={(event) => setCounterpartForm({ ...counterpartForm, name: event.target.value })} /></label>
+                  <label className="span-2">Cantidad<input disabled={!canEditPlan} min="0.01" required step="0.01" type="number" value={counterpartForm.quantity} onChange={(event) => setCounterpartForm({ ...counterpartForm, quantity: event.target.value })} /></label>
+                  <label className="span-2">Unidad<input disabled={!canEditPlan} value={counterpartForm.unit} onChange={(event) => setCounterpartForm({ ...counterpartForm, unit: event.target.value })} /></label>
+                  <label className="span-3">Valor unitario<input disabled={!canEditPlan} min="0" step="0.01" type="number" value={counterpartForm.estimated_unit_value} onChange={(event) => setCounterpartForm({ ...counterpartForm, estimated_unit_value: event.target.value })} /></label>
+                  <label className="span-4">
+                    Grupo vegetal
+                    <select disabled={!canEditPlan} value={counterpartForm.vegetal_indicator_group} onChange={(event) => setCounterpartForm({ ...counterpartForm, vegetal_indicator_group: event.target.value })}>
+                      <option value="">No aplica</option>
+                      {VEGETAL_INDICATOR_GROUPS.map((group) => <option key={group.key} value={group.key}>{group.label}</option>)}
+                      <option value="semilla_frijol">Semilla de frijol</option>
+                      <option value="semilla_maiz">Semilla de maiz</option>
+                      <option value="semilla_yuca">Semilla de yuca</option>
+                      <option value="semilla_sandia">Semilla de sandia</option>
+                      <option value="semilla_ahuyama">Semilla de ahuyama</option>
+                      <option value="semilla_cana">Semilla de cana</option>
+                      <option value="semilla_bore">Semilla de bore</option>
+                      <option value="otro">Otro vegetal</option>
+                    </select>
+                  </label>
+                  <label className="span-5">Observaciones<input disabled={!canEditPlan} value={counterpartForm.observations} onChange={(event) => setCounterpartForm({ ...counterpartForm, observations: event.target.value })} /></label>
+                  <div className="span-4 form-actions">
+                    <button disabled={!canEditPlan || !counterpartForm.name}>{counterpartForm.id ? "Actualizar contrapartida" : "Guardar contrapartida"}</button>
+                    <button className="secondary" type="button" onClick={() => clearPlanForms("counterpart")}>Cancelar</button>
+                  </div>
+                </form>
+              ) : null}
               <h5>Materiales del proyecto</h5>
               <DataTable
                 headers={["Material", "Cantidad", "Unidad", "Valor cotizado", "Resolver", "Acciones"]}
@@ -6145,7 +6132,6 @@ function PlanDetail({
                             quantity: item.quantity.toString(),
                             observations: item.observations ?? ""
                           });
-                          revealPlanEditor();
                         }}
                       >
                         Editar
@@ -6189,7 +6175,6 @@ function PlanDetail({
                           vegetal_indicator_group: item.vegetal_indicator_group ?? "",
                           observations: item.observations ?? ""
                         });
-                        revealPlanEditor();
                       }}
                     >
                       Editar
@@ -13806,6 +13791,39 @@ function ChipList({ labels }: { labels: string[] }) {
 function getSelectedLabels(options: { value: string; label: string }[], ids: string[]) {
   const labelsById = new Map(options.map((option) => [option.value, option.label]));
   return ids.map((id) => labelsById.get(id)).filter((label): label is string => Boolean(label));
+}
+
+function MaterialSearchSelect({ materials, value, onChange, disabled, required, className }: {
+  materials: Material[];
+  value: string;
+  onChange: (value: string) => void;
+  disabled: boolean;
+  required: boolean;
+  className: string;
+}) {
+  const inputId = useId();
+  const [query, setQuery] = useState<string | null>(null);
+  const selected = materials.find((material) => material.id === value);
+  const suggestions = materialSuggestions(materials, query ?? "");
+  return (
+    <div className={className}>
+      <label htmlFor={inputId}>Material: buscar por nombre o código</label>
+      <input id={inputId} autoComplete="off" disabled={disabled} required={required}
+        value={query ?? selected?.name ?? ""} placeholder="Escriba y seleccione un material"
+        onChange={(event) => { setQuery(event.target.value); onChange(""); }} />
+      {!value && !disabled ? (
+        <div className="grid" aria-label="Sugerencias de materiales">
+          {suggestions.map((material) => (
+            <button className="secondary span-12" key={material.id} type="button"
+              onClick={() => { setQuery(null); onChange(material.id); }}>
+              {material.name} {material.internal_code ? `(${material.internal_code})` : ""} · {material.unit} · {formatMoney(material.quoted_unit_price)}
+            </button>
+          ))}
+          {suggestions.length === 0 ? <span className="muted span-12">Sin coincidencias. Pruebe otra parte del nombre.</span> : null}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function FamilySearchSelect({
