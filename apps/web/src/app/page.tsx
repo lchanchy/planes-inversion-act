@@ -6000,26 +6000,6 @@ function PlanDetail({
                 >
                   Agregar material
                 </button>
-                <button
-                  className="secondary"
-                  disabled={!canEditPlan}
-                  type="button"
-                  onClick={() => {
-                    setCounterpartForm({
-                      id: "",
-                      plan_activity_id: planActivity.id,
-                      contribution_type: "material_propio",
-                      name: "",
-                      quantity: "",
-                      unit: "",
-                      estimated_unit_value: "",
-                      vegetal_indicator_group: "",
-                      observations: ""
-                    });
-                  }}
-                >
-                  Agregar contrapartida
-                </button>
                 <button className="danger" disabled={!canEditPlan} type="button" onClick={() => void deletePlanActivity(planActivity)}>
                   Eliminar actividad
                 </button>
@@ -6060,40 +6040,6 @@ function PlanDetail({
                   </form>
                 );
               })() : null}
-              {counterpartForm.plan_activity_id === planActivity.id ? (
-                <form className="grid compact-panel plan-editor-form" onSubmit={savePlanCounterpart}>
-                  <label className="span-3">
-                    Tipo
-                    <select disabled={!canEditPlan} value={counterpartForm.contribution_type} onChange={(event) => setCounterpartForm({ ...counterpartForm, contribution_type: event.target.value })}>
-                      <option value="mano_obra">Mano de obra</option><option value="material_propio">Material propio</option><option value="otro">Otro</option>
-                    </select>
-                  </label>
-                  <label className="span-5">Aporte / especie<input disabled={!canEditPlan} required value={counterpartForm.name} onChange={(event) => setCounterpartForm({ ...counterpartForm, name: event.target.value })} /></label>
-                  <label className="span-2">Cantidad<input disabled={!canEditPlan} min="0.01" required step="0.01" type="number" value={counterpartForm.quantity} onChange={(event) => setCounterpartForm({ ...counterpartForm, quantity: event.target.value })} /></label>
-                  <label className="span-2">Unidad<input disabled={!canEditPlan} value={counterpartForm.unit} onChange={(event) => setCounterpartForm({ ...counterpartForm, unit: event.target.value })} /></label>
-                  <label className="span-3">Valor unitario<input disabled={!canEditPlan} min="0" step="0.01" type="number" value={counterpartForm.estimated_unit_value} onChange={(event) => setCounterpartForm({ ...counterpartForm, estimated_unit_value: event.target.value })} /></label>
-                  <label className="span-4">
-                    Grupo vegetal
-                    <select disabled={!canEditPlan} value={counterpartForm.vegetal_indicator_group} onChange={(event) => setCounterpartForm({ ...counterpartForm, vegetal_indicator_group: event.target.value })}>
-                      <option value="">No aplica</option>
-                      {VEGETAL_INDICATOR_GROUPS.map((group) => <option key={group.key} value={group.key}>{group.label}</option>)}
-                      <option value="semilla_frijol">Semilla de frijol</option>
-                      <option value="semilla_maiz">Semilla de maiz</option>
-                      <option value="semilla_yuca">Semilla de yuca</option>
-                      <option value="semilla_sandia">Semilla de sandia</option>
-                      <option value="semilla_ahuyama">Semilla de ahuyama</option>
-                      <option value="semilla_cana">Semilla de cana</option>
-                      <option value="semilla_bore">Semilla de bore</option>
-                      <option value="otro">Otro vegetal</option>
-                    </select>
-                  </label>
-                  <label className="span-5">Observaciones<input disabled={!canEditPlan} value={counterpartForm.observations} onChange={(event) => setCounterpartForm({ ...counterpartForm, observations: event.target.value })} /></label>
-                  <div className="span-4 form-actions">
-                    <button disabled={!canEditPlan || !counterpartForm.name}>{counterpartForm.id ? "Actualizar contrapartida" : "Guardar contrapartida"}</button>
-                    <button className="secondary" type="button" onClick={() => clearPlanForms("counterpart")}>Cancelar</button>
-                  </div>
-                </form>
-              ) : null}
               <h5>Materiales del proyecto</h5>
               <DataTable
                 headers={["Material", "Cantidad", "Unidad", "Valor cotizado", "Resolver", "Acciones"]}
@@ -6149,7 +6095,64 @@ function PlanDetail({
                   ];
                 })}
               />
+              <section className="panel" aria-label={`Contrapartida familiar de ${catalogActivity?.name ?? "actividad"}`}>
               <h5>Contrapartida familiar</h5>
+              <div className="form-actions">
+                <button
+                  className="secondary"
+                  disabled={!canEditPlan}
+                  type="button"
+                  onClick={() => {
+                    setCounterpartForm({
+                      id: "",
+                      plan_activity_id: planActivity.id,
+                      contribution_type: "material_propio",
+                      name: "",
+                      quantity: "",
+                      unit: "",
+                      estimated_unit_value: "",
+                      vegetal_indicator_group: "",
+                      observations: ""
+                    });
+                  }}
+                >
+                  Agregar contrapartida
+                </button>
+              </div>
+              {counterpartForm.plan_activity_id === planActivity.id ? (
+                <form aria-label={`Contrapartida de ${catalogActivity?.name ?? "actividad"}`} className="grid compact-panel plan-editor-form" onSubmit={savePlanCounterpart}>
+                  <label className="span-3">
+                    Tipo
+                    <select disabled={!canEditPlan} value={counterpartForm.contribution_type} onChange={(event) => setCounterpartForm({ ...counterpartForm, contribution_type: event.target.value })}>
+                      <option value="mano_obra">Mano de obra</option><option value="material_propio">Material propio</option><option value="otro">Otro</option>
+                    </select>
+                  </label>
+                  <label className="span-5">Aporte / especie<input disabled={!canEditPlan} required value={counterpartForm.name} onChange={(event) => setCounterpartForm({ ...counterpartForm, name: event.target.value })} /></label>
+                  <label className="span-2">Cantidad<input disabled={!canEditPlan} min="0.01" required step="0.01" type="number" value={counterpartForm.quantity} onChange={(event) => setCounterpartForm({ ...counterpartForm, quantity: event.target.value })} /></label>
+                  <label className="span-2">Unidad<input disabled={!canEditPlan} value={counterpartForm.unit} onChange={(event) => setCounterpartForm({ ...counterpartForm, unit: event.target.value })} /></label>
+                  <label className="span-3">Valor unitario<input disabled={!canEditPlan} min="0" step="0.01" type="number" value={counterpartForm.estimated_unit_value} onChange={(event) => setCounterpartForm({ ...counterpartForm, estimated_unit_value: event.target.value })} /></label>
+                  <label className="span-4">
+                    Grupo vegetal
+                    <select disabled={!canEditPlan} value={counterpartForm.vegetal_indicator_group} onChange={(event) => setCounterpartForm({ ...counterpartForm, vegetal_indicator_group: event.target.value })}>
+                      <option value="">No aplica</option>
+                      {VEGETAL_INDICATOR_GROUPS.map((group) => <option key={group.key} value={group.key}>{group.label}</option>)}
+                      <option value="semilla_frijol">Semilla de frijol</option>
+                      <option value="semilla_maiz">Semilla de maiz</option>
+                      <option value="semilla_yuca">Semilla de yuca</option>
+                      <option value="semilla_sandia">Semilla de sandia</option>
+                      <option value="semilla_ahuyama">Semilla de ahuyama</option>
+                      <option value="semilla_cana">Semilla de cana</option>
+                      <option value="semilla_bore">Semilla de bore</option>
+                      <option value="otro">Otro vegetal</option>
+                    </select>
+                  </label>
+                  <label className="span-5">Observaciones<input disabled={!canEditPlan} value={counterpartForm.observations} onChange={(event) => setCounterpartForm({ ...counterpartForm, observations: event.target.value })} /></label>
+                  <div className="span-4 form-actions">
+                    <button disabled={!canEditPlan || !counterpartForm.name}>{counterpartForm.id ? "Actualizar contrapartida" : "Guardar contrapartida"}</button>
+                    <button className="secondary" type="button" onClick={() => clearPlanForms("counterpart")}>Cancelar</button>
+                  </div>
+                </form>
+              ) : null}
               <DataTable
                 headers={["Aporte", "Grupo vegetal", "Cantidad", "Unidad", "Valor estimado", "Acciones"]}
                 rows={counterpartsForActivity.map((item) => [
@@ -6183,6 +6186,7 @@ function PlanDetail({
                   </div>
                 ])}
               />
+              </section>
             </div>
           );
         })
