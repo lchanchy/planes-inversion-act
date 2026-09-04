@@ -5324,9 +5324,6 @@ function PlansAdmin({
       <div className="toolbar">
         <div>
           <h2>Planes Operativos</h2>
-          <p className="muted">
-            La web revisa, aprueba y corrige. La captura principal en campo sera Android offline-first.
-          </p>
         </div>
         <span className="badge">{canReview ? "Revision habilitada" : "Solo lectura"}</span>
       </div>
@@ -5471,7 +5468,6 @@ function PlansAdmin({
       <div className="panel toolbar">
         <div>
           <strong>Exportacion masiva</strong>
-          <p className="muted">Exporta los planes visibles segun filtros: proyecto, familia, municipio, vereda o estado.</p>
         </div>
         <div className="form-actions">
           <button
@@ -8175,7 +8171,6 @@ function ProcurementDeliveriesActs({
       <div className="toolbar">
         <div>
           <h2>{phase5TabTitle(activeTab)}</h2>
-          <div className="muted">Consolidado, seguimiento de implementacion y actas desde planes operativos aprobados.</div>
         </div>
         <span className="badge">{canManageProcurement ? "Operacion habilitada" : "Solo lectura"}</span>
       </div>
@@ -8305,7 +8300,6 @@ function ProcurementDeliveriesActs({
           </details>
           <details className="collapsible-panel">
             <summary>Materiales entregados por familia ({deliveredByFamilyReport.reduce((sum, group) => sum + group.rows.length, 0)})</summary>
-            <div className="muted">Incluye todas las compras y todos los planes del proyecto. Use el filtro Familia del panel superior para consultar una sola familia.</div>
             <div className="form-actions">
               <button className="secondary" disabled={deliveredByFamilyReport.length === 0} type="button" onClick={() => void exportDeliveredByFamilyExcel(deliveredByFamilyReport.flatMap((group) => group.rows))}>
                 Exportar entregado por familia Excel
